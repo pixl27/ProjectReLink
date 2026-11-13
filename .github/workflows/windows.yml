@@ -114,12 +114,11 @@ jobs:
           python -I scripts/release_parts.py package "$RUNNER_TEMP/package"
           --publish "$RUNNER_TEMP/publish" --setup "$RUNNER_TEMP/ReLink-Setup.exe" ${PREVIOUS:+--list "$PREVIOUS"}
 
-      # (the game's own icon, from this repository's picture: the profile part carries the one of the release it came from)
+      # (the game's own icon, from this repository's: the profile part carries the one of the release it came from)
       - name: The game's icon
         run: |
-          python -m pip install --quiet pillow
           mkdir -p "$RUNNER_TEMP/package/tools/work"
-          python nx2/make_icon.py assets/hookshot.png "$RUNNER_TEMP/package/tools/work"
+          python -I nx2/make_icon.py launcher/app.ico "$RUNNER_TEMP/package/tools/work"
 
       - name: Setup parts
         run: |

@@ -1,184 +1,200 @@
 # Project ReLink
 
-**Zelda OOT Remake Recomp.** Une recompilation statique, non officielle, de *The Legend of Zelda: Ocarina of Time* (le remake
-Switch 2) en jeu Windows natif : le code du jeu est traduit en code PC et compilé sur votre machine, sans émulateur.
+**Zelda OOT Remake Recomp.** An unofficial static recompilation of *The Legend of Zelda: Ocarina of Time* (the Switch 2
+remake) into a native Windows game: the game's code is translated to PC code and compiled on your machine, with no emulator.
 
-[English below](#english)
+[Français plus bas](#français)
 
-![Le lanceur de Project ReLink](docs/launcher.png)
+![The Project ReLink launcher](docs/launcher.png)
 
-**Ce dépôt ne contient aucun fichier du jeu.** ReLink fabrique le jeu sur votre PC à partir de votre propre copie.
+**No game files are in this repository.** ReLink builds the game on your PC from your own copy.
 
-## Installer et jouer
+## The game version you need
 
-1. Téléchargez `ReLink-Setup.exe` dans la [dernière version](https://github.com/pixl27/ProjectReLink/releases/latest).
-2. Lancez-le. Il télécharge ReLink et ses outils (environ 500 Mo), les vérifie et ouvre le lanceur. Rien d'autre à installer :
-   ReLink apporte son compilateur et son Python.
-3. Choisissez votre copie du jeu. Le lanceur cherche les fichiers `.nup` dans Téléchargements, Bureau et Documents ; vous
-   pouvez aussi en choisir un, le déposer sur la fenêtre, ou donner les dossiers `romfs` et `exefs`. La version est vérifiée.
-4. Appuyez sur **Installer**. Comptez 10 à 45 minutes selon le processeur ; le PC reste utilisable.
-5. Appuyez sur **Jouer**. Les raccourcis du bureau et du menu Démarrer ouvrent ensuite le lanceur.
+ReLink works with **one version of the game**: the Switch 2 remake with its update installed.
 
-![L'installation](docs/install.png)
-
-Tant qu'aucune version n'apparaît sur la page des versions, l'installateur n'est pas encore publié : voir
-[Construire depuis les sources](#construire-depuis-les-sources).
-
-### Ce qu'il vous faut
-
-- **Votre copie du jeu, dans la version prise en charge** : programme `0400486024DEC000`, mise à jour v131072, build
-  `e0f3ccfa`. Les autres versions ne fonctionnent pas. Un fichier `.nup`, ou les dossiers `romfs` et `exefs`.
-- Windows 10 ou 11, 64 bits, et un processeur avec AVX2.
-- Une carte graphique avec Vulkan 1.3 et les mesh shaders, pilote à jour : NVIDIA GeForce RTX 20 ou plus récente, AMD Radeon
-  RX 6000 ou plus récente, Intel Arc. Nous n'avons testé que sur NVIDIA.
-- 8 Go de mémoire vidéo conseillés, 16 Go de RAM ou plus.
-- Environ 60 Go libres pendant l'installation, et une connexion pour le téléchargement.
-
-### Mettre à jour
-
-Le lanceur dit quand une nouvelle version est sortie. **Mettre à jour** ne télécharge que ce qui a changé et reconstruit le
-jeu dans le même dossier à partir des fichiers du jeu qu'il garde : votre `.nup` n'est plus nécessaire. Les sauvegardes
-(`user`), les réglages et les mods sont conservés.
-
-### Où vont les fichiers
-
-- Le jeu : le dossier que vous choisissez (`Games\ReLink` dans votre dossier personnel par défaut). Votre copie n'est jamais
-  modifiée.
-- ReLink lui-même : `%LOCALAPPDATA%\ReLink`. Les fichiers de construction (environ 4 Go) sont supprimés quand le jeu est prêt.
-- Pour désinstaller : supprimez le dossier du jeu, `%LOCALAPPDATA%\ReLink` et les raccourcis.
-
-## Réglages
-
-Le lanceur règle l'affichage (plein écran, résolution du rendu 3D, mise à l'échelle, netteté, ultra-large), la fluidité
-(60 images par seconde ou débloqué, génération d'images), la langue du jeu et les contrôles. Il peut passer l'écran à 60 Hz le
-temps de la partie, pour que chaque image dure le même temps sur un écran à 100 ou 144 Hz, puis remet la fréquence d'origine.
-En jeu, **Inser** ou **F1** ouvre le même menu ; **F11** bascule le plein écran.
-
-Manette Xbox ou toute manette XInput ; clavier et souris aussi (la liste des touches est dans l'onglet Contrôles).
-
-## Images par seconde mesurées
-
-Sur notre configuration : **Ryzen 5 5500, GeForce RTX 3060 Ti (8 Go), 16 Go de RAM, Windows 11**. Jeu limité à 60 images par
-seconde, rendu 3D à 75 %, version 0.6.1. Ce sont des moyennes sur des fenêtres de 30 à 60 secondes.
-
-| Lieu | Images par seconde |
+| | |
 |---|---|
-| Plaine d'Hyrule, en marchant | 59,8 |
-| Village Cocorico, en marchant | 59,0 |
-| Château d'Hyrule, en marchant | 58,8 |
-| Bois perdus, en marchant | 59,6 |
-| Bosquet sacré, en marchant | 60,0 |
-| Lac Hylia, en marchant | 59,2 |
-| Fontaine Zora, en marchant | 58,3 |
-| Place du marché, en marchant | 54,1 |
-| Arbre Mojo, caverne Dodongo, puits (enfant) | 60 |
-| Ventre de Jabu-Jabu (enfant) | 58 à 60 |
-| Village Cocorico, temple du feu, forteresse Gerudo (adulte, à l'arrêt) | 60 |
-| Temple de l'eau (adulte, à l'arrêt) | 58,0 |
+| Program | `0400486024DEC000` |
+| Update | v131072 |
+| Build | `e0f3ccfa` |
 
-En rendu natif (100 %) : 51 à 53 dans les passages les plus chargés du village Kokiri, 53,5 à 56,7 dans la forêt, 52,8 à la
-fontaine Zora. À la fontaine Zora, la résolution du rendu décide : automatique 54,5, 75 % 58,3, 67 % 58,6, 50 % 60,0.
+Other versions do not work: the launcher checks your copy and says so before it installs anything. Your copy is either a
+`.nup` file, or the game's `romfs` and `exefs` folders.
 
-Ce qui n'est pas encore atteint ni mesuré : le 60 constant partout (la place du marché et le rendu natif restent en dessous),
-les combats de boss, les sessions de plus d'une demi-heure, et les cartes AMD et Intel.
+## Install and play
 
-## Si le jeu ralentit avec Link adulte : vérifier le dump
+1. Download `ReLink-Setup.exe` from the [latest release](https://github.com/pixl27/ProjectReLink/releases/latest).
+2. Run it. It downloads ReLink and its tools (about 500 MB), checks them and opens the launcher. Nothing else to install:
+   ReLink brings its own compiler and Python.
+3. Pick your copy of the game. The launcher looks for `.nup` files in Downloads, Desktop and Documents; you can also choose
+   one, drop it on the window, or give the `romfs` and `exefs` folders.
+4. Press **Install**. It takes 10 to 45 minutes depending on your CPU; you can keep using the PC.
+5. Press **Play**. The desktop and Start menu shortcuts open the launcher from then on.
 
-Certains dumps contiennent quelques textures abîmées. Le jeu recharge alors sans fin le modèle qui en a besoin, ce qui occupe
-plus d'un cœur du processeur en permanence dès que Link est adulte. Deux outils du dépôt s'en occupent, avec vos propres
-fichiers (rien du jeu n'est fourni) :
+![Installing](docs/install.png)
+
+Until a release shows on the releases page, the installer is not published yet: see [Build from source](#build-from-source).
+
+### What your PC needs
+
+- 64-bit Windows 10 or 11, and a CPU with AVX2.
+- A graphics card with Vulkan 1.3 and mesh shaders, with an up-to-date driver: NVIDIA GeForce RTX 20 series or newer, AMD
+  Radeon RX 6000 series or newer, Intel Arc. We only tested on NVIDIA.
+- 8 GB of video memory recommended, 16 GB of RAM or more.
+- About 60 GB free while it installs, and an internet connection for the download.
+
+### Updating
+
+The launcher says when a new release is out. **Update** downloads only what changed and builds the game again in the same
+folder, from the game files the folder keeps: your `.nup` is not needed again. Saves (`user`), settings and mods are kept.
+
+### Where the files go
+
+- The game: the folder you choose (`Games\ReLink` in your user folder by default). Your copy is never changed.
+- ReLink itself: `%LOCALAPPDATA%\ReLink`. The build files (about 4 GB) are deleted once the game is ready.
+- To uninstall: delete the game folder, `%LOCALAPPDATA%\ReLink` and the shortcuts.
+
+## Settings
+
+The launcher sets the display (full screen, 3D render resolution, upscaling, sharpness, ultrawide), the smoothness (60
+frames a second or unlocked, frame generation), the game's language and the controls. It can put the display at 60 Hz while
+you play, so that every frame lasts the same time on a 100 or 144 Hz display, and puts the display's own rate back
+afterwards. In the game, **Insert** or **F1** opens the same menu, and **F11** switches full screen.
+
+The launcher is in English; French is one click away on its Game page. An Xbox controller or any XInput controller works,
+and so do keyboard and mouse (the keys are listed on the Controls page).
+
+## Measured frame rates
+
+On our PC: **Ryzen 5 5500, GeForce RTX 3060 Ti (8 GB), 16 GB of RAM, Windows 11**. Game capped at 60 frames a second, 3D
+render resolution at 75 %, version 0.6.1. Averages over windows of 30 to 60 seconds.
+
+| Place | Frames a second |
+|---|---|
+| Hyrule Field, walking | 59.8 |
+| Kakariko Village, walking | 59.0 |
+| Hyrule Castle, walking | 58.8 |
+| Lost Woods, walking | 59.6 |
+| Sacred Forest Meadow, walking | 60.0 |
+| Lake Hylia, walking | 59.2 |
+| Zora's Fountain, walking | 58.3 |
+| Market, walking | 54.1 |
+| Inside the Deku Tree, Dodongo's Cavern, Bottom of the Well (child) | 60 |
+| Inside Jabu-Jabu's Belly (child) | 58 to 60 |
+| Kakariko Village, Fire Temple, Gerudo's Fortress (adult, standing) | 60 |
+| Water Temple (adult, standing) | 58.0 |
+
+At native render resolution (100 %): 51 to 53 in the heaviest views of Kokiri Forest's village, 53.5 to 56.7 in the forest,
+52.8 at Zora's Fountain. At Zora's Fountain the render resolution decides: automatic 54.5, 75 % 58.3, 67 % 58.6, 50 % 60.0.
+
+Not reached or not measured yet: a steady 60 everywhere (the Market and native resolution stay below), boss fights, sessions
+longer than half an hour, and AMD and Intel cards.
+
+## If the game slows down with adult Link: check your dump
+
+Some dumps hold a few damaged textures. The game then loads the model that needs one again and again for ever, which keeps
+more than one CPU core busy as soon as Link is an adult. Two tools in this repository deal with it, from your own files
+(nothing of the game is in them):
 
 ```powershell
 python -I tools/dump_check.py "C:\Games\ReLink\romfs\Tex"
 python -I tools/dump_repair.py "C:\Games\ReLink\romfs" "C:\Games\ReLink\mods\00-dump-repair"
 ```
 
-Le premier compte les fichiers abîmés ; le second écrit un petit mod qui remplace ceux qu'il connaît par une texture voisine
-intacte. Ils demandent le paquet `zstandard`, que le Python de ReLink possède
+The first counts the damaged files; the second writes a small mod that stands in for the ones it knows with an intact
+texture of the same family. They need the `zstandard` package, which ReLink's own Python has
 (`%LOCALAPPDATA%\ReLink\versions\<version>\ReLink\tools\python\python.exe`).
 
 ## Mods
 
-Les mods RomFS vont dans `mods\<nom>\romfs\...` dans le dossier du jeu, avec les mêmes chemins que le jeu. Le journal
-(`hookshot_log.txt`) nomme chaque mod lu. Les patchs du code (`exefs`) ne sont pas pris en charge : le code est compilé à
-l'avance.
+RomFS mods go in `mods\<name>\romfs\...` in the game folder, with the same paths as the game's. The log
+(`hookshot_log.txt`) names each mod it reads. Patches of the game's code (`exefs`) are not supported: the code is compiled
+ahead of time.
 
-## Construire depuis les sources
+## Build from source
 
-Pour les développeurs. Le lanceur exécute le même script, `nx2/make_game.py`.
+For developers. The launcher runs the same script, `nx2/make_game.py`.
 
 ```powershell
-python -I nx2/make_game.py --nup "C:\chemin\votre-jeu.nup" --out "C:\Games\ReLink" --language fr
-python -I nx2/make_game.py --romfs "C:\chemin\romfs" --exefs "C:\chemin\exefs" --out "C:\Games\ReLink" --language fr
+python -I nx2/make_game.py --nup "C:\path\your-game.nup" --out "C:\Games\ReLink" --language en-US
+python -I nx2/make_game.py --romfs "C:\path\romfs" --exefs "C:\path\exefs" --out "C:\Games\ReLink" --language en-US
 ```
 
-`--check` avec votre `.nup` vérifie seulement la version. `--log fichier` garde la sortie. `HOOKSHOT_JOBS=<n>` limite le nombre
-de fichiers compilés à la fois.
+`--check` with your `.nup` only checks the game's version. `--log file` keeps the output. `HOOKSHOT_JOBS=<n>` limits how many
+files compile at once.
 
-Il faut :
+You need:
 
-- Python 3 de python.org, avec `pip install lz4 numpy capstone "unicorn>=2.1,<2.2" zstandard`.
-- [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (la version `ucrt-x86_64`), décompressé en `llvm-mingw` dans le clone,
-  ou `HOOKSHOT_MINGW` pointant sur son dossier.
-- Les en-têtes Vulkan et FFmpeg dans la disposition du cache CPM, avec `RX_CPM` pointant sur leur dossier. Sans eux, le
-  rendu Vulkan n'est pas construit.
-- Les fichiers précompilés de `third_party` et le profil de jeu de `work`. Un ReLink installé les contient, dans
+- Python 3 from python.org, with `pip install lz4 numpy capstone "unicorn>=2.1,<2.2" zstandard`.
+- [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (the `ucrt-x86_64` build), unpacked as `llvm-mingw` in the clone, or
+  `HOOKSHOT_MINGW` set to its folder.
+- The Vulkan headers and FFmpeg in the CPM cache's layout, with `RX_CPM` set to their folder. Without them the Vulkan
+  renderer is not built.
+- The prebuilt files of `third_party` and the play profile of `work`. An installed ReLink holds them, in
   `%LOCALAPPDATA%\ReLink\versions\<version>\ReLink\tools`.
 
-Le lanceur est dans `launcher/` (`dotnet build`, .NET 9), le petit installateur dans `launcher/setup/`. La publication d'une
-version est décrite dans [docs/releasing.md](docs/releasing.md).
+The launcher is in `launcher/` (`dotnet build`, .NET 9), the small setup in `launcher/setup/`. Publishing a release is
+described in [docs/releasing.md](docs/releasing.md).
 
-### Comment ça marche
+### How it works
 
-1. `nx2/lift.py` traduit le code ARM64 du jeu en C.
-2. `nx2/build.py` compile ce C avec `host/`, qui tient le rôle du système de la console.
-3. `host/nvn_native.c` enregistre les appels graphiques du jeu, et `gpu/vk/` les rejoue sur Vulkan.
+1. `nx2/lift.py` translates the game's ARM64 code to C.
+2. `nx2/build.py` compiles that C together with `host/`, which plays the part of the console's system.
+3. `host/nvn_native.c` records the game's graphics calls, and `gpu/vk/` replays them on Vulkan.
 
-## Licence
+## License
 
-Project ReLink est un logiciel libre sous la [licence publique générale GNU, version 3 ou ultérieure](LICENSE)
-(GPL-3.0-or-later). Il reprend et modifie du code publié sous GPL par d'autres projets (modifications de novembre 2026) ; les
-mentions de droits d'auteur et les licences de chaque partie sont conservées dans leurs fichiers et leurs dossiers.
+Project ReLink is free software under the [GNU General Public License, version 3 or later](LICENSE) (GPL-3.0-or-later). It
+reuses and modifies code published under the GPL by other projects (modified in November 2026); each part keeps its
+copyright notices and licenses in its files and folders.
 
-Project ReLink est un projet de fans non officiel, sans lien avec Nintendo. The Legend of Zelda et Ocarina of Time sont des
-marques de Nintendo.
+Project ReLink is an unofficial fan project, not affiliated with or endorsed by Nintendo. The Legend of Zelda and Ocarina
+of Time are trademarks of Nintendo.
 
 ---
 
-## English
+## Français
 
-**Project ReLink** is an unofficial static recompilation of *The Legend of Zelda: Ocarina of Time* (the Switch 2 remake) into
-a native Windows game: the game's code is translated to PC code and compiled on your machine, with no emulator.
-**No game files are in this repository**: ReLink builds the game on your PC from your own copy.
+**Project ReLink** est une recompilation statique, non officielle, de *The Legend of Zelda: Ocarina of Time* (le remake
+Switch 2) en jeu Windows natif : le code du jeu est traduit en code PC et compilé sur votre machine, sans émulateur.
+**Ce dépôt ne contient aucun fichier du jeu** : ReLink fabrique le jeu sur votre PC à partir de votre propre copie.
 
-### Install and play
+### La version du jeu qu'il vous faut
 
-1. Download `ReLink-Setup.exe` from the [latest release](https://github.com/pixl27/ProjectReLink/releases/latest).
-2. Run it. It downloads ReLink and its tools (about 500 MB), checks them and opens the launcher. Nothing else to install.
-3. Pick your copy of the game: a `.nup` file (the launcher looks in Downloads, Desktop and Documents; you can also browse or
-   drop it on the window), or the `romfs` and `exefs` folders. The version is checked.
-4. Press **Install**. It takes 10 to 45 minutes depending on your CPU; you can keep using the PC.
-5. Press **Play**. The launcher is in English when Windows is not in French.
+Une seule version fonctionne : le remake Switch 2 avec sa mise à jour installée (programme `0400486024DEC000`, mise à jour
+v131072, build `e0f3ccfa`), en fichier `.nup` ou en dossiers `romfs` et `exefs`. Le lanceur vérifie votre copie avant
+d'installer quoi que ce soit.
 
-Until a release shows on the releases page, the installer is not published yet: see "Construire depuis les sources" above
-(the commands are the same in any language).
+### Installer et jouer
 
-You need the supported game version (program `0400486024DEC000`, update v131072, build `e0f3ccfa`), 64-bit Windows 10 or 11, a
-CPU with AVX2, a graphics card with Vulkan 1.3 and mesh shaders (GeForce RTX 20 series or newer, Radeon RX 6000 or newer, Intel
-Arc; only NVIDIA was tested by us), 16 GB of RAM, and about 60 GB free while it installs.
+1. Téléchargez `ReLink-Setup.exe` dans la [dernière version](https://github.com/pixl27/ProjectReLink/releases/latest).
+2. Lancez-le. Il télécharge ReLink et ses outils (environ 500 Mo), les vérifie et ouvre le lanceur. Rien d'autre à installer.
+3. Choisissez votre copie du jeu : le lanceur cherche les `.nup` dans Téléchargements, Bureau et Documents ; vous pouvez aussi
+   en choisir un, le déposer sur la fenêtre, ou donner les dossiers `romfs` et `exefs`.
+4. Appuyez sur **Install**. Comptez 10 à 45 minutes selon le processeur ; le PC reste utilisable.
+5. Appuyez sur **Play**. Le lanceur est en anglais par défaut ; le français se choisit dans sa page Game.
 
-The launcher says when a new release is out; **Update** downloads only what changed and rebuilds the game in place. Saves,
-settings and mods are kept.
+Tant qu'aucune version n'apparaît sur la page des versions, l'installateur n'est pas encore publié : voir « Build from
+source » plus haut.
 
-### Measured frame rates
+Il faut Windows 10 ou 11 en 64 bits, un processeur avec AVX2, une carte graphique avec Vulkan 1.3 et les mesh shaders
+(GeForce RTX 20 ou plus récente, Radeon RX 6000 ou plus récente, Intel Arc ; nous n'avons testé que sur NVIDIA), 16 Go de RAM
+et environ 60 Go libres pendant l'installation.
 
-On a Ryzen 5 5500, GeForce RTX 3060 Ti (8 GB), 16 GB of RAM, Windows 11, with the 60 fps cap and the 3D render resolution at
-75 %: 58 to 60 fps in most places (Hyrule Field 59.8, Kakariko 59.0, Lake Hylia 59.2, Zora's Fountain 58.3; dungeons 58 to
-60), 54.1 walking through the Market. A steady 60 everywhere is not reached yet, and boss fights, long sessions and AMD or
-Intel cards have not been measured. The full table is in the French section.
+Le lanceur dit quand une nouvelle version est sortie ; **Update** ne télécharge que ce qui a changé et reconstruit le jeu sur
+place. Les sauvegardes, les réglages et les mods sont conservés.
 
-### License
+### Images par seconde mesurées
 
-GPL-3.0-or-later ([LICENSE](LICENSE)). It reuses and modifies code published under the GPL by other projects (modified in
-November 2026); each part keeps its copyright notices and licenses in its files and folders. Unofficial fan project, not
-affiliated with Nintendo; The Legend of Zelda and Ocarina of Time are trademarks of Nintendo.
+Sur un Ryzen 5 5500, une GeForce RTX 3060 Ti (8 Go), 16 Go de RAM et Windows 11, jeu limité à 60 images par seconde et rendu
+3D à 75 % : 58 à 60 dans la plupart des lieux (plaine d'Hyrule 59,8, village Cocorico 59,0, lac Hylia 59,2, fontaine Zora
+58,3, donjons 58 à 60) et 54,1 en traversant la place du marché. Le 60 constant partout n'est pas encore atteint, et les
+combats de boss, les longues sessions et les cartes AMD et Intel n'ont pas été mesurés. Le tableau complet est dans la partie
+anglaise.
+
+### Licence
+
+GPL-3.0-or-later ([LICENSE](LICENSE)). Le projet reprend et modifie du code publié sous GPL par d'autres projets
+(modifications de novembre 2026) ; chaque partie garde ses mentions de droits d'auteur et ses licences dans ses fichiers.
+Projet de fans non officiel, sans lien avec Nintendo ; The Legend of Zelda et Ocarina of Time sont des marques de Nintendo.

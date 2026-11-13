@@ -19,7 +19,7 @@ public partial class MainWindow
     bool display60Possible;
 
     CheckBox Fullscreen = null!, Display60 = null!, FpsCounter = null!, Ultrawide = null!, FramePacing = null!, Audio = null!, Handheld = null!, InvertY = null!;
-    WrapPanel ResolutionGroup = null!, UpscaleGroup = null!, FrameRateGroup = null!, SpeedGroup = null!, FramegenGroup = null!;
+    WrapPanel ResolutionGroup = null!, UpscaleGroup = null!, FrameRateGroup = null!, SpeedGroup = null!, FramegenGroup = null!, UiLanguageGroup = null!;
     Slider Sharpness = null!;
     TextBlock SharpnessText = null!, Display60Hint = null!, FolderText = null!;
     ComboBox LanguageBox = null!;
@@ -105,6 +105,9 @@ public partial class MainWindow
         Grid.SetColumn(LanguageBox, 1);
         lang.Children.Add(LanguageBox);
         RowsGame.Children.Add(new Border { Style = St("Row"), Child = lang });
+        UiLanguageGroup = ChoiceRow(RowsGame, L("Langue du lanceur", "Launcher language"),
+                  L("Le changement se voit à la prochaine ouverture de ReLink.", "The change shows the next time ReLink opens."),
+                  "UiLanguage", (0, "English"), (1, "Français"));
         SwitchRow(RowsGame, L("Son", "Sound"), null, out Audio, out _);
         SwitchRow(RowsGame, L("Profil portable", "Handheld profile"),
                   L("Les réglages graphiques du mode portable : plus léger, plus flou.", "The handheld mode's graphics settings: lighter, softer."), out Handheld, out _);
@@ -205,6 +208,7 @@ public partial class MainWindow
         OnPick(FrameRateGroup, v => s.FrameRate = v);
         OnPick(SpeedGroup, v => s.GameSpeed = v);
         OnPick(FramegenGroup, v => s.FrameGeneration = v);
+        OnPick(UiLanguageGroup, v => s.UiLanguage = v == 1 ? "fr" : "en");
         Sharpness.ValueChanged += (_, e) =>
         {
             SharpnessText.Text = $"{(int)e.NewValue} %";
@@ -231,6 +235,7 @@ public partial class MainWindow
         Pick(UpscaleGroup, s.Upscaling);
         Pick(FrameRateGroup, s.FrameRate);
         Pick(FramegenGroup, s.FrameGeneration);
+        Pick(UiLanguageGroup, s.UiLanguage == "fr" ? 1 : 0);
         Sharpness.Value = s.Sharpness;
         SharpnessText.Text = $"{s.Sharpness} %";
         var items = (List<LangItem>)LanguageBox.ItemsSource;

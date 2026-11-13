@@ -2,13 +2,24 @@ using System.Globalization;
 
 namespace ReLink;
 
-/// The launcher's words: French on a French Windows, English elsewhere (RELINK_LANG=fr or en chooses, for tests). And the names
-/// and addresses the project goes by.
+/// The launcher's words: English unless the player chose French (the Game page's "Launcher language", kept in launcher.ini;
+/// RELINK_LANG=fr or en chooses for one run, for tests). And the names and addresses the project goes by.
 static class Texts
 {
-    public static readonly bool French =
-        (Environment.GetEnvironmentVariable("RELINK_LANG") is { Length: > 0 } forced ? forced : CultureInfo.CurrentUICulture.TwoLetterISOLanguageName)
-        .StartsWith("fr", StringComparison.OrdinalIgnoreCase);
+    public static readonly bool French = Chosen().StartsWith("fr", StringComparison.OrdinalIgnoreCase);
+
+    /// The language this run speaks: it is read once, so a change shows the next time the launcher opens
+    static string Chosen()
+    {
+        if (Environment.GetEnvironmentVariable("RELINK_LANG") is { Length: > 0 } forced) return forced;
+        try
+        {
+            foreach (var line in System.IO.File.ReadAllLines(System.IO.Path.Combine(Storage.Base, "launcher.ini")))
+                if (line.StartsWith("ui_language=")) return line[12..].Trim();
+        }
+        catch (Exception) { }
+        return "en";
+    }
 
     public static string L(string fr, string en) => French ? fr : en;
 

@@ -49,6 +49,8 @@ sealed class Settings
                GameSpeed = 0, Handheld = 0, Ultrawide = 0, FpsCounter = 0;
     // the launcher's
     public bool Display60 = true, Audio = true, InvertY = false;
+    /// The launcher's own language: en (the default) or fr (Texts.cs reads it when the launcher opens)
+    public string UiLanguage = Texts.French ? "fr" : "en";
     public string Language = Texts.GameLanguageOfWindows();
     /// The game folder (empty: none yet)
     public string Folder = "";
@@ -90,6 +92,7 @@ sealed class Settings
         s.Display60 = Bool(l, "display_60hz", true);
         s.Audio = Bool(l, "audio", true);
         s.InvertY = Bool(l, "invert_y", false);
+        if (l.TryGetValue("ui_language", out var ui) && ui is "en" or "fr") s.UiLanguage = ui;
         var here = AppContext.BaseDirectory.TrimEnd('\\', '/');
         var candidates = new[]
         {
@@ -149,6 +152,7 @@ sealed class Settings
         sb.AppendLine($"display_60hz={(Display60 ? 1 : 0)}");
         sb.AppendLine($"audio={(Audio ? 1 : 0)}");
         sb.AppendLine($"invert_y={(InvertY ? 1 : 0)}");
+        sb.AppendLine($"ui_language={UiLanguage}");
         sb.AppendLine($"game_folder={Folder}");
         Directory.CreateDirectory(Storage.Base);
         File.WriteAllText(LauncherIni, sb.ToString());

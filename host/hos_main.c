@@ -1266,7 +1266,7 @@ static int game_main(int argc, char **argv) {
             if (freopen(path, "w", stderr)) setvbuf(stderr, NULL, _IONBF, 0);
         }
     }
-    hos_log("hookshot %s", HOOKSHOT_VERSION);   /* (the log's first line: which build a report comes from) */
+    hos_log("Project ReLink %s", HOOKSHOT_VERSION);   /* (the log's first line: which build a report comes from) */
     const char *image = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--romfs") && i + 1 < argc) hos_romfs_dir = argv[++i];

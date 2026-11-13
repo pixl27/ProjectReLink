@@ -66,8 +66,8 @@ public partial class MainWindow : Window
         UpdateLink.Content = L("Mettre à jour", "Update");
 
         InstallTitle.Text = L("Installer le jeu", "Install the game");
-        InstallSub.Text = L("ReLink fabrique le jeu sur ce PC à partir de votre propre copie. Cela se fait une fois et prend de 10 à 45 minutes ; le PC reste utilisable pendant ce temps.",
-                            "ReLink builds the game on this PC from your own copy. It happens once and takes 10 to 45 minutes; you can keep using the PC meanwhile.");
+        InstallSub.Text = L("ReLink fabrique le jeu sur ce PC à partir de votre propre copie. Il faut le jeu avec sa mise à jour v131072 (build e0f3ccfa) : les autres versions ne fonctionnent pas. Cela se fait une fois et prend de 10 à 45 minutes.",
+                            "ReLink builds the game on this PC from your own copy. It needs the game with its update v131072 (build e0f3ccfa): other versions do not work. It happens once and takes 10 to 45 minutes.");
         CopyHead.Text = L("Votre copie du jeu", "Your copy of the game");
         BrowseNupLink.Content = L("Choisir un fichier .nup…", "Choose a .nup file…");
         BrowseFoldersLink.Content = L("Choisir les dossiers romfs et exefs…", "Choose the romfs and exefs folders…");
