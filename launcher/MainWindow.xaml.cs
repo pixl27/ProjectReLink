@@ -229,6 +229,7 @@ public partial class MainWindow : Window
                 ShowInstall();
                 break;
             case "build":
+                outPath = @"E:\Games\ReLink";
                 MakeRows(update: false);
                 Show(View.Build);
                 BuildTitle.Text = L("Installation en cours", "Installing the game");
