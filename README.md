@@ -25,7 +25,7 @@ Other versions do not work: the launcher checks your copy and says so before it 
 ## Install and play
 
 1. Download `ReLink-Setup.exe` from the [latest release](https://github.com/pixl27/ProjectReLink/releases/latest).
-2. Run it. It downloads ReLink and its tools (about 500 MB), checks them and opens the launcher. Nothing else to install:
+2. Run it. It downloads ReLink and its tools (about 310 MB), checks them and opens the launcher. Nothing else to install:
    ReLink brings its own compiler and Python.
 3. Pick your copy of the game. The launcher looks for `.nup` files in Downloads, Desktop and Documents; you can also choose
    one, drop it on the window, or give the `romfs` and `exefs` folders.
@@ -177,7 +177,7 @@ d'installer quoi que ce soit.
 ### Installer et jouer
 
 1. Téléchargez `ReLink-Setup.exe` dans la [dernière version](https://github.com/pixl27/ProjectReLink/releases/latest).
-2. Lancez-le. Il télécharge ReLink et ses outils (environ 500 Mo), les vérifie et ouvre le lanceur. Rien d'autre à installer.
+2. Lancez-le. Il télécharge ReLink et ses outils (environ 310 Mo), les vérifie et ouvre le lanceur. Rien d'autre à installer.
 3. Choisissez votre copie du jeu : le lanceur cherche les `.nup` dans Téléchargements, Bureau et Documents ; vous pouvez aussi
    en choisir un, le déposer sur la fenêtre, ou donner les dossiers `romfs` et `exefs`.
 4. Appuyez sur **Install**. Comptez 10 à 45 minutes selon le processeur ; le PC reste utilisable.

@@ -14,23 +14,32 @@ release of their own, `builder-parts`. No game data is involved at any step.
 
 Players' launchers then offer the update: they compare the game folder's version with the latest release's tag.
 
-## The first release
+## The seed: the first release, new tools, a new play profile
 
-The setup installs seven parts. Two are made from this repository at every release (the launcher with the sources, and .NET's
-runtime) and one from the files listed here (third_party). The other four, Python, emsdk, the CPM packages and wgpu-native,
-are tools that change rarely and are not rebuilt in CI: each release takes them from the release before it.
+The setup installs six parts. Three are made from this repository at every release: the launcher with the sources and the
+play profile (`app`), .NET's runtime (`dotnet`) and `third_party`. llvm-mingw, the compiler, comes from its own official
+release. The other two are tools that change rarely and are not rebuilt in CI: Python with the build's modules (`python`)
+and the Vulkan headers with FFmpeg's libraries (`cpm`). Each release takes those two, and the play profile, from the
+release before it.
 
-A repository with no release yet has nothing to take them from. Set two repository variables (Settings, Secrets and variables,
-Actions, Variables) before the first tag:
+A repository with no release yet has nothing to take them from, and a new play profile or a new Python has to come from
+somewhere too. That is the seed, made on the maintainer's PC by `scripts/make_seed.py` from three folders:
 
-- `BOOTSTRAP_REPO`: `owner/name` of a repository whose latest stable release holds a setup list with those parts.
-- `BOOTSTRAP_LIST`: that list's file name in its releases.
+- `--python`: python.org's embeddable package for Windows (3.12), unpacked, with `Lib\site-packages` and `import site` added
+  to its `python312._pth`, and `pip install --target <folder>\Lib\site-packages lz4 numpy capstone "unicorn>=2.1,<2.2"
+  zstandard` (delete the `bin` folder pip adds: its launchers hold the path of the Python that ran pip).
+- `--cpm`: from a CPM cache, `vulkanheaders/<version>` and `spirv-headers/<version>` (their `include` and license files),
+  `vulkanmemoryallocator/<version>` (`include`, license) and `ffmpeg/<version>` (`include`, and `avcodec`, `avutil`,
+  `swresample` and `swscale` of `lib`; the build used so far is Takoroka/ffmpeg-av1's 9.0.2-av1-1 for Windows).
+- `--work`: the play profile, `hot_funcs.txt`, `relink_pieces.prof` and `image/chunks.txt` of the build folder the profile
+  was made in. Addresses and counts; no game code.
 
-The workflow then downloads those four parts, repacks them under this project's name (`scripts/release_parts.py adopt`) and
-uploads them to this repository's `builder-parts` release, so players only ever download from here. The play profile and the
-prebuilt third_party files come from that same release. Once a first release exists, the variables can be removed.
+It writes three zips and `relink-seed.txt`. Upload the four files to the `builder-parts` release (a prerelease, made by hand
+the first time), then set the repository variable `SEED_LIST` (Settings, Secrets and variables, Actions, Variables) to
+`relink-seed.txt`. While the variable is set, the workflow starts from the seed instead of the latest release's list.
+Remove it once a release made from the seed is out: the next releases then chain from that one.
 
-The repository must be public for players to download a release's files.
+The repository must be public for players to download a release's files, and for the workflow to read the seed.
 
 ## Checking a release before it is the latest
 

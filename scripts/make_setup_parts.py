@@ -13,8 +13,9 @@ release lacks). Scripts the build does not use (.ps1, .bat, .js,
 .html: antivirus machine-learning guesses fire on them) are left out.
 
 --reuse: a part whose tools/<name> folder the package lacks is taken from that list as it is (its line, with its URL), so a
-package made in CI (.github/workflows/windows.yml) carries the Python, emsdk, CPM and wgpu-native parts the maintainer
-made. Without the folder and without the part in that list it is an error.
+package made in CI (.github/workflows/windows.yml) carries the Python and CPM parts the maintainer made (and emsdk and
+wgpu-native ones when the list has them). Without the folder and without the part in that list it is an error for
+Python and CPM; a release can go without emsdk and wgpu-native.
 """
 import argparse
 import hashlib
@@ -25,6 +26,8 @@ import zipfile
 SKIP_EXT = {".ps1", ".psm1", ".bat", ".cmd", ".js", ".vbs", ".html", ".htm", ".hta", ".wsf", ".pyc"}
 SKIP_DIRS = {"__pycache__"}
 TOOLS_PARTS = ("python", "emsdk", "cpm", "third_party", "wgpu-native")   # (tools/<name>: each its own part)
+# (a release can go without these: llvm-mingw is the compiler, and without wgpu-native the game is built with its Vulkan renderer alone)
+OPTIONAL_PARTS = ("emsdk", "wgpu-native")
 LLVM = ("552191b5754c49a5a20723276a6fc56541ea1922c4c50b7b669022333fc1b40f", 191037046,
         "llvm-mingw-20261104-ucrt-x86_64",
         "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-x86_64.zip")
@@ -101,10 +104,11 @@ def main():
     for name in ("app", "dotnet") + TOOLS_PARTS:
         if not parts.get(name):
             if a.reuse and name in TOOLS_PARTS:
-                if name not in reuse:
+                if name in reuse:
+                    lines.append(reuse[name])
+                    print("%-12s (as in %s)" % (name, os.path.basename(a.reuse)), flush=True)
+                elif name not in OPTIONAL_PARTS:
                     sys.exit("no tools/%s in the package and no %s part in %s" % (name, name, a.reuse))
-                lines.append(reuse[name])
-                print("%-12s (as in %s)" % (name, os.path.basename(a.reuse)), flush=True)
             continue
         zp = os.path.join(a.out, "ReLink-%s.zip" % name)
         sha, size = write_zip(zp, root, parts[name])

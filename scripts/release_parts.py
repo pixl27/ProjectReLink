@@ -2,14 +2,15 @@
 (.github/workflows/windows.yml). No game data is involved: the parts hold the builder, its tools
 and the play profile (addresses and counts made on the development PC).
 
-    python -I scripts/release_parts.py previous <out list> --repo <owner/name> [--repo ...] [--skip-tag <tag>]
+    python -I scripts/release_parts.py previous <out list> --repo <owner/name> [--repo ...] [--skip-tag <tag>] [--seed <name>]
         the newest stable release's relink-setup.txt (of the first repository that has one; not --skip-tag's, the release
-        being made); prints that release's tag. Exits 1 when no repository has one.
+        being made); prints that release's tag. Exits 1 when no repository has one. --seed: the list of that name in the
+        first repository's builder-parts release wins when it is there (scripts/make_seed.py: the maintainer's own parts)
     python -I scripts/release_parts.py adopt <setup list> <new list> <out folder> --base <url>
         the list's Python, emsdk, CPM and wgpu-native parts repacked under this project's name into <out folder>, and the
         list written again with them (a first release has no parts of its own: it starts from another release's)
     python -I scripts/release_parts.py profile <setup list> <work folder>
-        the play profile (tools/work of the list's app part) into <work folder>
+        the play profile (tools/work of the list's profile part, or of its app part) into <work folder>
     python -I scripts/release_parts.py llvm-mingw <folder> [--name]
         llvm-mingw as scripts/make_setup_parts.py names it (its official release, SHA-256 checked) unpacked into <folder>;
         prints its folder. --name: only prints its name (a cache key)
@@ -65,6 +66,19 @@ def get(url, api=False, tries=5):
 
 
 def previous(a):
+    if a.seed:
+        try:
+            parts = json.loads(get("https://api.github.com/repos/%s/releases/tags/builder-parts" % a.repo[0], api=True))
+            url = next((x["browser_download_url"] for x in parts["assets"] if x["name"] == a.seed), None)
+        except urllib.error.HTTPError as e:
+            print("%s: builder-parts: %s" % (a.repo[0], e), file=sys.stderr)
+            url = None
+        if url:
+            with open(a.out, "wb") as f:
+                f.write(get(url))
+            print("seed")
+            return 0
+        print("no %s in %s's builder-parts release: the releases' lists instead" % (a.seed, a.repo[0]), file=sys.stderr)
     for repo in a.repo:
         try:
             releases = json.loads(get("https://api.github.com/repos/%s/releases?per_page=30" % repo, api=True))
@@ -197,9 +211,10 @@ def extract(zip_path, prefix, dest, keep=lambda rel: True):
 
 
 def profile(a):
-    app = named_part(a.list, "app")
+    # (a seed has the profile as a part of its own; a release's list has it in its app part)
+    app = named_part(a.list, "profile") or named_part(a.list, "app")
     if not app:
-        sys.exit("no app part in %s" % a.list)
+        sys.exit("no profile or app part in %s" % a.list)
     n = extract(app, top_folder(app) + "/tools/work/", a.work)
     print("%d profile files into %s" % (n, a.work))
     return 0
@@ -269,6 +284,7 @@ def main():
     s.add_argument("--repo", action="append", required=True)
     s.add_argument("--skip-tag", default="")
     s.add_argument("--list-name", action="append", help="the list's file name in a release (default relink-setup.txt; may be given more than once)")
+    s.add_argument("--seed", default="", help="a list's file name in the first repository's builder-parts release: it wins when it is there")
     s = sub.add_parser("adopt")
     s.add_argument("list")
     s.add_argument("new_list")

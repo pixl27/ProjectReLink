@@ -1,8 +1,8 @@
 # What a Windows player downloads, made without game data: ReLink-Setup.exe (launcher/setup/setup.c, built with llvm-mingw) and
 # the ReLink package (the launcher from dotnet publish, and the sources and tools the game is built with on the player's PC),
-# split by scripts/make_setup_parts.py into the parts the setup downloads. The Python, emsdk, CPM and wgpu-native parts, the
-# prebuilt third_party files and the play profile are the latest release's (scripts/release_parts.py); a repository with no
-# release yet starts from the release named by its BOOTSTRAP_REPO and BOOTSTRAP_LIST variables (docs/releasing.md).
+# split by scripts/make_setup_parts.py into the parts the setup downloads. The Python and CPM parts and the play profile are
+# the latest release's (scripts/release_parts.py), or the seed's when the SEED_LIST variable names one in the builder-parts
+# release (scripts/make_seed.py: a first release, or new tools or a new profile; docs/releasing.md).
 # The Vulkan back end is compiled too, with the same llvm-mingw: players build it on their PC, this only checks that it builds.
 # Every run leaves a workflow artifact. On a version tag (v1.2.3), the new parts go to the builder-parts release, and the setup
 # and its list (relink-setup.txt) to the tag's release.
@@ -76,17 +76,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BOOTSTRAP_REPO: ${{ vars.BOOTSTRAP_REPO }}
           BOOTSTRAP_LIST: ${{ vars.BOOTSTRAP_LIST }}
+          SEED_LIST: ${{ vars.SEED_LIST }}
         run: |
           mkdir -p dist
           if python -I scripts/release_parts.py previous "$RUNNER_TEMP/found-setup.txt" \
               --repo "$GITHUB_REPOSITORY" ${BOOTSTRAP_REPO:+--repo "$BOOTSTRAP_REPO"} \
-              --list-name relink-setup.txt ${BOOTSTRAP_LIST:+--list-name "$BOOTSTRAP_LIST"} --skip-tag "$TAG"; then
+              --list-name relink-setup.txt ${BOOTSTRAP_LIST:+--list-name "$BOOTSTRAP_LIST"} \
+              ${SEED_LIST:+--seed "$SEED_LIST"} --skip-tag "$TAG"; then
             # (tool parts made under another name are repacked under this one, into dist: they are this repository's from then on)
             python -I scripts/release_parts.py adopt "$RUNNER_TEMP/found-setup.txt" "$RUNNER_TEMP/previous-setup.txt" dist \
               --base "https://github.com/$GITHUB_REPOSITORY/releases/download/builder-parts"
             echo "PREVIOUS=$RUNNER_TEMP/previous-setup.txt" >> "$GITHUB_ENV"
           elif [[ $GITHUB_REF == refs/tags/* ]]; then
-            echo "::error::no earlier release's setup list: set the BOOTSTRAP_REPO and BOOTSTRAP_LIST variables (docs/releasing.md)"
+            echo "::error::no earlier release's setup list and no seed: upload one and set the SEED_LIST variable (docs/releasing.md)"
             exit 1
           else
             echo "::warning::no earlier release's setup list: the package has only the app and .NET parts"
