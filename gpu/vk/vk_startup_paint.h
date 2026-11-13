@@ -1,13 +1,19 @@
-// (relink) The start-up screen's picture (vk_menu.cpp draws it, vk_main.cpp says what is in it): the ReLink wordmark and
-// the build's version, then what the start is doing: a step, a title with its percentage, a rounded bar, the count and the time
-// left, and a hint. Plain GDI (on Linux host/posix/gdi_posix.c), nothing else: tests/test_startup_progress.py and the offline
-// render in it include this file on its own.
+// (relink) The start-up screen's picture (vk_menu.cpp draws it, vk_main.cpp says what is in it). The whole window is one
+// landscape, painted here from nothing but arithmetic: a night sky with its stars and a crescent, five ridges going back into
+// the mist, pines on the near ones, fireflies. As the start goes on the night ends: the sky warms from the horizon, the sun
+// comes up behind the far range and lights its edges. Over it, the project's mark and name, one word, one large number, a
+// line of light along the bottom whose head is how far the start is, the time left and a tip.
+// The sky, the ridges and the sun are kept between frames and painted again only when the dawn has moved; what moves every
+// frame (stars that twinkle, fireflies, the line's head, the text) is drawn over a copy. Pixels are written straight into the
+// 32-bit bitmap; the text is plain GDI (on Linux host/posix/gdi_posix.c). No picture file, no font of our own.
 #pragma once
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "vk_progress.h"   // (StartupView)
 #if __has_include("relink_logo.h")
@@ -16,20 +22,15 @@
 
 namespace mkwvk {
 
-constexpr int kLogoH = 112;                        // (the logo's height at 720 lines)
-constexpr int kStartupW = 640, kStartupH = 280 + kLogoH + 16;   // (the panel at 720 lines; it scales with the window)
-
-/// The panel's scale in percent for a w x h window: by the height (100 at 720 lines, 150 at 1080, 200 at 1440), never wider
-/// than the window allows
-inline int startup_scale(uint32_t w, uint32_t h) {
-    const int by_h = (int)(h * 100 / 720), by_w = (int)(w * 100 / (kStartupW + 80));
-    return std::max(50, std::min(by_h, by_w));
-}
-
 namespace startup_gdi {
 inline HFONT font(int px, int weight) {
     return CreateFontA(-px, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                        DEFAULT_PITCH, "Segoe UI");
+}
+/// A face by name (the launcher's two: Palatino Linotype for what is read large, Candara for the rest)
+inline HFONT face(const char* name, int px, int weight) {
+    return CreateFontA(-px, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                       DEFAULT_PITCH, name);
 }
 inline void fill(HDC dc, int x, int y, int w, int h, COLORREF c) {
     if (w <= 0 || h <= 0) return;
@@ -115,87 +116,506 @@ inline void blit_logo(uint32_t* bits, int w, int h, int cx, int y, int lh) {
 #endif
 }
 
-/// The panel into dc, w x h pixels at scale pct (startup_scale), black behind it as the window is. bits: the DIB's pixels (32-bit,
-/// top-down, w wide), for the logo; null: none
-inline void paint_startup_view(HDC dc, uint32_t w, uint32_t h, int pct, const StartupView& v, uint32_t* bits = nullptr) {
-    using namespace startup_gdi;
-    const auto S = [pct](double px) { return (int)std::lround(px * pct / 100.0); };
-    const int top = S(kLogoH + 16);   // (the logo above the wordmark)
-    const auto Y = [&](double px) { return top + S(px); };
-    const COLORREF ink = RGB(236, 240, 236), soft = RGB(176, 186, 180), dim = RGB(112, 122, 116), accent = RGB(104, 186, 124);
-    fill(dc, 0, 0, (int)w, (int)h, RGB(0, 0, 0));
-    SetBkMode(dc, TRANSPARENT);
-    const int cx = (int)w / 2;
-    HFONT mark = font(S(40), FW_BOLD), ver = font(S(10.5), FW_NORMAL), step = font(S(12), FW_BOLD), title = font(S(22), FW_SEMIBOLD),
-          body = font(S(14), FW_NORMAL), hint = font(S(13), FW_NORMAL);
-    HGDIOBJ old = SelectObject(dc, mark);
-    // the logo, the wordmark and the version under it
-    GdiFlush();
-    blit_logo(bits, (int)w, (int)h, cx, 0, S(kLogoH));
-    SetTextColor(dc, ink);
-    spaced(dc, "PROJECT RELINK", cx, Y(0), S(7), true);
-    SelectObject(dc, ver);
-    SetTextColor(dc, dim);
-    SetTextAlign(dc, TA_CENTER | TA_TOP);
-    TextOutA(dc, cx, Y(56), v.version.c_str(), (int)v.version.size());
-    if (!v.title.empty() && v.fraction < 0) {   // (no count: the title and its line centred, the step above)
-        if (!v.step.empty()) {
-            SelectObject(dc, step);
-            SetTextColor(dc, accent);
-            spaced(dc, v.step, cx, Y(112), S(2), true);
+// ---- the landscape: colours as three floats, pixels as 0x00RRGGBB (the bitmap's own order) ----
+namespace startup_art {
+struct Rgb { float r, g, b; };
+inline Rgb hex(uint32_t v) { return {(float)((v >> 16) & 255), (float)((v >> 8) & 255), (float)(v & 255)}; }
+inline Rgb mix(Rgb a, Rgb b, float t) { return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t}; }
+inline Rgb scaled(Rgb a, float k) { return {a.r * k, a.g * k, a.b * k}; }
+inline Rgb unpack(uint32_t p) { return hex(p); }
+inline uint32_t pack(Rgb c) {
+    const auto ch = [](float v) { return (uint32_t)(v <= 0 ? 0 : v >= 255 ? 255 : (int)(v + 0.5f)); };
+    return ch(c.r) << 16 | ch(c.g) << 8 | ch(c.b);
+}
+inline float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+inline float smooth(float a, float b, float x) {
+    const float t = clamp01((x - a) / (b - a));
+    return t * t * (3 - 2 * t);
+}
+inline uint32_t hash32(uint32_t x) {
+    x ^= x >> 16, x *= 0x7feb352dU, x ^= x >> 15, x *= 0x846ca68bU, x ^= x >> 16;
+    return x;
+}
+inline float rnd(uint32_t i, uint32_t seed) { return (float)(hash32(i * 0x9E3779B9u + seed) & 0xFFFFFF) / 16777216.0f; }
+/// Smooth noise along a line, 0 to 1
+inline float noise1(float x, uint32_t seed) {
+    const float fl = std::floor(x);
+    const int i = (int)fl;
+    float f = x - fl;
+    f = f * f * (3 - 2 * f);
+    const float a = rnd((uint32_t)i, seed), b = rnd((uint32_t)(i + 1), seed);
+    return a + (b - a) * f;
+}
+/// Octaves of it; ridged: each folded to a crest (mountains), else rolling (hills)
+inline float fbm(float x, uint32_t seed, int octaves, bool ridged) {
+    float amp = 0.5f, sum = 0, norm = 0;
+    for (int o = 0; o < octaves; o++) {
+        float v = noise1(x, seed + (uint32_t)o * 131u);
+        if (ridged) v = 1 - std::fabs(2 * v - 1), v *= v;
+        sum += v * amp, norm += amp;
+        x = x * 2.03f + 17.31f, amp *= 0.5f;
+    }
+    return sum / norm;
+}
+/// Light added to a pixel (stars, fireflies, glows)
+inline void add_light(uint32_t& p, Rgb c, float a) {
+    if (a <= 0) return;
+    const Rgb d = unpack(p);
+    p = pack({d.r + c.r * a, d.g + c.g * a, d.b + c.b * a});
+}
+inline void blend(uint32_t& p, Rgb c, float a) {
+    if (a <= 0) return;
+    p = pack(mix(unpack(p), c, a > 1 ? 1 : a));
+}
+
+/// The sky's three colours (top, middle, horizon) at a dawn of d
+inline void sky_colours(float d, Rgb& top, Rgb& mid, Rgb& low) {
+    struct Key { float d; uint32_t top, mid, low; };
+    static const Key keys[] = {
+        {0.00f, 0x050A16, 0x0A1730, 0x12283C},   // night
+        {0.40f, 0x080F22, 0x141E42, 0x26304E},   // the small hours
+        {0.70f, 0x121C44, 0x3B3566, 0x8C5560},   // first light: violet over rose
+        {0.88f, 0x1C2E5C, 0x6B5378, 0xD98A5E},
+        {1.00f, 0x284474, 0x8F7690, 0xF2B46C},   // daybreak
+    };
+    const int n = (int)(sizeof keys / sizeof keys[0]);
+    int i = 1;
+    while (i < n - 1 && d > keys[i].d) i++;
+    const Key &a = keys[i - 1], &b = keys[i];
+    const float t = clamp01((d - a.d) / (b.d - a.d));
+    top = mix(hex(a.top), hex(b.top), t), mid = mix(hex(a.mid), hex(b.mid), t), low = mix(hex(a.low), hex(b.low), t);
+}
+
+/// Smooth noise over a plane, 0 to 1, and octaves of it
+inline float noise2(float x, float y, uint32_t seed) {
+    const float fx = std::floor(x), fy = std::floor(y);
+    const int ix = (int)fx, iy = (int)fy;
+    float tx = x - fx, ty = y - fy;
+    tx = tx * tx * (3 - 2 * tx), ty = ty * ty * (3 - 2 * ty);
+    const auto at = [seed](int cx, int cy) { return rnd((uint32_t)cx * 73856093u ^ (uint32_t)cy * 19349663u, seed); };
+    const float a = at(ix, iy), b = at(ix + 1, iy), c = at(ix, iy + 1), d = at(ix + 1, iy + 1);
+    return a + (b - a) * tx + (c - a) * ty + (a - b - c + d) * tx * ty;
+}
+inline float fbm2(float x, float y, uint32_t seed, int octaves) {
+    float amp = 0.5f, sum = 0, norm = 0;
+    for (int o = 0; o < octaves; o++) {
+        sum += noise2(x, y, seed + (uint32_t)o * 977u) * amp, norm += amp;
+        x = x * 2.07f + 5.3f, y = y * 2.07f + 9.1f, amp *= 0.5f;
+    }
+    return sum / norm;
+}
+
+struct Ridge {
+    float base, amp, wave;   // (the line's height and its relief in window heights, its wavelength in window widths)
+    int octaves;
+    bool ridged;
+    uint32_t dark;           // (its own colour, before the haze)
+    float haze, mist;        // (how much of the horizon's colour it takes; how much its foot fades into it)
+    float trees;             // (the pines' height in units; 0: none)
+    uint32_t seed;
+};
+constexpr int kFarRidges = 3;        // (the ranges beyond the lake; the others are this side of it)
+constexpr float kLake = 0.744f;      // (the far shore, in window heights)
+inline const Ridge* ridges(int* n) {
+    static const Ridge all[] = {
+        {0.585f, 0.215f, 0.34f, 6, true, 0x1C2A44, 0.68f, 0.70f, 0, 11},    // the far range
+        {0.655f, 0.120f, 0.26f, 5, true, 0x16233C, 0.50f, 0.62f, 0, 23},
+        {0.737f, 0.038f, 0.42f, 4, false, 0x101D2A, 0.30f, 0.40f, 0, 37},   // the foothills, down to the water
+        {0.862f, 0.040f, 0.55f, 4, false, 0x070F0C, 0.06f, 0.00f, 44, 53},  // the near shore and its pines
+        {0.948f, 0.045f, 0.70f, 3, false, 0x030705, 0.00f, 0.00f, 86, 71},  // the hill we stand on
+    };
+    *n = (int)(sizeof all / sizeof all[0]);
+    return all;
+}
+/// A pine's outline: how high it stands at t, 0 at its edge to 1 on its trunk: tiers of branches, each drooping to a point
+inline float pine(float t, float tiers) {
+    const float s = t * tiers, k = std::floor(s);
+    return (k + std::pow(s - k, 0.55f)) / tiers;
+}
+/// A ridge's top at column x, in pixels from the top of a w x h window (u: pixels a unit)
+inline float ridge_top(const Ridge& r, int x, int w, int h, float u) {
+    float y = r.base * h - r.amp * h * fbm((float)x / (r.wave * w) + (float)r.seed, r.seed, r.octaves, r.ridged);
+    if (r.trees > 0) {   // (pines: one a cell; the tallest that covers this column)
+        const float cell = r.trees * 0.50f * u;
+        const int c0 = (int)std::floor((float)x / cell);
+        float tall = 0;
+        for (int c = c0 - 2; c <= c0 + 2; c++) {
+            if (rnd((uint32_t)c, r.seed + 9u) < 0.14f) continue;   // (a gap in the wood)
+            const float hgt = r.trees * u * (0.42f + 0.78f * rnd((uint32_t)c, r.seed + 7u));
+            const float cx = ((float)c + 0.15f + 0.7f * rnd((uint32_t)c, r.seed + 3u)) * cell, half = hgt * 0.27f;
+            const float t = 1 - std::fabs((float)x - cx) / half;
+            if (t > 0) tall = std::max(tall, hgt * pine(t, 5));
         }
-        SelectObject(dc, title);
-        SetTextColor(dc, ink);
-        SetTextAlign(dc, TA_CENTER | TA_TOP);
-        TextOutA(dc, cx, Y(130), v.title.c_str(), (int)v.title.size());
-        SelectObject(dc, body);
-        SetTextColor(dc, soft);
-        TextOutA(dc, cx, Y(170), v.left.c_str(), (int)v.left.size());
-        if (!v.hint.empty()) {
-            SelectObject(dc, hint);
-            SetTextColor(dc, dim);
-            TextOutA(dc, cx, Y(250), v.hint.c_str(), (int)v.hint.size());
+        y -= tall;
+    }
+    return y;
+}
+
+/// What stays between frames: the sky, the stars, the crescent, the sun, the ridges and the lake of one size at one dawn
+struct Backdrop {
+    int w = 0, h = 0, dawn_q = -1;
+    std::vector<uint32_t> px;
+};
+
+/// Where the sun and the crescent are
+struct Lights { float sx, sy, sun_on, mx, my, moon; };
+inline Lights lights(int w, int h, float d) {
+    Lights l;
+    l.sx = 0.655f * w, l.sy = h * (0.72f - 0.275f * smooth(0.30f, 1.0f, d));
+    l.sun_on = smooth(0.32f, 0.95f, d);
+    l.mx = 0.80f * w, l.my = 0.185f * h;
+    l.moon = (1 - smooth(0.30f, 0.86f, d)) * (1 - smooth(0.25f, 0.72f, d));
+    return l;
+}
+
+inline void paint_backdrop(Backdrop& bd, int w, int h, float d) {
+    bd.px.resize((size_t)w * h);
+    uint32_t* px = bd.px.data();
+    const float u = std::max(0.42f, std::min((float)h / 1080.0f, (float)w / 1500.0f));
+    Rgb top, mid, low;
+    sky_colours(d, top, mid, low);
+    const float horizon = 0.62f * h;
+    const Lights L = lights(w, h, d);
+    const float sx = L.sx, sy = L.sy, sun_on = L.sun_on, sun_r = 0.034f * h;
+    const Rgb sun_glow = mix(hex(0xFF7E42), hex(0xFFD08E), d), sun_core = mix(hex(0xFFD9A0), hex(0xFFF6DE), d);
+    const float glow_r2 = (0.21f * h) * (0.21f * h);
+    const float night = 1 - smooth(0.30f, 0.86f, d);
+    // the sky: three colours down to the horizon, the sun's light along it, a pale river of stars across the night, thin clouds
+    // that take the dawn from below
+    const float band_ax = 0.80f, band_ay = 0.60f;   // (the river of stars runs up to the right)
+    for (int y = 0; y < h; y++) {
+        const float t = clamp01((float)y / horizon);
+        const Rgb row = t < 0.58f ? mix(top, mid, smooth(0, 0.58f, t)) : mix(mid, low, smooth(0.58f, 1.0f, t));
+        uint32_t* line = px + (size_t)y * w;
+        const float dy = (float)y - sy;
+        const float cloud_rows = smooth(0.16f, 0.36f, t) * (1 - smooth(0.80f, 0.98f, t));
+        for (int x = 0; x < w; x++) {
+            Rgb c = row;
+            float lit = 0;
+            if (sun_on > 0) {
+                const float dx = (float)x - sx, q = (dx * dx + dy * dy * 1.9f) / glow_r2;   // (wider than tall: light along the horizon)
+                lit = sun_on * (0.62f / (1 + q * 3.4f) + 0.30f / (1 + q * 0.42f));
+                c.r += sun_glow.r * lit, c.g += sun_glow.g * lit * 0.92f, c.b += sun_glow.b * lit * 0.80f;
+            }
+            if (night > 0.02f && y < (int)horizon) {
+                const float px_ = (float)x / (float)h, py_ = (float)y / (float)h;
+                const float off = (px_ - 0.25f) * band_ay + (py_ - 0.42f) * band_ax;   // (distance from the band's line)
+                const float along = px_ * band_ax - py_ * band_ay;
+                const float band = std::exp(-off * off / 0.012f) * (0.35f + 0.65f * fbm2(along * 5.0f, off * 16.0f, 811, 4));
+                const float m = night * band * (1 - 0.8f * t);
+                c.r += 26 * m, c.g += 30 * m, c.b += 44 * m;
+            }
+            if (cloud_rows > 0) {
+                const float n = fbm2((float)x / (0.30f * h), (float)y / (0.030f * h), 421, 4);
+                const float a = smooth(0.50f, 0.78f, n) * cloud_rows;
+                if (a > 0) {
+                    const Rgb shade = scaled(row, 0.62f + 0.20f * d), fire = mix(hex(0xE8724A), hex(0xFFC98C), d);
+                    const float under = clamp01(lit * 1.9f) * sun_on;
+                    c = mix(c, mix(shade, fire, under), a * (0.42f + 0.38f * d));
+                }
+            }
+            const float dither = ((float)(hash32((uint32_t)(x + y * 7919)) & 255) / 255.0f - 0.5f) * 1.6f;   // (no bands in the gradient)
+            c.r += dither, c.g += dither, c.b += dither;
+            if (sun_on > 0) {
+                const float dist = std::hypot((float)x - sx, dy);
+                if (dist < sun_r + 1) c = mix(c, sun_core, clamp01(sun_r - dist + 0.5f) * sun_on);
+            }
+            line[x] = pack(c);
         }
-    } else if (!v.title.empty()) {
-        const int x0 = S(60), x1 = (int)w - S(60);
-        if (!v.step.empty()) {
-            SelectObject(dc, step);
-            SetTextColor(dc, accent);
-            spaced(dc, v.step, x0, Y(112), S(2), false);
-        }
-        SelectObject(dc, title);
-        SetTextColor(dc, ink);
-        SetTextAlign(dc, TA_LEFT | TA_TOP);
-        TextOutA(dc, x0, Y(130), v.title.c_str(), (int)v.title.size());
-        if (!v.pct.empty()) {
-            SetTextAlign(dc, TA_RIGHT | TA_TOP);
-            TextOutA(dc, x1, Y(130), v.pct.c_str(), (int)v.pct.size());
-        }
-        const int bar_y = Y(170), bar_h = std::max(4, S(8));
-        if (v.fraction >= 0) {
-            round_fill(dc, x0, bar_y, x1 - x0, bar_h, RGB(36, 42, 39));
-            const int fw = (int)std::lround(std::min(v.fraction, 1.0) * (x1 - x0));
-            if (fw >= bar_h) {
-                round_fill(dc, x0, bar_y, fw, bar_h, accent);
-                fill(dc, x0 + bar_h / 2, bar_y + 1, fw - bar_h, std::max(1, bar_h / 4), RGB(140, 214, 158));   // (a soft highlight)
+    }
+    // the stars, fading as the night ends; more of them along the river
+    if (night > 0.01f) {
+        for (uint32_t i = 0; i < 420; i++) {
+            float fx = rnd(i, 101), fy = std::pow(rnd(i, 202), 1.5f) * 0.58f;
+            if (i >= 190) {   // (the river's own: scattered about its line)
+                const float al = rnd(i, 111) * 1.9f - 0.2f, of = (rnd(i, 222) + rnd(i, 333) - 1.0f) * 0.13f;
+                const float px_ = 0.25f + al * band_ax + of * band_ay, py_ = 0.42f - al * band_ay + of * band_ax;
+                fx = px_ * (float)h / (float)w, fy = py_;
+            }
+            const int x = (int)(fx * (float)w), y = (int)(fy * (float)h);
+            if (x < 1 || y < 1 || x >= w - 1 || y >= (int)horizon) continue;
+            const float a = night * (i < 190 ? 0.22f + 0.78f * rnd(i, 303) : 0.10f + 0.40f * rnd(i, 303)) * (1 - 0.75f * (float)y / horizon);
+            const Rgb c = mix(hex(0xFFFFFF), hex(0xBFD4FF), rnd(i, 404));
+            add_light(px[(size_t)y * w + x], c, a);
+            if (i < 190 && rnd(i, 505) > 0.80f && u > 0.6f) {   // (the bright ones: a small cross)
+                for (const auto [ox, oy] : {std::pair{1, 0}, std::pair{-1, 0}, std::pair{0, 1}, std::pair{0, -1}})
+                    add_light(px[(size_t)(y + oy) * w + x + ox], c, a * 0.38f);
             }
         }
+    }
+    // the crescent: a disc, less the disc of sky beside it, in a faint halo
+    if (L.moon > 0.01f) {
+        const float mr = 0.030f * h;
+        const Rgb bone = hex(0xEDE9DA);
+        for (int y = (int)(L.my - 5 * mr); y <= (int)(L.my + 5 * mr); y++)
+            for (int x = (int)(L.mx - 5 * mr); x <= (int)(L.mx + 5 * mr); x++) {
+                if (x < 0 || y < 0 || x >= w || y >= h) continue;
+                const float d0 = std::hypot((float)x - L.mx, (float)y - L.my), d1 = std::hypot((float)x - (L.mx + 0.46f * mr), (float)y - (L.my - 0.24f * mr));
+                uint32_t& p = px[(size_t)y * w + x];
+                add_light(p, hex(0x8FA6D8), 0.10f * L.moon * clamp01(1 - d0 / (5 * mr)) * clamp01(1 - d0 / (5 * mr)));
+                blend(p, bone, clamp01(mr - d0 + 0.5f) * clamp01(d1 - 0.93f * mr + 0.5f) * L.moon);
+            }
+    }
+    int n = 0;
+    const Ridge* rs = ridges(&n);
+    const Rgb haze = mix(low, sun_glow, 0.18f * sun_on);
+    // a ridge: its body takes some of the horizon's colour, its foot goes into the mist that lies in the valley behind the next
+    // one, and the far ones catch the sun along their edge
+    const auto ridge = [&](int i) {
+        const Ridge& r = rs[i];
+        const Rgb body = mix(hex(r.dark), haze, r.haze * (0.55f + 0.45f * d));
+        const float mist_a = (r.base - 0.030f) * h, mist_b = ((i + 1 < n ? rs[i + 1].base : 1.0f) + 0.010f) * h;
+        const float edge = (i < kFarRidges ? 2.6f : 1.4f) * std::max(u, 0.6f);
+        const float rim = (i == 0 ? 1.0f : i == 1 ? 0.62f : i == 2 ? 0.34f : 0.16f) * sun_on;
+        std::vector<Rgb> col((size_t)h);
+        for (int y = 0; y < h; y++) col[(size_t)y] = mix(body, haze, r.mist * smooth(mist_a, mist_b, (float)y) * (0.50f + 0.50f * d));
+        for (int x = 0; x < w; x++) {
+            const float ty = ridge_top(r, x, w, h, u);
+            const float toward = 1.0f / (1 + ((float)x - sx) * ((float)x - sx) / (0.19f * w * 0.19f * w));
+            const int y0 = std::max(0, (int)std::floor(ty));
+            for (int y = y0; y < h; y++) {
+                const float dd = (float)y - ty;
+                Rgb c = col[(size_t)y];
+                if (dd < edge) c = mix(c, hex(0xFFC88E), rim * toward * (1 - std::max(0.0f, dd) / edge));
+                uint32_t& p = px[(size_t)y * w + x];
+                if (dd < 0) blend(p, c, 1 + dd);   // (the top pixel's share: a smooth line)
+                else p = pack(c);
+            }
+        }
+    };
+    for (int i = 0; i < kFarRidges; i++) ridge(i);
+    // the lake: what is above the far shore, upside down and darker, drawn out by small waves; a path of light under the sun
+    // and under the crescent
+    const int shore = (int)(kLake * h);
+    const Rgb deep = mix(hex(0x071220), low, 0.22f);
+    for (int y = shore; y < h; y++) {
+        const float dy = (float)(y - shore);
+        const float wave = std::sin(dy * 0.83f / u + 2.0f * noise1(dy * 0.11f / u, 97)) * std::min(7.0f * u, 0.6f * u + dy * 0.055f);
+        const int src_y = std::max(0, shore - 1 - (int)(dy * 0.94f));
+        const uint32_t* src = px + (size_t)src_y * w;
+        uint32_t* line = px + (size_t)y * w;
+        const float depth = smooth(0, 0.22f * h, dy);
+        for (int x = 0; x < w; x++) {
+            const int xs = std::min(w - 1, std::max(0, x + (int)wave));
+            Rgb c = scaled(mix(unpack(src[xs]), deep, 0.20f + 0.36f * depth), 0.90f);
+            for (int k = 0; k < 2; k++) {   // (the two lights' paths: broken into dashes, wider with the distance)
+                const float lx = k ? L.mx : sx, on = k ? L.moon * 0.75f : sun_on;
+                if (on <= 0.01f) continue;
+                const float wd = (10.0f + 34.0f * depth) * u + dy * 0.16f, off = ((float)x - lx) / wd;
+                if (off > -3 && off < 3) {
+                    const float dash = smooth(0.42f, 0.70f, noise2((float)x * 0.045f / u, dy * 0.62f / u, k ? 61u : 67u));
+                    const float a = on * std::exp(-off * off) * (0.25f + 0.75f * dash) * (1 - 0.55f * depth);
+                    const Rgb lc = k ? hex(0xDCE4F2) : sun_core;
+                    c.r += lc.r * a * 0.85f, c.g += lc.g * a * 0.85f, c.b += lc.b * a * 0.85f;
+                }
+            }
+            line[x] = pack(c);
+        }
+    }
+    for (int x = 0; x < w; x++) blend(px[(size_t)shore * w + x], haze, 0.35f);   // (a pale line where the water meets the land)
+    for (int i = kFarRidges; i < n; i++) ridge(i);
+    // tall pines at the edges, close: the picture's frame
+    {
+        struct Tall { float x, base, hgt; };
+        const Tall talls[] = {{0.905f, 0.965f, 0.36f}, {0.955f, 0.985f, 0.56f}, {0.995f, 0.975f, 0.44f}, {-0.004f, 0.99f, 0.38f}};
+        const Rgb ink = hex(0x020504);
+        for (const Tall& tr : talls) {
+            const float cx = tr.x * w, hgt = tr.hgt * h, half = hgt * 0.20f, foot = tr.base * h;
+            for (int x = std::max(0, (int)(cx - half)); x <= std::min(w - 1, (int)(cx + half)); x++) {
+                const float t = 1 - std::fabs((float)x - cx) / half;
+                if (t <= 0) continue;
+                const float topy = foot - hgt * pine(t, 9);
+                for (int y = std::max(0, (int)std::floor(topy)); y < h; y++) {
+                    const float dd = (float)y - topy;
+                    uint32_t& p = px[(size_t)y * w + x];
+                    if (dd < 0) blend(p, ink, 1 + dd);
+                    else p = pack(ink);
+                }
+            }
+        }
+    }
+    // the bottom goes darker for the text, the top a little for the name, and a dark pool lies behind the word and the number
+    // (at daybreak the hills there are as pale as the letters)
+    const float pool_x = (96 + 170) * u, pool_y = (float)h - (150 + 96) * u, pool_rx = 470 * u, pool_ry = 200 * u;
+    for (int y = 0; y < h; y++) {
+        const float k = (float)y / (float)h;
+        const float f = (1 - 0.34f * smooth(0.66f, 1.0f, k)) * (0.82f + 0.18f * smooth(0.0f, 0.22f, k));
+        const float py = ((float)y - pool_y) / pool_ry;
+        const bool pool = py > -2.2f && py < 2.2f;
+        if (f > 0.995f && !pool) continue;
+        uint32_t* line = px + (size_t)y * w;
+        for (int x = 0; x < w; x++) {
+            float g = f;
+            if (pool) {
+                const float qx = ((float)x - pool_x) / pool_rx, q = qx * qx + py * py;
+                if (q < 4.8f) g *= 1 - (0.10f + 0.36f * d) * std::exp(-q * 1.15f);
+            }
+            if (g < 0.995f) line[x] = pack(scaled(unpack(line[x]), g));
+        }
+    }
+    bd.w = w, bd.h = h;
+}
+
+/// A soft round light, added: radius r pixels, strength a at its centre
+inline void glow(uint32_t* px, int w, int h, float cx, float cy, float r, Rgb c, float a) {
+    if (a <= 0 || r <= 0) return;
+    const int x0 = std::max(0, (int)(cx - r)), x1 = std::min(w - 1, (int)(cx + r)), y0 = std::max(0, (int)(cy - r)), y1 = std::min(h - 1, (int)(cy + r));
+    for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++) {
+            const float q = 1 - std::hypot((float)x - cx, (float)y - cy) / r;
+            if (q > 0) add_light(px[(size_t)y * w + x], c, a * q * q);
+        }
+}
+} // namespace startup_art
+
+/// The landscape kept between frames (the painter's thread alone draws; vk_menu.cpp lets it go when the game starts)
+inline startup_art::Backdrop startup_backdrop;
+
+/// The screen into dc, the whole w x h window. bits: the bitmap's pixels (32-bit, top-down, w wide), which the landscape is
+/// written into; null (a test without them): the text alone on black. pct is not used any more (the picture scales by itself)
+inline void paint_startup_view(HDC dc, uint32_t w, uint32_t h, int pct, const StartupView& v, uint32_t* bits = nullptr) {
+    using namespace startup_gdi;
+    using namespace startup_art;
+    (void)pct;
+    const int W = (int)w, H = (int)h;
+    const float u = std::max(0.42f, std::min((float)H / 1080.0f, (float)W / 1500.0f));   // (pixels a unit: 1 at 1080 lines)
+    const auto S = [u](double px) { return (int)std::lround(px * u); };
+    const float d = clamp01((float)v.dawn), t = (float)v.anim;
+    const int x0 = S(96), x1 = W - S(96);              // (the margins)
+    const int line_y = H - S(150);                     // (the line of light)
+    if (bits) {
+        Backdrop& bd = startup_backdrop;
+        const int q = (int)std::lround(d * 480);
+        if (bd.w != W || bd.h != H || bd.dawn_q != q) paint_backdrop(bd, W, H, (float)q / 480.0f), bd.dawn_q = q;
+        std::memcpy(bits, bd.px.data(), (size_t)W * H * 4);
+        const float night = 1 - smooth(0.30f, 0.86f, d);
+        // some stars twinkle
+        for (uint32_t i = 0; i < 190 && night > 0.02f; i += 5) {
+            const int x = (int)(rnd(i, 101) * (float)W), y = (int)(std::pow(rnd(i, 202), 1.5f) * 0.56f * (float)H);
+            if (x < 0 || y < 0 || x >= W || y >= H) continue;
+            const float a = night * 0.55f * (0.5f + 0.5f * std::sin(t * (0.9f + 2.2f * rnd(i, 606)) + 6.28f * rnd(i, 707)));
+            add_light(bits[(size_t)y * W + x], hex(0xFFFFFF), a * (1 - 0.75f * (float)y / (0.56f * (float)H)));
+        }
+        // now and then a star falls: a short bright line with a tail, for under a second
+        {
+            const float period = 13.0f, at = std::fmod(t, period), turn = std::floor(t / period);
+            if (night > 0.3f && at < 0.85f && t > 4) {
+                const uint32_t k = (uint32_t)turn;
+                const float x_from = (0.18f + 0.55f * rnd(k, 901)) * (float)W, y_from = (0.07f + 0.20f * rnd(k, 902)) * (float)H;
+                const float len = (float)S(360), dirx = 0.86f, diry = 0.50f, p = at / 0.85f;
+                const float hx = x_from + dirx * len * p, hy = y_from + diry * len * p, fade = night * std::sin(3.14159f * p);
+                for (int i = 0; i < 90; i++) {   // (the tail thins out behind the head)
+                    const float q = (float)i / 90.0f, tx = hx - dirx * (float)S(150) * q, ty = hy - diry * (float)S(150) * q;
+                    const int x = (int)tx, y = (int)ty;
+                    if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) continue;
+                    const float a = fade * (1 - q) * (1 - q);
+                    add_light(bits[(size_t)y * W + x], hex(0xFFFFFF), a);
+                    add_light(bits[(size_t)(y + 1) * W + x], hex(0xDDE8FF), a * 0.45f);
+                }
+                glow(bits, W, H, hx, hy, (float)S(9), hex(0xFFFFFF), 0.9f * fade);
+            }
+        }
+        // fireflies over the near hills: they wander and blink, and go out as the day comes
+        const float flies = 1 - 0.85f * smooth(0.45f, 1.0f, d);
+        for (uint32_t i = 0; i < 34; i++) {
+            const float bx = (0.04f + 0.92f * rnd(i, 11)) * (float)W, by = (0.78f + 0.17f * rnd(i, 22)) * (float)H;
+            const float fx = bx + S(46) * std::sin(t * (0.21f + 0.2f * rnd(i, 33)) + 6.28f * rnd(i, 44)) + S(14) * std::sin(t * 0.83f + 6.28f * rnd(i, 55));
+            const float fy = by + S(26) * std::sin(t * (0.27f + 0.2f * rnd(i, 66)) + 6.28f * rnd(i, 77));
+            const float blink = std::max(0.0f, std::sin(t * (0.7f + 0.9f * rnd(i, 88)) + 6.28f * rnd(i, 99)));
+            const float a = flies * (0.18f + 0.82f * blink * blink);
+            const Rgb c = mix(hex(0xD6F09A), hex(0xFFD98A), d);
+            glow(bits, W, H, fx, fy, S(9) + S(5) * rnd(i, 111), c, 0.34f * a);
+            glow(bits, W, H, fx, fy, std::max(1.6f, 2.4f * u), hex(0xFFFFF0), 0.95f * a);
+        }
+        // the line of light: a faint track, the part done in gold, a bright head; with nothing counted, a glint travelling along
+        const int th = std::max(1, S(1)), done_h = std::max(2, S(3));
+        for (int y = line_y; y < line_y + th; y++)
+            for (int x = x0; x < x1; x++) blend(bits[(size_t)y * W + x], hex(0xEFE6D0), 0.20f);
+        const Rgb gold = hex(0xC9A24B), bright = hex(0xFFE9AE);
+        if (v.fraction >= 0) {
+            const float head = (float)x0 + (float)(x1 - x0) * clamp01((float)v.fraction);
+            for (int y = line_y - done_h / 2; y < line_y - done_h / 2 + done_h; y++)
+                for (int x = x0; x < (int)head; x++) {
+                    const float k = smooth(head - S(260), head, (float)x);   // (brighter toward its head)
+                    bits[(size_t)y * W + x] = pack(mix(gold, bright, k));
+                }
+            const float pulse = 0.82f + 0.18f * std::sin(t * 2.4f);
+            glow(bits, W, H, head, (float)line_y, (float)S(54), hex(0xFFC56A), 0.36f * pulse);
+            glow(bits, W, H, head, (float)line_y, (float)S(16), hex(0xFFF3CF), 0.95f * pulse);
+            const int r = std::max(3, S(6));   // (a small lozenge on the head, as the launcher's stages have)
+            for (int oy = -r; oy <= r; oy++)
+                for (int ox = -(r - std::abs(oy)); ox <= r - std::abs(oy); ox++) {
+                    const int x = (int)head + ox, y = line_y + oy;
+                    if (x >= 0 && y >= 0 && x < W && y < H) bits[(size_t)y * W + x] = pack(hex(0xFFF6DE));
+                }
+        } else if (!v.label.empty()) {
+            const float span = (float)(x1 - x0), at = (float)x0 + span * (0.5f - 0.5f * std::cos(t * 0.9f));
+            for (int y = line_y - done_h / 2; y < line_y - done_h / 2 + done_h; y++)
+                for (int x = std::max(x0, (int)at - S(150)); x < std::min(x1, (int)at + S(150)); x++)
+                    blend(bits[(size_t)y * W + x], bright, 0.9f * smooth(0, 1, 1 - std::fabs((float)x - at) / (float)S(150)));
+            glow(bits, W, H, at, (float)line_y, (float)S(34), hex(0xFFC56A), 0.26f);
+        }
+        // the mark, top left
+        blit_logo(bits, W, H, x0 + S(22), S(64), S(44));
+    } else {
+        fill(dc, 0, 0, W, H, RGB(4, 9, 7));
+    }
+    GdiFlush();
+    SetBkMode(dc, TRANSPARENT);
+    const COLORREF bone = RGB(0xEF, 0xE6, 0xD0), soft = RGB(0xBD, 0xB7, 0x9F), faint = RGB(0x8E, 0x90, 0x7B), gold = RGB(0xC9, 0xA2, 0x4B);
+    HFONT name = face("Palatino Linotype", S(34), FW_NORMAL), small = face("Candara", S(15), FW_NORMAL),
+          caps = face("Candara", S(17), FW_BOLD), num = face("Palatino Linotype", S(168), FW_NORMAL),
+          sign = face("Palatino Linotype", S(54), FW_NORMAL), body = face("Candara", S(19), FW_NORMAL);
+    HGDIOBJ old = SelectObject(dc, name);
+    const COLORREF shade = RGB(3, 6, 5);
+    // (a line of text with its shadow, a unit or two down and right: the sky behind it changes all the way to daybreak)
+    const auto text = [&](int x, int y, const std::string& t, COLORREF c, int off) {
+        SetTextColor(dc, shade);
+        TextOutA(dc, x + off, y + off, t.c_str(), (int)t.size());
+        SetTextColor(dc, c);
+        TextOutA(dc, x, y, t.c_str(), (int)t.size());
+    };
+    const int o1 = std::max(1, S(1.5)), o2 = std::max(2, S(3));
+    // the name beside the mark, the version under it
+    SetTextAlign(dc, TA_LEFT | TA_TOP);
+    text(x0 + S(60), S(60), "Project ReLink", bone, o1);
+    SelectObject(dc, small);
+    text(x0 + S(62), S(102), v.version, soft, o1);
+    if (!v.label.empty()) {
+        // the word, in spaced capitals, and the large number over the line of light
+        SelectObject(dc, caps);
+        SetTextColor(dc, shade);
+        spaced(dc, v.label, x0 + o1, line_y - S(188) + o1, S(10), false);
+        SetTextColor(dc, RGB(0xE6, 0xC2, 0x6E));   // (the launcher's gold, a little lighter: it is read over the picture)
+        spaced(dc, v.label, x0, line_y - S(188), S(10), false);
+        (void)gold;
+        if (!v.pct.empty()) {
+            SelectObject(dc, num);
+            SetTextAlign(dc, TA_LEFT | TA_TOP);
+            const int ny = line_y - S(196);
+            text(x0 - S(6), ny, v.pct, bone, o2);
+            const int nw = text_w(dc, v.pct);
+            SelectObject(dc, sign);
+            text(x0 - S(6) + nw + S(8), ny + S(30), "%", soft, o1);
+        }
         SelectObject(dc, body);
-        SetTextColor(dc, soft);
-        SetTextAlign(dc, TA_LEFT | TA_TOP);
-        TextOutA(dc, x0, bar_y + bar_h + S(12), v.left.c_str(), (int)v.left.size());
-        SetTextAlign(dc, TA_RIGHT | TA_TOP);
-        TextOutA(dc, x1, bar_y + bar_h + S(12), v.right.c_str(), (int)v.right.size());
-        if (!v.hint.empty()) {
-            SelectObject(dc, hint);
-            SetTextColor(dc, dim);
-            SetTextAlign(dc, TA_CENTER | TA_TOP);
-            TextOutA(dc, cx, Y(250), v.hint.c_str(), (int)v.hint.size());
+        if (!v.right.empty()) {
+            SetTextAlign(dc, TA_RIGHT | TA_TOP);
+            text(x1, line_y - S(40), v.right, bone, o1);
+        }
+        if (!v.tip.empty()) {   // (faded by its colour toward the dark it lies on)
+            const double a = std::max(0.0, std::min(1.0, v.tip_fade));
+            const auto fade = [a](int c, int bg) { return (int)std::lround(bg + (c - bg) * a); };
+            SetTextAlign(dc, TA_LEFT | TA_TOP);
+            SetTextColor(dc, RGB(fade(0xC9, 5), fade(0xA2, 9), fade(0x4B, 8)));
+            TextOutA(dc, x0, line_y + S(34), "\x97", 1);   // (a dash, in gold)
+            SetTextColor(dc, RGB(fade(0xBD, 5), fade(0xB7, 9), fade(0x9F, 8)));
+            TextOutA(dc, x0 + S(30), line_y + S(34), v.tip.c_str(), (int)v.tip.size());
         }
     }
     SetTextAlign(dc, TA_LEFT | TA_TOP);
     SelectObject(dc, old);
-    for (HFONT f : {mark, ver, step, title, body, hint}) DeleteObject(f);
+    for (HFONT f : {name, small, caps, num, sign, body}) DeleteObject(f);
 }
 
 } // namespace mkwvk

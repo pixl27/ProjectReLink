@@ -95,19 +95,23 @@ inline std::string percent_text(size_t done, size_t total) {
     return std::to_string(p) + "%";
 }
 
-/// What the start-up screen shows (vk_startup_paint.h draws it)
+/// What the start-up screen shows (vk_startup_paint.h draws it): a night landscape that turns to dawn as the start goes on, one
+/// word and one number. Nothing of what is being made is named there (shaders, pipelines: the log says it)
 struct StartupView {
     std::string version;            // ("v2.0.5"; empty: the build's)
-    std::string step, title, pct;   // ("STEP 1 OF 2", "Preparing shaders", "32%"); an empty title: the wordmark alone
-    std::string left, right;        // (under the bar: "12,345 / 38,809 shaders", "about 40 s left")
-    std::string hint;
-    double fraction = -1;           // (the bar, 0 to 1; negative: none)
+    std::string label, pct;         // ("LOADING", "32"); an empty label: the scene and the wordmark alone
+    std::string right;              // (at the end of the line of light: "about 6 min left")
+    std::string tip;                // (the bottom line: one of the tips, or what closing keeps)
+    double fraction = -1;           // (the line of light, 0 to 1; negative: none, a glint travels along it instead)
+    double dawn = 0;                // (0 the night, 1 daybreak: how far the whole start is)
+    double anim = 0;                // (seconds since the window opened: the fireflies, the stars, the glint)
+    double tip_fade = 1;            // (0 to 1: the tip coming in and going out)
     bool operator==(const StartupView&) const = default;
 };
 
 /// The state of the start: stage 0 the shader programs, 1 the pipelines the notes predict, 2 the noted pipelines; done of total
-/// in it (total 0: not counted yet); left the seconds left (negative: unknown); prepared: this start prepares programs (a first
-/// start after an update: two steps, else the pipelines alone); secs since the window opened
+/// in it (total 0: not counted yet); left the seconds left of that stage (negative: unknown); prepared: this start prepares
+/// programs (a first start, or the first after an update: the three stages, else the last alone); secs since the window opened
 struct StartupState {
     int stage = 0;
     size_t done = 0, total = 0;
@@ -115,31 +119,70 @@ struct StartupState {
     bool prepared = false, finished = false, stopping = false;
 };
 
-/// The screen for a state. The first second shows the wordmark alone: a start with next to nothing to prepare is over by then
+/// The tips of a long start, one every nine seconds (each one true of this build: the menu's keys, what closing keeps)
+inline const char* startup_tip(int i) {
+    static const char* const tips[] = {
+        "The first start is the long one. The next ones take a few seconds.",
+        "In the game, Insert or F1 opens the settings.",
+        "You can close this window: what is done is kept for the next start.",
+        "F11 switches between full screen and a window.",
+        "After a graphics driver update, the game takes this time once more.",
+        "The launcher can put your display at 60 Hz while you play.",
+        "Mods go in the game folder's mods folder, with the game's own paths.",
+    };
+    const int n = (int)(sizeof tips / sizeof tips[0]);
+    return tips[((i % n) + n) % n];
+}
+
+/// How far the whole start is, 0 to 1. A long start's three stages by about the share of its time each took on the development
+/// PC (538 s, 93 s and 360 s): the programs to 0.55, the predicted pipelines to 0.65, the noted ones to the end. A start that
+/// prepares nothing new has the last stage alone
+inline double startup_overall(const StartupState& s) {
+    const double f = s.total ? (double)std::min(s.done, s.total) / (double)s.total : 0;
+    if (!s.prepared) return s.stage > 0 ? f : 0;
+    return s.stage == 0 ? 0.55 * f : s.stage == 1 ? 0.55 + 0.10 * f : 0.65 + 0.35 * f;
+}
+
+/// The time left of the whole start: the stage's own estimate, and for the stages after it the time their share would take at
+/// the speed of the start so far. Negative: cannot be said yet
+inline double startup_left(const StartupState& s) {
+    if (s.left < 0) return -1;
+    if (!s.prepared || s.stage >= 2) return s.left;
+    const double overall = startup_overall(s), after = s.stage == 0 ? 0.45 : 0.35;
+    if (overall < 0.03 || s.secs < 5) return -1;
+    return s.left + after * s.secs / overall;
+}
+
+/// The screen for a state. The first second shows the scene and the wordmark alone: a start with next to nothing to prepare is
+/// over by then. A long start goes from night to daybreak; one that prepares nothing new is at dawn already
 inline StartupView startup_view(const StartupState& s) {
     StartupView v;
+    v.anim = s.secs;
+    const double overall = startup_overall(s);
+    v.dawn = s.prepared ? overall : s.stage > 0 ? 1.0 : 0.0;
     if (s.stopping) {
-        v.title = "Closing";
-        v.left = "Keeping what is prepared for the next start";
+        v.label = "CLOSING";
+        v.tip = "What is done is kept for the next start.";
         return v;
     }
     if (s.finished) {
-        if (s.secs >= 1.0) v.title = "Starting the game";
+        v.dawn = 1;
+        if (s.secs >= 1.0) v.label = "STARTING", v.fraction = 1, v.pct = "100";
         return v;
     }
     if (s.secs < 1.0) return v;
-    const bool pipelines = s.stage > 0;
-    if (s.prepared) v.step = pipelines ? "STEP 2 OF 2" : "STEP 1 OF 2";
-    v.title = !pipelines ? "Preparing shaders" : s.prepared ? "Building pipelines" : "Loading pipelines";
-    if (s.prepared) v.hint = "This happens once after an update. Closing the window keeps what is done.";
-    if (!s.total) {
-        v.left = !pipelines ? "Reading the game's shaders" : s.stage == 1 ? "Reading the pipeline notes" : "Loading the shader cache";
-        return v;
+    v.label = "LOADING";
+    if (s.prepared) {   // (a long start: a tip every nine seconds, faded in and out over six tenths)
+        const double at = std::max(0.0, s.secs - 1.0), in = at - 9.0 * (double)(int)(at / 9.0);
+        v.tip = startup_tip((int)(at / 9.0));
+        v.tip_fade = std::max(0.0, std::min({1.0, in / 0.6, (9.0 - in) / 0.6}));
     }
-    v.fraction = (double)std::min(s.done, s.total) / (double)s.total;
-    v.pct = percent_text(s.done, s.total);
-    v.left = with_commas(s.done) + " / " + with_commas(s.total) + (pipelines ? " pipelines" : " shaders");
-    v.right = left_text(s.left);
+    if (!s.total && !(s.prepared && s.stage > 0)) return v;   // (nothing counted yet: the glint)
+    v.fraction = overall;
+    size_t p = (size_t)(overall * 100);
+    if (p > 99) p = 99;
+    v.pct = std::to_string(p);
+    v.right = left_text(startup_left(s));
     return v;
 }
 

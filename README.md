@@ -33,12 +33,12 @@ Other versions do not work: the launcher checks your copy and says so before it 
 5. Press **Play**. The desktop and Start menu shortcuts open the launcher from then on.
 
 The first start is long, once (about 16 minutes on our PC): the game prepares its shaders and builds its graphics pipelines
-for your driver's cache, with a progress screen. It does that part again after a graphics driver update, so that the first visit of a place does not
-stutter while the driver compiles.
+for your driver's cache, with a progress screen. It does that part again after a graphics driver update, so that the first
+visit of a place does not stutter while the driver compiles.
 
 ![Installing](docs/install.png)
 
-Until a release shows on the releases page, the installer is not published yet: see [Build from source](#build-from-source).
+![The first start: the night ends as the game gets ready](docs/loading.png)
 
 ### What your PC needs
 
@@ -74,27 +74,29 @@ and so do keyboard and mouse (the keys are listed on the Controls page).
 On our PC: **Ryzen 5 5500, GeForce RTX 3060 Ti (8 GB), 16 GB of RAM, Windows 11**.
 
 **No DLSS, no frame generation.** Every number here counts frames the game really rendered: no AI upscaler and no
-generated frames were on. The game was capped at 60 frames a second; version 0.6.1. "Native" is the game's 3D render
-resolution at 100 %; at 75 % the game's own plain scaling fills the window. Each figure is one run of about 50 seconds
-with child Link, from his arrival in the place and through a walk, so it includes the loading stall of the arrival.
+generated frames were on. The game was capped at 60 frames a second; version 0.6.1, built by the release's own tools as
+on a player's PC. "Native" is the game's 3D render resolution at 100 %; at 75 % the game's own plain scaling fills the
+window. Each figure is one run of about 50 seconds with child Link, from his arrival in the place and through a walk, so
+it includes the loading stall of the arrival.
 
 | Place | Native (100 %) | 75 % |
 |---|---|---|
-| Hyrule Field | 59.2 | 60.0 |
-| Kakariko Village | 58.3 | 59.1 |
-| Hyrule Castle | 57.5 | 59.1 |
-| Lost Woods | 59.3 | 59.7 |
+| Hyrule Field | 59.6 | 59.9 |
+| Kakariko Village | 59.0 | 59.0 |
+| Hyrule Castle | 58.2 | 59.2 |
+| Lost Woods | 58.5 | 59.6 |
 | Sacred Forest Meadow | 60.0 | 60.0 |
-| Lake Hylia | 56.0 | 58.3 |
-| Zora's Fountain | 56.3 | 55.9 |
-| Market | 49.1 | 54.7 |
-| Inside the Deku Tree | 59.0 | 59.9 |
-| Dodongo's Cavern | 60.0 | 60.0 |
+| Lake Hylia | 58.0 | 58.7 |
+| Zora's Fountain | 56.7 | 58.4 |
+| Market | 54.0 | 55.6 |
+| Inside the Deku Tree | 59.8 | 59.9 |
+| Dodongo's Cavern | 60.0 | 59.9 |
 | Inside Jabu-Jabu's Belly | 59.9 | 59.9 |
 | Bottom of the Well | 60.0 | 60.0 |
 
-With adult Link at 75 %, standing: 60 in Kakariko Village, the Fire Temple and Gerudo's Fortress, 58.0 in the Water Temple.
-At native resolution the heaviest views of Kokiri Forest's village run at 51 to 53.
+At native resolution the heaviest views of Kokiri Forest's village run at 55 to 56. With adult Link at 75 %, standing, an
+earlier development build of this version gave 60 in Kakariko Village, the Fire Temple and Gerudo's Fortress and 58.0 in
+the Water Temple; those four were not measured again on the release's build.
 
 Not reached or not measured yet: a steady 60 everywhere (the Market stays below, and so do a few places at native
 resolution), boss fights, sessions longer than half an hour, and AMD and Intel cards.
@@ -183,9 +185,6 @@ d'installer quoi que ce soit.
 4. Appuyez sur **Install**. Comptez 10 à 45 minutes selon le processeur ; le PC reste utilisable.
 5. Appuyez sur **Play**. Le lanceur est en anglais par défaut ; le français se choisit dans sa page Game.
 
-Tant qu'aucune version n'apparaît sur la page des versions, l'installateur n'est pas encore publié : voir « Build from
-source » plus haut.
-
 Il faut Windows 10 ou 11 en 64 bits, un processeur avec AVX2, une carte graphique avec Vulkan 1.3 et les mesh shaders
 (GeForce RTX 20 ou plus récente, Radeon RX 6000 ou plus récente, Intel Arc ; nous n'avons testé que sur NVIDIA), 16 Go de RAM
 et environ 60 Go libres pendant l'installation.
@@ -197,11 +196,11 @@ place. Les sauvegardes, les réglages et les mods sont conservés.
 
 Sans DLSS et sans génération d'images : chaque image comptée est réellement calculée par le jeu. Sur un Ryzen 5 5500, une
 GeForce RTX 3060 Ti (8 Go), 16 Go de RAM et Windows 11, jeu limité à 60 images par seconde. En résolution native (rendu 3D à
-100 %) : 56 à 60 dans la plupart des lieux (plaine d'Hyrule 59,2, village Cocorico 58,3, château d'Hyrule 57,5, lac Hylia
-56,0, fontaine Zora 56,3, donjons 59 à 60) et 49,1 sur la place du marché. Avec le rendu 3D à 75 % : 58 à 60 presque
-partout, 55,9 à la fontaine Zora et 54,7 sur la place du marché. Le 60 constant partout n'est pas encore atteint, et les
-combats de boss, les longues sessions et les cartes AMD et Intel n'ont pas été mesurés. Le tableau complet, lieu par lieu
-et aux deux résolutions, est dans la partie anglaise.
+100 %) : 57 à 60 dans la plupart des lieux (plaine d'Hyrule 59,6, village Cocorico 59,0, château d'Hyrule 58,2, lac Hylia
+58,0, fontaine Zora 56,7, donjons 60) et 54,0 sur la place du marché. Avec le rendu 3D à 75 % : 58 à 60 partout sauf sur
+la place du marché (55,6). Ces chiffres sont ceux du jeu construit par les outils de la version, comme chez un joueur. Le
+60 constant partout n'est pas encore atteint, et les combats de boss, les longues sessions et les cartes AMD et Intel
+n'ont pas été mesurés. Le tableau complet, lieu par lieu et aux deux résolutions, est dans la partie anglaise.
 
 ### Licence
 

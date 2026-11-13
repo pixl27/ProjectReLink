@@ -1538,6 +1538,10 @@ void copy_over(VkCommandBuffer cmd, VkImage dst, Bitmap& b, Upload& u, int x, in
     if (!b.w || (uint32_t)x + b.w > w || (uint32_t)y + b.h > h) return;
     const uint64_t size = (uint64_t)b.w * b.h * 4;
     if (u.size < size) {
+        // (the slot's own frame is over before the slot is used again: its smaller buffer can go. It stayed for good before, which
+        // mattered little for a menu and is the window's size for the start-up screen at each resize)
+        if (u.buf) destroy_buffer(u.buf, u.alloc);
+        u = {};
         if (!create_buffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, u.buf, u.alloc, &u.map)) return;
         u.size = size, u.version = 0;
     }
@@ -1556,7 +1560,7 @@ void copy_over(VkCommandBuffer cmd, VkImage dst, Bitmap& b, Upload& u, int x, in
     vkCmdCopyBufferToImage(cmd, u.buf, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
 }
 
-// ---- (relink) the start-up screen (vk_startup_paint.h): centred on black ----
+// ---- (relink) the start-up screen (vk_startup_paint.h): the whole window, a picture that moves ----
 StartupView startup;
 Bitmap startup_bmp;
 std::atomic<bool> startup_on{false};
@@ -1565,21 +1569,38 @@ void paint_startup(HDC dc, uint32_t w, uint32_t h, int pct) { paint_startup_view
 } // namespace
 
 void startup_screen(const StartupView* view) {
+    // (one at a time, and nothing after the end: a painter whose last present waited for a hidden window comes back here once
+    // the game has started, and would paint the landscape again for nobody)
+    static std::mutex mu;
+    static bool ended = false;
+    std::lock_guard guard(mu);
     if (!view) {
         startup_on.store(false, std::memory_order_release);
+        ended = true;
+        // (the picture is the whole window: the kept landscape and the bitmap are 8 MB each at 1080 lines, on PCs short of memory.
+        // The three upload buffers go a few presents later, menu_record)
+        startup_backdrop = {};
+        std::lock_guard lk(bmp_mu);
+        startup_bmp.w = startup_bmp.h = 0;
+        std::vector<uint8_t>().swap(startup_bmp.px);
         return;
     }
-    static int drawn_pct = 0;
-    const int pct = startup_scale(dev.swap_extent.width, dev.swap_extent.height);
+    if (ended) return;
+    static uint32_t drawn_w = 0, drawn_h = 0;
+    static double drawn_at = -1;
+    const uint32_t w = dev.swap_extent.width, h = dev.swap_extent.height;
     StartupView v = *view;
     if (v.version.empty()) v.version = version_text(RELINK_VERSION);   // ("v2.0.5"; "v2.0.5 dev" between releases)
-    // (the bar to whole pixels: a redraw only when it moves)
-    const double span = (kStartupW - 120) * pct / 100.0;
-    if (v.fraction >= 0) v.fraction = std::floor(std::min(v.fraction, 1.0) * span) / span;
-    if (pct != drawn_pct || !(v == startup)) {
+    // (the picture moves: drawn again 30 times a second up to 1080 lines, 15 up to 1440, 10 above. Each drawing is the window's
+    // pixels copied three times and sent to the card, and the start's own work has the processor)
+    const uint64_t pixels = (uint64_t)w * h;
+    const double every = pixels > 4200000 ? 0.099 : pixels > 2300000 ? 0.066 : 0.033;
+    StartupView still = v, was = startup;
+    still.anim = was.anim = 0;
+    if (w && h && (w != drawn_w || h != drawn_h || !(still == was) || v.anim < drawn_at || v.anim - drawn_at >= every - 0.004)) {
         startup = v;
-        drawn_pct = pct;
-        gdi_draw(startup_bmp, (uint32_t)(kStartupW * pct / 100), (uint32_t)(kStartupH * pct / 100), paint_startup, pct);
+        drawn_w = w, drawn_h = h, drawn_at = v.anim;
+        gdi_draw(startup_bmp, w, h, paint_startup, 100);
     }
     startup_on.store(true, std::memory_order_release);
 }
@@ -2231,6 +2252,14 @@ void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_
         const uint32_t sw = startup_bmp.w, sh = startup_bmp.h;
         lk.unlock();
         if (sw) copy_over(cmd, dst, startup_bmp, ups[2][slot], (int)(w - sw) / 2, (int)(h - sh) / 2, w, h);
+    } else {   // (the start-up screen's upload buffers, the window's size each: let go once no frame in flight can still read them)
+        static int presents_since = 0;
+        if ((ups[2][0].buf || ups[2][1].buf || ups[2][2].buf) && ++presents_since > 12) {
+            for (Upload& u : ups[2]) {
+                if (u.buf) destroy_buffer(u.buf, u.alloc);
+                u = {};
+            }
+        }
     }
     if (opts.show_fps && !startup_on.load(std::memory_order_relaxed)) {   // (no game frames yet: not "0 FPS" over the start-up screen)
         // The game image was just blitted (or cleared) into dst. Its write must
