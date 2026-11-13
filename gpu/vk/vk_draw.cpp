@@ -6850,6 +6850,86 @@ void prepare_background() {
     }).detach();
 }
 
+// (relink) Lean pipelines leave the noted graphics pipelines to their first draw, which is quick only when the driver's own cache
+// has them. It has none after a first install, after a driver update, or when the game's program moved or changed its name: NVIDIA
+// keeps its cache by program, and night68's new name emptied it (the Market ran at 29 fps on its first visit, with up to 221 draws a
+// frame left out while their pipelines were made, against under 10 before). So when the driver's cache has not seen this build,
+// each noted pipeline is built once for that cache and let go, as predict_run does for the predicted ones: its program is borrowed
+// from relink_programs.bin for it and nothing stays in memory. relink_pipelines_warm.txt says which driver, build and program were
+// warmed. RX_VK_WARM=0: never; =1: at this start whatever the file says. RX_VK_WARM_S: a time budget in seconds (600; 0: none)
+std::string warm_marker_path() {
+    const std::string notes = pipe_notes_path();
+    return notes.substr(0, notes.find_last_of("\\/") + 1) + "relink_pipelines_warm.txt";
+}
+std::string warm_marker_now() {
+    char exe[MAX_PATH];
+    const DWORD n = game_module_path(exe, MAX_PATH);
+    char line[MAX_PATH + 128];
+    snprintf(line, sizeof line, "%08x %04x:%04x %016llx %.*s", (unsigned)dev.props.driverVersion, (unsigned)dev.props.vendorID,
+             (unsigned)dev.props.deviceID, (unsigned long long)program_cache_stamp(), (int)n, exe);
+    return line;
+}
+void warm_run(void (*progress)(size_t done, size_t total)) {
+    static const char* const sw = getenv("RX_VK_WARM");
+    if (sw && !atoi(sw)) return;
+    const std::string now = warm_marker_now(), path = warm_marker_path();
+    if (!sw) {
+        char had[MAX_PATH + 128] = "";
+        if (FILE* f = fopen(path.c_str(), "rb")) {
+            const size_t n = fread(had, 1, sizeof had - 1, f);
+            fclose(f);
+            had[n] = 0;
+            if (char* end = strpbrk(had, "\r\n")) *end = 0;
+        }
+        if (now == had) return;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::vector<std::unique_ptr<PipeNote>> notes = pipe_notes_read();
+    if (notes.empty()) return;   // (nothing noted yet: play notes them, and the driver's cache has them from their first draw)
+    // (the notes' programs read in one pass, as the full precompile reads them: borrowing each from the file for its pipelines,
+    // as predict_run does, made 8535 pipelines in 370 s cold and still 310 s with the driver's cache warm, one program at a time;
+    // play asks for these programs anyway, the notes being what it drew before)
+    std::unordered_set<uint64_t> wanted;
+    for (const auto& n : notes) wanted.insert(n->prog);
+    const size_t programs_n = program_cache_load_some(wanted, [](Program& p) { ensure_layout(p); }, false);
+    const double read_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    std::atomic<size_t> next{0}, done{0}, made{0};
+    static const int budget_s = getenv("RX_VK_WARM_S") ? atoi(getenv("RX_VK_WARM_S")) : 600;
+    std::atomic<bool> out_of_time{false};
+    const auto worker = [&] {
+        ub_thread_off();   // (a background thread: see ub_thread_off)
+        driver_cache_only = true;
+        for (;;) {
+            if (prepare_stopped()) return;
+            if (budget_s > 0 && std::chrono::steady_clock::now() - t0 > std::chrono::seconds(budget_s)) {
+                out_of_time = true;
+                return;
+            }
+            const size_t i = next++;
+            if (i >= notes.size()) return;
+            const PipeNote& n = *notes[i];
+            if (const Program* p = program_find(n.prog, n.variant))
+                if (const VkPipeline pl = build_graphics(*p, n.s, note_targets(n), (VkPrimitiveTopology)n.topo))
+                    vkDestroyPipeline(dev.device, pl, nullptr), made++;
+            done++;
+        }
+    };
+    std::vector<std::thread> threads;
+    const unsigned cpus = std::max(1u, std::thread::hardware_concurrency());
+    for (unsigned i = 0; i < std::min(cpus, 64u); i++) threads.emplace_back(worker);
+    while (next.load() < notes.size() + threads.size() && !prepare_stopped() && !out_of_time.load()) {
+        if (progress) progress(done.load(), notes.size());
+        Sleep(100);
+    }
+    for (std::thread& t : threads) t.join();
+    const bool whole = !prepare_stopped() && !out_of_time.load();
+    if (whole)
+        if (FILE* f = fopen(path.c_str(), "wb")) fprintf(f, "%s\n", now.c_str()), fclose(f);
+    logf("vk: warmed the driver's cache: %zu of %zu noted pipelines made in %.1f s (%.1f s of it %zu programs read)%s", made.load(),
+         notes.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), read_s, programs_n,
+         whole ? "" : " (stopped before the end: the rest are made in play, and the next start goes on)");
+}
+
 void precompile_run(void (*progress)(size_t done, size_t total)) {
     const auto t0 = std::chrono::steady_clock::now();
     // (a start that dies in here would die in here every time, the notes being what it builds from: a player saw the console reach
@@ -6875,6 +6955,7 @@ void precompile_run(void (*progress)(size_t done, size_t total)) {
     // (relink, lean pipelines: the notes' graphics pipelines are left to their first draw; only the compute programs are read
     // and their pipelines made here)
     const bool lean = pipelines_lean();
+    if (lean) warm_run(progress);   // (once a driver, build and program: the noted pipelines into the driver's own cache)
     std::vector<std::unique_ptr<PipeNote>> notes;
     if (!lean) notes = pipe_notes_read();
     std::unordered_set<uint64_t> wanted;

@@ -32,6 +32,10 @@ Other versions do not work: the launcher checks your copy and says so before it 
 4. Press **Install**. It takes 10 to 45 minutes depending on your CPU; you can keep using the PC.
 5. Press **Play**. The desktop and Start menu shortcuts open the launcher from then on.
 
+The first start is long, once: the game prepares its shaders and builds its graphics pipelines for your driver's cache, with
+a progress screen. It does that part again after a graphics driver update, so that the first visit of a place does not
+stutter while the driver compiles.
+
 ![Installing](docs/install.png)
 
 Until a release shows on the releases page, the installer is not published yet: see [Build from source](#build-from-source).
