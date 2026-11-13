@@ -67,8 +67,11 @@ and so do keyboard and mouse (the keys are listed on the Controls page).
 
 ## Measured frame rates
 
-On our PC: **Ryzen 5 5500, GeForce RTX 3060 Ti (8 GB), 16 GB of RAM, Windows 11**. Game capped at 60 frames a second, 3D
-render resolution at 75 %, version 0.6.1. Averages over windows of 30 to 60 seconds.
+On our PC: **Ryzen 5 5500, GeForce RTX 3060 Ti (8 GB), 16 GB of RAM, Windows 11**.
+
+**No DLSS, no frame generation.** Every number here counts frames the game really rendered: no AI upscaler and no
+generated frames were on. The game was capped at 60 frames a second, with its 3D render resolution at 75 % and its own
+plain scaling to the window; version 0.6.1. Averages over windows of 30 to 60 seconds.
 
 | Place | Frames a second |
 |---|---|
@@ -187,8 +190,9 @@ place. Les sauvegardes, les réglages et les mods sont conservés.
 
 ### Images par seconde mesurées
 
-Sur un Ryzen 5 5500, une GeForce RTX 3060 Ti (8 Go), 16 Go de RAM et Windows 11, jeu limité à 60 images par seconde et rendu
-3D à 75 % : 58 à 60 dans la plupart des lieux (plaine d'Hyrule 59,8, village Cocorico 59,0, lac Hylia 59,2, fontaine Zora
+Sans DLSS et sans génération d'images : chaque image comptée est réellement calculée par le jeu. Sur un Ryzen 5 5500, une
+GeForce RTX 3060 Ti (8 Go), 16 Go de RAM et Windows 11, jeu limité à 60 images par seconde et rendu 3D à 75 % : 58 à 60 dans
+la plupart des lieux (plaine d'Hyrule 59,8, village Cocorico 59,0, lac Hylia 59,2, fontaine Zora
 58,3, donjons 58 à 60) et 54,1 en traversant la place du marché. Le 60 constant partout n'est pas encore atteint, et les
 combats de boss, les longues sessions et les cartes AMD et Intel n'ont pas été mesurés. Le tableau complet est dans la partie
 anglaise.
