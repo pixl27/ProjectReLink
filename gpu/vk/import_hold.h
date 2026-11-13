@@ -1,5 +1,5 @@
 #pragma once
-// (hookshot) A host-memory import that failed is not tried again for a short while. The same range was imported
+// (relink) A host-memory import that failed is not tried again for a short while. The same range was imported
 // again on every use after vkAllocateMemory failed, each attempt 7-130 ms, about 40 times a second (issue 218).
 #include <algorithm>
 #include <cstdint>

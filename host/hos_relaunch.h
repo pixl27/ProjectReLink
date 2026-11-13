@@ -1,4 +1,4 @@
-/* (hookshot) The command a restart starts again (host/hos_relaunch.c, the Insert menu's Restart now), as plain C:
+/* (relink) The command a restart starts again (host/hos_relaunch.c, the Insert menu's Restart now), as plain C:
    on Linux the arguments and the environment the process started with, read from /proc/self/cmdline and
    /proc/self/environ (strings ended by a NUL each). tests/test_menu_restart.py checks it. */
 #pragma once

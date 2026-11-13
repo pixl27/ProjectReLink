@@ -99,7 +99,7 @@ void CollectInterpolationInfo(Environment& env, IR::Program& program) {
 }
 
 void AddGlobalTables(IR::Program& program) {
-    // (hookshot) task and mesh programs read through pointers kept in small storage buffers (bones, instances): memory no
+    // (relink) task and mesh programs read through pointers kept in small storage buffers (bones, instances): memory no
     // binding names. The back end's table at c0+0x880 holds the regions those pointers reach (vk_bank.cpp pointer_table).
     // Few entries: each is searched at every read, and a program has ~150 of them (with 16, the driver took so long over each
     // pipeline that a scene never finished loading)
@@ -110,7 +110,7 @@ void AddGlobalTables(IR::Program& program) {
     // (EvilOOT) the program's own tables first: the search takes the first buffer that holds an address, and the pointer
     // table's regions are whole pools for compute (vk_bank.cpp pointer_table), bound GPU-only. Searched before the precise
     // entries, the culling setup's count writes went through the pool's binding and the launches never saw them.
-    // (hookshot, as Lichii #421) none past MAX_SSBOS: the list is a static_vector, and one more threw bad_alloc
+    // (relink, as Lichii #421) none past MAX_SSBOS: the list is a static_vector, and one more threw bad_alloc
     const auto room{[&] { return program.info.storage_buffers_descriptors.size() < Info::MAX_SSBOS; }};
     for (u32 i = 0; i < program.info.num_global_tables && room(); ++i) {
         program.info.storage_buffers_descriptors.push_back({
@@ -150,7 +150,7 @@ void AddNVNStorageBuffers(IR::Program& program) {
         case Stage::VertexA:
         case Stage::VertexB:
             return 0x110u;
-        case Stage::Task:   // (hookshot: NVN2's tables, gpu/vk/vk_bank.cpp)
+        case Stage::Task:   // (relink: NVN2's tables, gpu/vk/vk_bank.cpp)
             return 0x670u;
         case Stage::Mesh:
             return 0x770u;
@@ -179,7 +179,7 @@ void AddNVNStorageBuffers(IR::Program& program) {
             continue;
         }
         if (descs.size() >= Info::MAX_SSBOS) {
-            break;   // (hookshot, as Lichii #421: no bad_alloc; the slots left out read 0)
+            break;   // (relink, as Lichii #421: no bad_alloc; the slots left out read 0)
         }
         descs.push_back({
             .cbuf_index = driver_cbuf,
@@ -553,7 +553,7 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
 
     CollectInterpolationInfo(env, program);
     AddNVNStorageBuffers(program);
-    AddGlobalTables(program);   // (hookshot: after the NVN ones, which the fallbacks index as they come)
+    AddGlobalTables(program);   // (relink: after the NVN ones, which the fallbacks index as they come)
     return program;
 }
 

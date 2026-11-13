@@ -22,7 +22,7 @@ namespace mkwvk {
 struct Texture {
     VkImage image = VK_NULL_HANDLE;
     VmaAllocation allocation = nullptr;
-    VkImageCreateInfo ci{};   // (eglantine) what the image was made from (sType 0: not to be recycled)
+    VkImageCreateInfo ci{};   // (relink) what the image was made from (sType 0: not to be recycled)
     VkFormat format = VK_FORMAT_UNDEFINED;   // the image's own format (views may be others of its class)
     VkImageType type = VK_IMAGE_TYPE_2D;
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -44,7 +44,7 @@ struct Texture {
     bool cube = false;        // CUBE_COMPATIBLE
     bool astc = false;        // ASTC blocks decoded into RGBA8 (block_w x block_h)
     bool bc = false;          // (and kept as BC3: big ones, re-encoded on the GPU after decoding; vk_texture.cpp)
-    bool bc_resized = false;  // (hookshot-amd: its BC3 image is a resized copy, uneven block levels on AMD; vk_texture.cpp)
+    bool bc_resized = false;  // (relink-amd: its BC3 image is a resized copy, uneven block levels on AMD; vk_texture.cpp)
     int block_w = 1, block_h = 1, bpb = 0;   // the storage's blocks
     // the game's texture
     uint64_t gpu = 0, guest = 0, guest_size = 0;   // storage (GPU address, guest address, bytes)
@@ -60,7 +60,7 @@ struct Texture {
     std::vector<Run> runs;
     uint32_t runs_maps_gen = ~0u;             // (the GPU mappings' generation the runs were made at)
     bool gpu_written = false; // the GPU rendered, copied or stored into it: the image is the content
-    bool only_cleared = false; // (hookshot) all the GPU did was clear it: what the CPU writes after still counts (a font cache's glyphs)
+    bool only_cleared = false; // (relink) all the GPU did was clear it: what the CPU writes after still counts (a font cache's glyphs)
     uint32_t gpu_gen = 0;     // (the memory generation when the GPU last wrote it: CPU writes after it are taken)
     bool released = false;    // its texture was finalized after the GPU wrote it: CPU writes count again
     uint32_t release_gen = 0;
@@ -81,7 +81,7 @@ struct Texture {
     uint64_t owned_frame = 0; // (the present its storage was last noted as render targets' (gpu_owned))
     uint32_t key_layout = 0, key_cls = 0;   // (the key's storage layout and format class)
     bool vw_listed = false;   // (in the list of GPU-written textures of virtual pools: texture_flush_to_guest)
-    uint64_t prefetched_frame = 0;   // (eglantine, RX_VK_PREFETCH: the present it was made ahead at, 0: made by a draw)
+    uint64_t prefetched_frame = 0;   // (relink, RX_VK_PREFETCH: the present it was made ahead at, 0: made by a draw)
     bool drawn = false;              // (and whether a draw used it since)
     std::unordered_map<uint64_t, VkImageView> views;
 };
@@ -160,19 +160,19 @@ void texture_rendered(Texture* tex);
 uint64_t texture_frame_no();
 /// (diagnostic, RX_VK_PASS_TRACE=1) the last frame a wide image the GPU drew was uploaded over from the game's memory; 0: none
 uint64_t texture_upload_over_drawn_frame();
-/// (eglantine) The images the operation replayed next on this thread writes (a draw's render targets; a copy's or a texture
+/// (relink) The images the operation replayed next on this thread writes (a draw's render targets; a copy's or a texture
 /// clear's destination): while set, texture_touch does not upload the game's memory over one of them that the GPU drew and the
 /// game finalized. (nullptr, 0, nullptr): none, once the operation's textures are looked up
 void texture_write_targets(Texture* const* color, int n, Texture* depth);
 uint64_t texture_first_registered(uint64_t gpu);
 bool texture_prefetch_pop(nvn_tex* out);   // vk_bank.cpp
-/// (eglantine) at a recording's start, once a frame: a few registered compressed textures made and uploaded ahead of their first draw
+/// (relink) at a recording's start, once a frame: a few registered compressed textures made and uploaded ahead of their first draw
 void texture_prefetch_some();   // vk_bank.cpp (diagnostic): the frame its storage was first registered in
 /// A texel buffer view over guest memory (texture targets of NVN_TEXTURE_TARGET_BUFFER, and image buffers)
 VkBufferView texel_buffer_view(const nvn_tex* t, const nvn_view* v, bool storage);
 /// The texture whose image was rendered for the window (present): t's own, or one rendered at its storage
 Texture* texture_for_present(const nvn_tex* t);
-/// (eglantine, RX_VK_DEFRAG) at a submission's first recording, nothing recorded yet: a pass of the image pool's defragmentation
+/// (relink, RX_VK_DEFRAG) at a submission's first recording, nothing recorded yet: a pass of the image pool's defragmentation
 void texture_defrag_step();
 /// Ages the cache by one present; images nothing used for a while go, after the work that last read them
 void texture_frame(uint64_t completed_value);
@@ -183,7 +183,7 @@ void texture_log_guest(const Texture* t);
 void texture_describe_written(uint64_t gpu, uint64_t size, std::string& out);
 /// (a host hook's fast check, any thread) whether a texture the GPU wrote may lie in virtual pages [gpu, gpu + size)
 bool texture_gpu_written_in(uint64_t gpu, uint64_t size);
-/// (eglantine, RX_VK_WB_LAZY) a texture's storage lies in that range of GPU addresses
+/// (relink, RX_VK_WB_LAZY) a texture's storage lies in that range of GPU addresses
 bool texture_storage_overlaps(uint64_t gpu, uint64_t size);
 /// Textures the GPU wrote in [gpu, gpu + size) read back and written into their memory, block linear, as the GPU
 /// would have left them there: before those virtual pages are unmapped or remapped (the work recorded before is

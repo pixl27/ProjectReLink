@@ -16,8 +16,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef HOOKSHOT_VERSION   /* (nx2/build.py gives it: the release and a fingerprint of the sources, nx2/version.py) */
-#define HOOKSHOT_VERSION "unknown"
+#ifndef RELINK_VERSION   /* (nx2/build.py gives it: the release and a fingerprint of the sources, nx2/version.py) */
+#define RELINK_VERSION "unknown"
 #endif
 #if defined(_WIN32) || defined(__EMSCRIPTEN__)
 #define WIN32_LEAN_AND_MEAN
@@ -68,7 +68,7 @@ static void no_power_throttling(void) {
 }
 #endif
 
-/* (eglantine) HOS_PROCESS_PRIORITY=0 normal, 1 above normal (default), 2 high: the process's own priority class while it runs (Windows puts
+/* (relink) HOS_PROCESS_PRIORITY=0 normal, 1 above normal (default), 2 high: the process's own priority class while it runs (Windows puts
    it back when it exits). The game's threads run at the normal level, as the foreground window's threads do, and Windows raises
    those for a while on their window's events: on the terrace the 40-90 ms stalls came with another app's interface busy
    (its renderer 53 % of a core in the seconds with a stall against 6 % otherwise, hs205), the game's threads waiting, its
@@ -187,7 +187,7 @@ static int reserve_guest(void) {
                         u < 0 ? "/dev/udmabuf cannot be opened" : "udmabuf's size_limit_mb cannot be read");
         }
         if (e ? atoi(e) != 0 : usable) {
-            const int fd = (int)syscall(SYS_memfd_create, "hookshot-guest", 1u /* MFD_CLOEXEC */ | 2u /* MFD_ALLOW_SEALING */);
+            const int fd = (int)syscall(SYS_memfd_create, "relink-guest", 1u /* MFD_CLOEXEC */ | 2u /* MFD_ALLOW_SEALING */);
             if (fd >= 0 && ftruncate(fd, (off_t)GUEST_SPACE) == 0) {
                 fcntl(fd, 1033 /* F_ADD_SEALS */, 0x0002 /* F_SEAL_SHRINK */ | 0x0004 /* F_SEAL_GROW */);
                 void *p = mmap((void *)A64_HOST_BASE, GUEST_SPACE, PROT_READ | PROT_WRITE,
@@ -252,7 +252,7 @@ static void call_guest(Ctx *c, uint64_t addr, uint64_t sp, const char *what) {
 
 void hos_update_check(void);   /* (host/hos_update.c) */
 #ifndef _WIN32
-/* (linux) Saves live in $XDG_DATA_HOME/hookshot (~/.local/share/hookshot), so a rebuilt game folder still finds them.
+/* (linux) Saves live in $XDG_DATA_HOME/relink (~/.local/share/relink), so a rebuilt game folder still finds them.
    A user/ folder beside the executable from before is moved there the first time, entry by entry. Anything that
    cannot be moved keeps the old place. --user still wins. */
 static int is_dir(const char *p) {
@@ -318,7 +318,7 @@ static const char *saves_dir(const char *beside) {
         snprintf(dir, sizeof dir, "%s/.local/share", home);
     } else return beside;
     CreateDirectoryA(dir, NULL);
-    snprintf(dir + strlen(dir), sizeof dir - strlen(dir), "/hookshot");
+    snprintf(dir + strlen(dir), sizeof dir - strlen(dir), "/relink");
     CreateDirectoryA(dir, NULL);
     if (GetFileAttributesA(dir) == INVALID_FILE_ATTRIBUTES) return beside;
     char pattern[MAX_PATH];
@@ -358,12 +358,12 @@ static const char *saves_dir(const char *beside) {
 }
 #endif
 
-/* hookshot_env.txt beside the game: NAME=VALUE lines set as environment variables before anything reads them, for the
+/* relink_env.txt beside the game: NAME=VALUE lines set as environment variables before anything reads them, for the
    switches players are asked to test (RX_VK_NOOPT and the rest). Lines starting with # are notes. On Linux this runs
    before the window, so HOS_HEADLESS and HOS_WINDOW_SIZE are already set when the window is made.
    HOS_ENV_FILE=<path> reads that file instead: a scripted or A/B test run brings its own switches and leaves the
-   player's hookshot_env.txt as it is. */
-static void load_hookshot_env(void) {
+   player's relink_env.txt as it is. */
+static void load_relink_env(void) {
     char path[MAX_PATH + 32];
     const char *other = getenv("HOS_ENV_FILE");
     if (other && *other) {
@@ -371,7 +371,7 @@ static void load_hookshot_env(void) {
     } else {
         DWORD n = hos_game_path_a(path, MAX_PATH);
         while (n && path[n - 1] != 92 && path[n - 1] != 47) n--;
-        memcpy(path + n, "hookshot_env.txt", 17);
+        memcpy(path + n, "relink_env.txt", 17);
     }
     FILE *f = fopen(path, "r");
     if (!f) return;
@@ -1174,20 +1174,20 @@ volatile uint64_t hos_wide_out, hos_wide_scene;
 volatile int hos_native_scene;
 volatile int hos_fix_res;   /* (nx2/oot_native_resolution.py's cached-scale refresh: HOS_FIX_RES=1; #849's fixed-scale patch does it by default) */
 volatile float hos_wide_ratio, hos_wide_squeeze, hos_wide_margin;
-/* (nx2/oot_occlusion.py) read by the game's code where it decides to make occlusion queries: 1, none (HOOKSHOT_OCCLUSION_OFF=1) */
+/* (nx2/oot_occlusion.py) read by the game's code where it decides to make occlusion queries: 1, none (RELINK_OCCLUSION_OFF=1) */
 volatile int hos_occlusion_off;
 static void occlusion_switch(void) {
-    const char *e = getenv("HOOKSHOT_OCCLUSION_OFF");
+    const char *e = getenv("RELINK_OCCLUSION_OFF");
     hos_occlusion_off = e && e[0] == '1';
-    if (hos_occlusion_off) hos_log("occlusion off: the game makes no occlusion queries (HOOKSHOT_OCCLUSION_OFF=1)");
+    if (hos_occlusion_off) hos_log("occlusion off: the game makes no occlusion queries (RELINK_OCCLUSION_OFF=1)");
 }
 #ifdef _WIN32
-/* (hookshot) On laptops with two GPUs, the drivers run a program on the dedicated one when it exports these (NVIDIA Optimus, AMD
+/* (relink) On laptops with two GPUs, the drivers run a program on the dedicated one when it exports these (NVIDIA Optimus, AMD
    PowerXpress): without them a laptop could put the game on its integrated GPU, 5 fps (issue 176) */
 __declspec(dllexport) unsigned long NvOptimusEnablement = 1;
 __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 
-/* (hookshot) The game's paths are UTF-8 char strings through Windows' A functions and fopen: its manifest (nx2/win_manifest.py)
+/* (relink) The game's paths are UTF-8 char strings through Windows' A functions and fopen: its manifest (nx2/win_manifest.py)
    makes the process's code page UTF-8, from Windows 10 1903 on. Before that, or with the manifest missing, those take the system's
    ANSI code page, and a folder name it cannot spell (Japanese on a Western Windows, an emoji) comes back as "?": nothing opens and
    the game closed with no window and no log. The exe's own path through GetModuleFileNameA must name the exe (a name past MAX_PATH
@@ -1198,7 +1198,7 @@ static int narrow_paths_ok(int argc, char **argv) {
     if (n && n < MAX_PATH && GetFileAttributesA(a) != INVALID_FILE_ATTRIBUTES) return 1;
     wchar_t w[MAX_PATH * 2] = L"";
     GetModuleFileNameW(NULL, w, MAX_PATH * 2);
-    fprintf(stderr, "hookshot: this folder's path cannot be opened (code page %u, %s): move the game to a folder with a plain name\n",
+    fprintf(stderr, "relink: this folder's path cannot be opened (code page %u, %s): move the game to a folder with a plain name\n",
             GetACP(), n >= MAX_PATH ? "too long" : "has characters the code page lacks");
     int quiet = getenv("HOS_HEADLESS") != NULL;
     for (int i = 1; i < argc; i++) quiet |= !strcmp(argv[i], "--prepare-shaders");
@@ -1222,20 +1222,20 @@ static int game_main(int argc, char **argv) {
 #endif
 #ifdef _WIN32
     if (!narrow_paths_ok(argc, argv)) return 1;
-    load_hookshot_env();
+    load_relink_env();
 #endif
     occlusion_switch();
 #ifdef _WIN32
     const char *protect_hearts = getenv("HOS_OOT_PROTECT_HEARTS");
     hos_oot_protect_hearts = protect_hearts && !strcmp(protect_hearts, "1");
     {   // (the whole process, not only the window's thread: the renderer asks the window's size from its own, and on a 4K screen at 150%
-        // Windows answered such a thread 2560 x 1440: the picture was that size, in the corner of the window. Hookshot issues 15, 18, 20)
+        // Windows answered such a thread 2560 x 1440: the picture was that size, in the corner of the window. upstream issues 15, 18, 20)
         typedef BOOL(WINAPI * SetAware)(void *);
         SetAware set = (SetAware)(void *)GetProcAddress(GetModuleHandleA("user32.dll"), "SetProcessDpiAwarenessContext");
         if (set && !getenv("HOS_DPI_UNAWARE")) set((void *)(intptr_t)-4);
     }
 #endif
-    {   // (started from its icon the game has nowhere to log to: hookshot_log.txt beside it, last run only, for players to send in)
+    {   // (started from its icon the game has nowhere to log to: relink_log.txt beside it, last run only, for players to send in)
 #ifdef _WIN32
         {   /* (started again by the Insert menu's Restart now (host/hos_relaunch.c): the run before still has its log open until
                it exits, so wait for it (up to 10 s) before the log moves to .1, or the move fails and its log is overwritten) */
@@ -1253,30 +1253,30 @@ static int game_main(int argc, char **argv) {
             char path[MAX_PATH + 32];
             DWORD n = hos_game_path_a(path, MAX_PATH);
             while (n && path[n - 1] != 92 && path[n - 1] != 47) n--;
-            /* (the four runs before stay as hookshot_log.1.txt (the last) to .4.txt: a player who started the game again after a
+            /* (the four runs before stay as relink_log.1.txt (the last) to .4.txt: a player who started the game again after a
                crash sent in the new run's log, and the crash was gone) */
             char from[MAX_PATH + 32], to[MAX_PATH + 32];
             for (int k = 4; k >= 1; k--) {
-                if (k == 1) memcpy(from + n, "hookshot_log.txt", 17), memcpy(from, path, n);
-                else memcpy(from, path, n), snprintf(from + n, 32, "hookshot_log.%d.txt", k - 1);
-                memcpy(to, path, n), snprintf(to + n, 32, "hookshot_log.%d.txt", k);
+                if (k == 1) memcpy(from + n, "relink_log.txt", 17), memcpy(from, path, n);
+                else memcpy(from, path, n), snprintf(from + n, 32, "relink_log.%d.txt", k - 1);
+                memcpy(to, path, n), snprintf(to + n, 32, "relink_log.%d.txt", k);
                 MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING);
             }
-            memcpy(path + n, "hookshot_log.txt", 17);
+            memcpy(path + n, "relink_log.txt", 17);
             if (freopen(path, "w", stderr)) setvbuf(stderr, NULL, _IONBF, 0);
         }
     }
-    hos_log("Project ReLink %s", HOOKSHOT_VERSION);   /* (the log's first line: which build a report comes from) */
+    hos_log("Project ReLink %s", RELINK_VERSION);   /* (the log's first line: which build a report comes from) */
     const char *image = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--romfs") && i + 1 < argc) hos_romfs_dir = argv[++i];
         else if (!strcmp(argv[i], "--user") && i + 1 < argc) hos_user_dir = argv[++i];
         else if (!strcmp(argv[i], "--trace")) hos_trace = 1;
-        else if (!strcmp(argv[i], "--prepare-shaders")) {   /* (hookshot) a build's last step: no game */
+        else if (!strcmp(argv[i], "--prepare-shaders")) {   /* (relink) a build's last step: no game */
 #ifdef _WIN32
-            _putenv("HOOKSHOT_PREPARE_ONLY=1");
+            _putenv("RELINK_PREPARE_ONLY=1");
 #else
-            setenv("HOOKSHOT_PREPARE_ONLY", "1", 1);
+            setenv("RELINK_PREPARE_ONLY", "1", 1);
 #endif
             int rx_prepare_shaders(void);
             if (rx_prepare_shaders()) {
@@ -1289,7 +1289,7 @@ static int game_main(int argc, char **argv) {
         else if (!image) image = argv[i];
     }
     static char beside_image[MAX_PATH], beside_romfs[MAX_PATH], beside_user[MAX_PATH];
-    if (!image) {   /* (hookshot) started with nothing, as a game is: everything beside the executable (the builder's folder) */
+    if (!image) {   /* (relink) started with nothing, as a game is: everything beside the executable (the builder's folder) */
         char dir[MAX_PATH];
         const DWORD len = hos_game_path_a(dir, MAX_PATH);
         char *slash = len ? strrchr(dir, SEP) : NULL;
@@ -1354,7 +1354,7 @@ static int game_main(int argc, char **argv) {
         return 1;
     }
     hos_mem_init(hos_image_end);
-    {   /* (hookshot) Widescreen and ultrawide (nx2/oot_wide.py): HOS_ASPECT=<ratio> (2.3889 for 3440x1440), else the Insert menu's
+    {   /* (relink) Widescreen and ultrawide (nx2/oot_wide.py): HOS_ASPECT=<ratio> (2.3889 for 3440x1440), else the Insert menu's
            Ultrawide (off unless it says 1) takes the main monitor's shape. The game's picture takes that shape at its own height (Hor+:
            the world wider at the sides), its 16:9 cameras the picture's ratio, the HUD, menus and movies the middle 16:9. Until now the
            one 16:9 constant in the game's data was changed and the 16:9 picture stretched to the window. */
@@ -1366,7 +1366,7 @@ static int game_main(int argc, char **argv) {
             const DWORD len = hos_game_path_a(path, MAX_PATH);
             char *slash = len ? strrchr(path, SEP) : NULL;
             if (slash) {
-                snprintf(slash + 1, (size_t)(path + MAX_PATH - slash - 1), "hookshot_options.ini");
+                snprintf(slash + 1, (size_t)(path + MAX_PATH - slash - 1), "relink_options.ini");
                 FILE *o = fopen(path, "r");
                 if (o) {
                     char line[80];
@@ -1463,7 +1463,7 @@ static DWORD WINAPI game_thread(void *p) {
 int main(int argc, char **argv) {
     int hos_display_init(void);
     void hos_display_loop(void);
-    load_hookshot_env();
+    load_relink_env();
     game_argc = argc, game_argv = argv;
     const int window = hos_display_init();
     HANDLE t = CreateThread(NULL, 64u << 20, game_thread, NULL, 0, NULL);

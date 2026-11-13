@@ -109,7 +109,7 @@ texture of the same family. They need the `zstandard` package, which ReLink's ow
 ## Mods
 
 RomFS mods go in `mods\<name>\romfs\...` in the game folder, with the same paths as the game's. The log
-(`hookshot_log.txt`) names each mod it reads. Patches of the game's code (`exefs`) are not supported: the code is compiled
+(`relink_log.txt`) names each mod it reads. Patches of the game's code (`exefs`) are not supported: the code is compiled
 ahead of time.
 
 ## Build from source
@@ -121,14 +121,14 @@ python -I nx2/make_game.py --nup "C:\path\your-game.nup" --out "C:\Games\ReLink"
 python -I nx2/make_game.py --romfs "C:\path\romfs" --exefs "C:\path\exefs" --out "C:\Games\ReLink" --language en-US
 ```
 
-`--check` with your `.nup` only checks the game's version. `--log file` keeps the output. `HOOKSHOT_JOBS=<n>` limits how many
+`--check` with your `.nup` only checks the game's version. `--log file` keeps the output. `RELINK_JOBS=<n>` limits how many
 files compile at once.
 
 You need:
 
 - Python 3 from python.org, with `pip install lz4 numpy capstone "unicorn>=2.1,<2.2" zstandard`.
 - [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (the `ucrt-x86_64` build), unpacked as `llvm-mingw` in the clone, or
-  `HOOKSHOT_MINGW` set to its folder.
+  `RELINK_MINGW` set to its folder.
 - The Vulkan headers and FFmpeg in the CPM cache's layout, with `RX_CPM` set to their folder. Without them the Vulkan
   renderer is not built.
 - The prebuilt files of `third_party` and the play profile of `work`. An installed ReLink holds them, in

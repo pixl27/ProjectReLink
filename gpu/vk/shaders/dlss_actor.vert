@@ -1,7 +1,7 @@
 #version 450
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
-// (hookshot) NVIDIA DLSS's actor motion (vk_dlss.cpp): a skinned draw of the scene drawn again, its vertices skinned with this
+// (relink) NVIDIA DLSS's actor motion (vk_dlss.cpp): a skinned draw of the scene drawn again, its vertices skinned with this
 // frame's bones and with the frame before's, so each pixel it covers gets its own motion and not that of what is behind it.
 // The cameras are in a storage buffer (data): this frame's view-projection as the game drew with it, the jitter in it; the frame
 // before's with its jitter taken off (both row major, clip = M * position); the jitter; the render size. The vertices and

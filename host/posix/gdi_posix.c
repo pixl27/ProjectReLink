@@ -1,6 +1,6 @@
 /* (linux) The bit of GDI the Insert menu and the FPS counter draw with (gpu/vk/vk_menu.cpp): a 32-bit DIB section,
    solid rectangles and lines of text, the text rasterised by stb_truetype (third_party/stb) from the system's sans
-   font (fontconfig's choice: fc-match; else a few usual paths). Built into hookshot_vk.so. */
+   font (fontconfig's choice: fc-match; else a few usual paths). Built into relink_vk.so. */
 #define _GNU_SOURCE
 #include <windows.h>
 

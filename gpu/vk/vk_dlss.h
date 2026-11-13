@@ -1,5 +1,5 @@
 // NVIDIA DLSS Super Resolution in place of OoT's gameplay upscale network (vk_dlss.cpp). Built in only with NVIDIA's NGX
-// SDK (HOOKSHOT_NGX, scripts/ngx_sdk.py: Linux and Windows); without it these say DLSS is not there and the game's network runs.
+// SDK (RELINK_NGX, scripts/ngx_sdk.py: Linux and Windows); without it these say DLSS is not there and the game's network runs.
 #pragma once
 
 #include <vector>
@@ -10,7 +10,7 @@ namespace mkwvk {
 
 struct Texture;
 
-/// Whether this build has DLSS in it (HOOKSHOT_NGX)
+/// Whether this build has DLSS in it (RELINK_NGX)
 bool dlss_built();
 /// Why DLSS cannot be chosen here (the Insert menu's Upscaler row says it), DLSS_OK when it can or is not known yet
 enum DlssWhy { DLSS_OK, DLSS_NOT_BUILT, DLSS_ENV_OFF, DLSS_NEEDS_RTX, DLSS_NEEDS_DRIVER, DLSS_NO_RUNTIME, DLSS_WHY_COUNT };

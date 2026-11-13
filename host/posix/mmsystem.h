@@ -1,7 +1,7 @@
 /* (linux) waveOut, the audio renderer's output (host/nn_audio.c), on SDL's audio (win32_posix.c): the blocks written
    play in order and are marked WHDR_DONE as the device takes them, as on Windows. */
-#ifndef HOOKSHOT_POSIX_MMSYSTEM_H
-#define HOOKSHOT_POSIX_MMSYSTEM_H
+#ifndef RELINK_POSIX_MMSYSTEM_H
+#define RELINK_POSIX_MMSYSTEM_H
 #include <windows.h>
 #ifdef __cplusplus
 extern "C" {

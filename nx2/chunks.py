@@ -111,14 +111,14 @@ def _available_gb():
 
 
 def emit_jobs():
-    """Processes for the emit: HOOKSHOT_LIFT_JOBS, else the cores this process may use (at most 16; each holds its run's
+    """Processes for the emit: RELINK_LIFT_JOBS, else the cores this process may use (at most 16; each holds its run's
     texts and the pages of the lift it touches), and at most one per 2 GB of available memory: a Steam Deck (16 GB) ran
     out with 8, and the system's out-of-memory handling stopped the lift ("lift.py stopped (signal 15): BrokenPipeError")
     or one worker (the update then sat at "jump tables" for good). 1 where there is no fork"""
     if "fork" not in multiprocessing.get_all_start_methods():
         return 1
-    if os.environ.get("HOOKSHOT_LIFT_JOBS"):
-        return max(1, int(os.environ["HOOKSHOT_LIFT_JOBS"]))
+    if os.environ.get("RELINK_LIFT_JOBS"):
+        return max(1, int(os.environ["RELINK_LIFT_JOBS"]))
     try:
         n = len(os.sched_getaffinity(0))
     except AttributeError:

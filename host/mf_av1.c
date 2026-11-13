@@ -1,4 +1,4 @@
-/* (hookshot) An AV1 decoder on Media Foundation, for nn::codec's AV1 decoder (host/nn_video.c).
+/* (relink) An AV1 decoder on Media Foundation, for nn::codec's AV1 decoder (host/nn_video.c).
 
    OoT's movies (romfs/Movie: the intro, ...) are AV1, and the static FFmpeg the build links has no AV1 decoder (its
    native one needs a hardware context; dav1d / libaom are not in it). Windows has one: the decoder MFT of the AV1
@@ -70,7 +70,7 @@ static int set_output_nv12(MfAv1 *m) {
     return 1;
 }
 
-/* (hookshot) Without the AV1 Video Extension the movies have no decoder: their pictures stay empty, which shows as a green screen, and the
+/* (relink) Without the AV1 Video Extension the movies have no decoder: their pictures stay empty, which shows as a green screen, and the
    intro never ends. Said once, on its own thread (the game goes on), with the way to the Store page. HOS_AV1_MISSING=1: as if it were missing */
 static DWORD WINAPI av1_missing_notice(LPVOID unused) {
     (void)unused;

@@ -39,12 +39,12 @@ BUILD_ID = "e0f3ccfa"   # (the version the patches, the hot list and the profile
 STARTED = time.time()   # (the build's total time, kept in build_times.json and said as @@times)
 sys.path[:0] = [HERE, os.path.join(ROOT, "third_party", "a64-kit", "tools")]   # (python -I leaves the script folder off)
 import toolchain as _toolchain
-# (hookshot) RX_TARGET=windows on Linux: the Windows game, with llvm-mingw's Linux release (HOOKSHOT_MINGW, or llvm-mingw
+# (relink) RX_TARGET=windows on Linux: the Windows game, with llvm-mingw's Linux release (RELINK_MINGW, or llvm-mingw
 # beside the builder), to run under Proton or copy to a Windows PC
 LINUX, CROSS = not _toolchain.windows(), _toolchain.windows() and os.name != "nt"
 # (SDL2.dll is sdl2-compat: it loads SDL3.dll from beside the exe. Left out of bin\ since v2.0.0, it said "Failed loading SDL3
 # library" three times and no controller worked: Discord #bug-reporting, 11-08)
-BESIDE = ["hookshot", "hookshot_vk.so", "libSDL2-2.0.so.0"] if LINUX else ["hookshot.exe", "hookshot_vk.dll", "SDL2.dll", "SDL3.dll", "wgpu_native.dll"]
+BESIDE = ["relink", "relink_vk.so", "libSDL2-2.0.so.0"] if LINUX else ["relink-game.exe", "relink_vk.dll", "SDL2.dll", "SDL3.dll", "wgpu_native.dll"]
 LANGUAGES = [("en-US", "English (US)"), ("en-GB", "English (UK)"), ("fr", "French (France)"), ("fr-CA", "French (Canada)"), ("de", "German"),
              ("it", "Italian"), ("es", "Spanish (Spain)"), ("es-419", "Spanish (Latin America)"), ("pt-BR", "Portuguese (Brazil)"), ("nl", "Dutch"),
              ("pl", "Polish"), ("ru", "Russian"), ("ja", "Japanese"), ("ko", "Korean"), ("zh-Hans", "Chinese (Simplified)"),
@@ -154,7 +154,7 @@ KEEP_BUILDS = 20
 
 def times_path(work):
     """Where the builds' times are kept: beside the object cache, in the builder's own folder (LOCALAPPDATA\\ReLink
-    on Windows, ~/.cache/hookshot-builder on Linux). A builder update keeps it, so the next build still knows what this PC
+    on Windows, ~/.cache/relink-builder on Linux). A builder update keeps it, so the next build still knows what this PC
     took, and the one after that can compare."""
     return os.path.join(work, "build_times.json")
 
@@ -279,10 +279,10 @@ def check_cache_paths(out, paths):
 
 
 def check_cpu():
-    """(linux) The AppImage's Vulkan back end (HOOKSHOT_VK_PREBUILT) is built for x86-64-v3 elsewhere
+    """(linux) The AppImage's Vulkan back end (RELINK_VK_PREBUILT) is built for x86-64-v3 elsewhere
     (scripts/linux/appimage.sh), while the game follows this PC (nx2/host_cpu.py): on a CPU without AVX2 it would stop at
     its start. Said now, before the game is read, not 40 minutes in (issue 363)"""
-    if not os.environ.get("HOOKSHOT_VK_PREBUILT") or os.environ.get("RX_MARCH"):
+    if not os.environ.get("RELINK_VK_PREBUILT") or os.environ.get("RX_MARCH"):
         return
     sys.path.insert(0, HERE)
     from host_cpu import host_march
@@ -411,7 +411,7 @@ def check_linux_compiler():
     cc = toolchain.find("clang")
     if not os.path.isfile(cc):
         fail("No C compiler was found. Install clang (and lld), or use the ReLink AppImage, which brings its own.")
-    sysroot = os.environ.get("HOOKSHOT_SYSROOT")
+    sysroot = os.environ.get("RELINK_SYSROOT")
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "t.c")
         with open(src, "w") as f:
@@ -429,7 +429,7 @@ def requested_jobs(value):
     """The builder's explicit worker override, or None to keep its automatic selection."""
     if value is None or value == "":
         return None
-    error = "HOOKSHOT_JOBS must be a whole number: use 1 or more, or 0 for automatic."
+    error = "RELINK_JOBS must be a whole number: use 1 or more, or 0 for automatic."
     try:
         jobs = int(value)
     except ValueError:
@@ -441,32 +441,32 @@ def requested_jobs(value):
 
 def default_jobs():
     """(issue 418) One compiler per CPU thread: nx2/build.py starts each one only when the memory free holds it (MemoryGate), so the
-    count no longer has to fit the biggest files in the memory free at the start. HOOKSHOT_JOBS or --jobs choose"""
+    count no longer has to fit the biggest files in the memory free at the start. RELINK_JOBS or --jobs choose"""
     cpus = os.cpu_count() or 2
-    print("build: up to %d compilers at once (one per CPU thread), as the memory allows; HOOKSHOT_JOBS=<n> to change" % cpus, flush=True)
+    print("build: up to %d compilers at once (one per CPU thread), as the memory allows; RELINK_JOBS=<n> to change" % cpus, flush=True)
     return cpus
 
 
 def chosen_jobs(given):
-    """--jobs when it is given (1 or more), else HOOKSHOT_JOBS, else what default_jobs chooses: worked out only when it is
+    """--jobs when it is given (1 or more), else RELINK_JOBS, else what default_jobs chooses: worked out only when it is
     needed, so the "compilers at once" line is the number the build uses"""
     if given:
         return given
     try:
-        return requested_jobs(os.environ.get("HOOKSHOT_JOBS")) or default_jobs()
+        return requested_jobs(os.environ.get("RELINK_JOBS")) or default_jobs()
     except ValueError as e:
         fail(str(e))
 
 
 def bundled_mingw():
     """(as TotK Recomp's installer) llvm-mingw in the tools folder: its clang, headers and libraries build the game, and nothing of
-    Visual Studio or the Windows SDK is needed. HOOKSHOT_MINGW set already wins; HOOKSHOT_MSVC=1: the Visual Studio route"""
-    if LINUX or os.environ.get("HOOKSHOT_MSVC") == "1":
-        return os.environ.get("HOOKSHOT_MINGW", "")
-    if not os.environ.get("HOOKSHOT_MINGW"):
+    Visual Studio or the Windows SDK is needed. RELINK_MINGW set already wins; RELINK_MSVC=1: the Visual Studio route"""
+    if LINUX or os.environ.get("RELINK_MSVC") == "1":
+        return os.environ.get("RELINK_MINGW", "")
+    if not os.environ.get("RELINK_MINGW"):
         here = os.path.join(ROOT, "llvm-mingw")
         if os.path.isfile(os.path.join(here, "bin", "clang" + (".exe" if os.name == "nt" else ""))):
-            os.environ["HOOKSHOT_MINGW"] = here
+            os.environ["RELINK_MINGW"] = here
         elif os.path.isdir(here):
             # (the folder is there and its compiler is not: an antivirus took it (false positives on unsigned tools), or the
             # zip was not unpacked whole. It went on to the Visual Studio route and said "The Windows SDK was not found")
@@ -476,16 +476,16 @@ def bundled_mingw():
                  "(a false alarm on unsigned programs): restore them from its quarantine or allow the ReLink folder, "
                  "then run ReLink-Setup.exe again and install. Visual Studio is not needed."
                  % (", ".join(missing) or "bin", os.path.join(here, "bin")))
-    return os.environ.get("HOOKSHOT_MINGW", "")
+    return os.environ.get("RELINK_MINGW", "")
 
 
 def check_mingw():
     """The bundled compiler builds and links a Windows program: found now, not 40 minutes in"""
     sys.path.insert(0, os.path.join(ROOT, "third_party", "a64-kit", "tools"))
     import toolchain
-    cc = toolchain.find("clang")   # (HOOKSHOT_MINGW's, else the one toolchain.py finds: the same as the build uses)
-    if not os.path.isfile(cc):   # (HOOKSHOT_MINGW set to a folder without the compiler: said here, not as a silent SystemExit)
-        fail("ReLink's own compiler was not found at %s. Set HOOKSHOT_MINGW to an llvm-mingw folder, or run "
+    cc = toolchain.find("clang")   # (RELINK_MINGW's, else the one toolchain.py finds: the same as the build uses)
+    if not os.path.isfile(cc):   # (RELINK_MINGW set to a folder without the compiler: said here, not as a silent SystemExit)
+        fail("ReLink's own compiler was not found at %s. Set RELINK_MINGW to an llvm-mingw folder, or run "
              "ReLink-Setup.exe again from a folder your antivirus allows." % cc)
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "t.c")
@@ -498,7 +498,7 @@ def check_mingw():
         errors = [l for l in r.stderr.splitlines() if "error" in l]
         fail("The builder's own compiler (tools/llvm-mingw) could not build a test program: %s. Unpack the zip again into a folder "
              "your antivirus allows." % (errors[0] if errors else "no message"))
-    print("the compiler: %s (no Visual Studio needed)" % os.environ["HOOKSHOT_MINGW"], flush=True)
+    print("the compiler: %s (no Visual Studio needed)" % os.environ["RELINK_MINGW"], flush=True)
 
 
 def check_windows_sdk():
@@ -509,13 +509,13 @@ def check_windows_sdk():
         return check_mingw()
     if CROSS:
         fail("Building for Windows on Linux needs llvm-mingw: unpack its Linux release (github.com/mstorsjo/llvm-mingw) and set "
-             "HOOKSHOT_MINGW to its folder.")
+             "RELINK_MINGW to its folder.")
     sys.path.insert(0, os.path.join(ROOT, "third_party", "a64-kit", "tools"))
     import toolchain
     cc = toolchain.find("clang")
     if not os.path.isfile(cc):   # (toolchain.need() would raise SystemExit, which the builder cannot show: said in its protocol)
         fail("No C compiler was found. Install clang (and lld) and put it on PATH, set EMSDK to an emsdk checkout, or set "
-             "HOOKSHOT_MINGW to an llvm-mingw folder. (%s)" % cc)
+             "RELINK_MINGW to an llvm-mingw folder. (%s)" % cc)
     # (an INCLUDE set for the whole machine, by an old Visual Studio or another tool, is all clang reads: without the Windows SDK's C
     # library in it, it is dropped and the compiler looks for Visual Studio itself. Issues 80 and 89)
     for k in [n for n in os.environ if n.upper() == "INCLUDE"]:
@@ -625,7 +625,7 @@ def _drop_stale_linux(work):
     bytes, not that path, so an update reuses the compiled game when the headers did not change (the Windows stamp leaves
     the builder's install folder out for the same reason, issue 565)."""
     import hashlib
-    sysroot = os.environ.get("HOOKSHOT_SYSROOT", "")
+    sysroot = os.environ.get("RELINK_SYSROOT", "")
     stdio = os.path.join(sysroot, "usr", "include", "stdio.h") if sysroot else "/usr/include/stdio.h"
     try:
         body = open(stdio, "rb").read()
@@ -720,13 +720,13 @@ def drop_stale_objects(work):
 
 
 def seed_pipelines(out):
-    """The pipelines recorded on the development PC (hookshot_pipelines_seed.bin in the tools: program keys and draw states, no game
+    """The pipelines recorded on the development PC (relink_pipelines_seed.bin in the tools: program keys and draw states, no game
     code), as the game folder's list, so its first start builds them before the title, as TotK Recomp's shipped shader list does,
     instead of compiling each when it is first drawn (the stutter of a first visit). Each release ships the list its own build
     made: the file's first 8 bytes are that build's stamp, and a list the folder has from the same build is kept (it grows as
     the player plays)"""
-    seed = os.path.join(ROOT, "hookshot_pipelines_seed.bin")
-    dst = os.path.join(out, "hookshot_pipelines.bin")
+    seed = os.path.join(ROOT, "relink_pipelines_seed.bin")
+    dst = os.path.join(out, "relink_pipelines.bin")
     if not os.path.isfile(seed):
         return
     with open(seed, "rb") as f:
@@ -744,10 +744,10 @@ def seed_pipelines(out):
 def ship_state_list(out):
     """The pipeline state list made from a play of the game on the development PC (work/pipeline_states.bin: each pipeline's stage
     code keys, vertex and target formats and draw state; hashes and state only, no game code), as the folder's
-    hookshot_pipeline_states_shipped.bin: the first start's shader preparation builds those pipelines before the title, from the
-    player's own shaders (hookshot_shaders.bin), instead of compiling each when it is first drawn. Good for any build: optional"""
+    relink_pipeline_states_shipped.bin: the first start's shader preparation builds those pipelines before the title, from the
+    player's own shaders (relink_shaders.bin), instead of compiling each when it is first drawn. Good for any build: optional"""
     src = os.path.join(ROOT, "work", "pipeline_states.bin")
-    dst = os.path.join(out, "hookshot_pipeline_states_shipped.bin")
+    dst = os.path.join(out, "relink_pipeline_states_shipped.bin")
     if not os.path.isfile(src):
         return
     if not (os.path.isfile(dst) and filecmp.cmp(src, dst, shallow=False)):
@@ -883,12 +883,12 @@ def ngx_platform():
 
 
 def fetch_ngx_sdk(a):
-    """--fetch-ngx-sdk (the ReLink's NVIDIA DLSS tick): NVIDIA's DLSS SDK into HOOKSHOT_NGX_SDK before the build, once
+    """--fetch-ngx-sdk (the ReLink's NVIDIA DLSS tick): NVIDIA's DLSS SDK into RELINK_NGX_SDK before the build, once
     NVIDIA's license was accepted (--accept-nvidia-license: the builder asked first). Only what is missing or not the file
     expected is downloaded"""
-    sdk = os.environ.get("HOOKSHOT_NGX_SDK", "")
+    sdk = os.environ.get("RELINK_NGX_SDK", "")
     if not sdk:
-        fail("--fetch-ngx-sdk needs HOOKSHOT_NGX_SDK, the folder NVIDIA's DLSS SDK goes into.")
+        fail("--fetch-ngx-sdk needs RELINK_NGX_SDK, the folder NVIDIA's DLSS SDK goes into.")
     if not a.accept_nvidia_license:
         fail("NVIDIA DLSS needs NVIDIA's license accepted first (--accept-nvidia-license).")
     ngx = ngx_script()
@@ -901,16 +901,16 @@ def fetch_ngx_sdk(a):
 
 
 def ngx_built():
-    """This build has NVIDIA DLSS: HOOKSHOT_NGX_SDK holds this platform's library (what nx2/build.py takes)"""
-    sdk = os.environ.get("HOOKSHOT_NGX_SDK", "")
+    """This build has NVIDIA DLSS: RELINK_NGX_SDK holds this platform's library (what nx2/build.py takes)"""
+    sdk = os.environ.get("RELINK_NGX_SDK", "")
     return bool(sdk) and os.path.isfile(ngx_script().library(sdk, ngx_platform()))
 
 
 def place_ngx_runtime(out):
-    """(NVIDIA DLSS) a game built with NVIDIA's SDK (HOOKSHOT_NGX_SDK, as nx2/build.py takes it) gets DLSS's runtime in its ngx
+    """(NVIDIA DLSS) a game built with NVIDIA's SDK (RELINK_NGX_SDK, as nx2/build.py takes it) gets DLSS's runtime in its ngx
     folder, where gpu/vk/vk_dlss.cpp looks first: nvngx_dlss.dll on Windows, libnvidia-ngx-dlss.so.<version> on Linux. Never
     NGX's core (_nvngx.dll is the driver's) and nothing beside the exe. Returns the file placed, or None"""
-    sdk = os.environ.get("HOOKSHOT_NGX_SDK", "")
+    sdk = os.environ.get("RELINK_NGX_SDK", "")
     if not sdk:
         return None
     ngx = ngx_script()
@@ -929,16 +929,16 @@ def parse_args():
     p.add_argument("--exefs")
     p.add_argument("--out")
     p.add_argument("--work", default=os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
-                                                  "hookshot-builder-windows" if CROSS else "hookshot-builder")   # (the objects apart)
+                                                  "relink-builder-windows" if CROSS else "relink-builder")   # (the objects apart)
                    if os.name != "nt" else os.path.join(os.environ.get("LOCALAPPDATA", ROOT), "ReLink"))
-    # (HOOKSHOT_JOBS: fewer compilers on a PC short of memory; the AppImage's builds pass no --jobs)
+    # (RELINK_JOBS: fewer compilers on a PC short of memory; the AppImage's builds pass no --jobs)
     p.add_argument("--jobs", type=int)
     p.add_argument("--language", default="en-US", help="the game's language: a code from LANGUAGES, written to language.txt")
     p.add_argument("--check", action="store_true")
     p.add_argument("--update", help="a game folder built before: built again from the game files it keeps (the game's update offer)")
     p.add_argument("--log", metavar="FILE", help="also save build output to a UTF-8 file (replaces the file if it exists)")
-    # (NVIDIA DLSS, off unless asked: NVIDIA's SDK into HOOKSHOT_NGX_SDK first, under NVIDIA's license. scripts/ngx_sdk.py)
-    p.add_argument("--fetch-ngx-sdk", action="store_true", help="download NVIDIA's DLSS SDK into HOOKSHOT_NGX_SDK before the build")
+    # (NVIDIA DLSS, off unless asked: NVIDIA's SDK into RELINK_NGX_SDK first, under NVIDIA's license. scripts/ngx_sdk.py)
+    p.add_argument("--fetch-ngx-sdk", action="store_true", help="download NVIDIA's DLSS SDK into RELINK_NGX_SDK before the build")
     p.add_argument("--accept-nvidia-license", action="store_true", help="NVIDIA's DLSS SDK license, accepted (with --fetch-ngx-sdk)")
     a = p.parse_args()
     a.default_work = p.get_default("work")   # (main: the builder's own work folder, stop_stray_compilers)
@@ -980,7 +980,7 @@ def main(a=None):
 
     say("stage", "read", "Reading your game files")
     shutil.rmtree(exefs, ignore_errors=True)
-    kept = os.path.join(out, ".hookshot_exefs")   # (the game's code as read, kept in the folder: what an update builds from again)
+    kept = os.path.join(out, ".relink_exefs")   # (the game's code as read, kept in the folder: what an update builds from again)
     if a.update:
         if not os.path.isdir(kept) or not os.path.isdir(romfs):
             fail("This game folder has no copy of the game files to update from: it was built before updates came in. Choose your game files "
@@ -992,7 +992,7 @@ def main(a=None):
         # (what an earlier build left is not kept without a reason to trust it: builders before the compressed .nup fix wrote those files as
         # they lay, so a folder they left held broken game data, and the game crashed at start over its empty dictionaries)
         game = os.path.join(out, ".game")
-        good = os.path.join(out, ".hookshot_romfs")
+        good = os.path.join(out, ".relink_romfs")
         check_cache_paths(out, (game, good, kept, romfs))
         # (an update of the builder over the same .nup: nothing to read again, only what the build needs. Issues 21 and 28)
         st = os.stat(a.nup)
@@ -1033,7 +1033,7 @@ def main(a=None):
     check_supported_build(exefs)
 
     # (made once on the development PC: lists of addresses and counts, no game code)
-    for name in ("hot_funcs.txt", "hot_order.txt", "hookshot_pieces.prof", "hookshot.res"):
+    for name in ("hot_funcs.txt", "hot_order.txt", "relink_pieces.prof", "relink.res"):
         src = os.path.join(ROOT, "work", name)
         dst = os.path.join(work, name)
         # (copied only when it differs: a compiler still ending from a cancelled build keeps the profile mapped, WinError 1224)
@@ -1046,8 +1046,8 @@ def main(a=None):
     env = {"OOT_WORK": work, "OOT_EXEFS": exefs, "OOT_ROMFS": romfs, "OOT_DUMP": out, "RX_RELEASE": "1", "A64_HOT_CHUNK": "1"}
     if os.path.exists(os.path.join(work, "hot_funcs.txt")):
         env["A64_HOT_FUNCS"] = os.path.join(work, "hot_funcs.txt")
-    if os.path.exists(os.path.join(work, "hookshot_pieces.prof")) and profile_readable(os.path.join(work, "hookshot_pieces.prof")):
-        env["RX_PGO"] = os.path.join(work, "hookshot_pieces.prof")
+    if os.path.exists(os.path.join(work, "relink_pieces.prof")) and profile_readable(os.path.join(work, "relink_pieces.prof")):
+        env["RX_PGO"] = os.path.join(work, "relink_pieces.prof")
 
     if ngx_built():   # (NVIDIA DLSS's camera jitter: only in a build with it, nx2/oot_jitter.py)
         env["OOT_DLSS_JITTER"] = "1"
@@ -1061,7 +1061,7 @@ def main(a=None):
         key_file = os.path.join(work, "sa", "gen", LIFT_KEY)
         if os.path.exists(key_file):
             os.remove(key_file)   # (a lift stopped halfway leaves no key behind)
-        # (hookshot) the lifted C of an earlier lift goes first: a file that lift made and this one does not (another builder's naming,
+        # (relink) the lifted C of an earlier lift goes first: a file that lift made and this one does not (another builder's naming,
         # a chunk cut short) was compiled with the new ones, undefined or doubly defined game functions at the link (issue 1176).
         # The objects stay cached by their contents, so a file this lift writes the same is not compiled again
         gen_dir = os.path.join(work, "sa", "gen")
@@ -1084,7 +1084,7 @@ def main(a=None):
         check_linux_compiler()
     # (the compile's timer: build.py reads the record of the earlier builds on this PC, says which files this run really
     # rebuilds and how long the rest will take, and reports each module's seconds; they go into the record below)
-    env["HOOKSHOT_TIMES"] = times_path(work)
+    env["RELINK_TIMES"] = times_path(work)
     run_files, plan = {}, [0, 0]
     say("stage", "compile", "Compiling")
     compile_started = time.time()
@@ -1132,13 +1132,13 @@ def main(a=None):
     try:
         run(PY + ["nx2/build.py", "--standalone", "--jobs", str(a.jobs)], env, compiled)
     except SystemExit:
-        # (hookshot) a compile or link that failed forgets the lift: the next build translates the game again. A lifted file cut short
+        # (relink) a compile or link that failed forgets the lift: the next build translates the game again. A lifted file cut short
         # (an antivirus, a full disk, a stopped run: "g_module_b" for g_module_base, issue 1197) or lifted C another builder left (20
         # undefined game functions at the link, issue 1176) otherwise failed the same way at every try, the key still matching
-        # (eglantine, 13/11: not with HOOKSHOT_KEEP_BUILD_FILES=1, a developer's incremental builds: a compile error in one file of
+        # (relink, 13/11: not with RELINK_KEEP_BUILD_FILES=1, a developer's incremental builds: a compile error in one file of
         # the Vulkan back end threw away the game's 445 compiled units, 48 minutes to build them again, twice in one night)
-        if os.environ.get("HOOKSHOT_KEEP_BUILD_FILES", "0") not in ("", "0"):
-            print("the build failed: its lifted code and objects are kept (HOOKSHOT_KEEP_BUILD_FILES=1)", flush=True)
+        if os.environ.get("RELINK_KEEP_BUILD_FILES", "0") not in ("", "0"):
+            print("the build failed: its lifted code and objects are kept (RELINK_KEEP_BUILD_FILES=1)", flush=True)
             raise
         key_file = os.path.join(work, "sa", "gen", LIFT_KEY)
         if os.path.exists(key_file):
@@ -1154,18 +1154,18 @@ def main(a=None):
     say("stage", "finish", "Putting the game folder together")
     built = os.path.join(work, "sa", "build")
     # (the new files are copied in beside the old ones as <name>.new and swapped in only once all are complete: a build stopped while
-    # copying, or a full disk, left a half-written 460 MB hookshot.exe and no game to play. The old game stays playable until the swap)
-    # (Windows) hookshot.exe in the folder is the game's launcher: the builder's small setup, which opens the installed builder as a
-    # launcher for this folder (Play, and Update left of it when a newer release is out: builder/setup/setup.c launch mode), or starts
-    # the game when no builder is installed. The game and its DLLs are in bin\; its files (image.bin, romfs, saves, settings, caches)
-    # stay in the folder (host/hos_paths.h). Without the setup (a development build) the game stays hookshot.exe in the folder
+    # copying, or a full disk, left a half-written 460 MB relink-game.exe and no game to play. The old game stays playable until the swap)
+    # (Windows) ReLink.exe in the folder is the game's launcher: the small setup, which opens the installed launcher for this
+    # folder (Play, the settings, and Update when a newer release is out: launcher/setup/setup.c launch mode), or starts the game
+    # when no launcher is installed. The game (relink-game.exe) and its DLLs are in bin\; its files (image.bin, romfs, saves,
+    # settings, caches) stay in the folder (host/hos_paths.h). Without the setup (a development build) relink-game.exe is in the folder
     staged = []
-    # (Linux) the same launcher, as a script, when this is a packaged builder (the AppImage sets HOOKSHOT_TOOLS). A source
-    # checkout leaves hookshot in the folder, as a development build on Windows does when the setup exe is not beside it
+    # (Linux) the same launcher, as a script, when this is a packaged builder (the AppImage sets RELINK_TOOLS). A source
+    # checkout leaves relink in the folder, as a development build on Windows does when the setup exe is not beside it
     launcher = os.path.join(os.path.dirname(os.path.abspath(ROOT)), "ReLink-Setup.exe")
     if LINUX:
-        script = os.path.join(ROOT, "builder", "linux", "hookshot-folder")
-        launcher = script if os.environ.get("HOOKSHOT_TOOLS") and os.path.isfile(script) else None
+        script = os.path.join(ROOT, "builder", "linux", "relink-folder")
+        launcher = script if os.environ.get("RELINK_TOOLS") and os.path.isfile(script) else None
     else:
         launcher = launcher if os.path.isfile(launcher) else None
     game_dir = os.path.join(out, "bin") if launcher else out
@@ -1177,7 +1177,7 @@ def main(a=None):
             staged.append((src, os.path.join(game_dir, n)))
     staged.append((os.path.join(work, "sa", "image", "image.bin"), os.path.join(out, "image.bin")))
     if launcher:
-        staged.append((launcher, os.path.join(out, "ReLink.exe")))   # (the folder's small launcher; the game is bin\\hookshot.exe)
+        staged.append((launcher, os.path.join(out, "ReLink.exe")))   # (the folder's small launcher; the game is bin\\relink-game.exe)
     for src, dst in staged:
         try:
             if os.path.exists(dst + ".new"):
@@ -1193,9 +1193,9 @@ def main(a=None):
         except PermissionError:
             fail("Could not replace %s. Close any running copy of ReLink and check that the file and folder are writable, then retry. "
                  "Staged replacements remain beside the installed files; the compiled source remains at %s." % (dst, src))
-    if launcher:   # (a folder built before the launcher: its libraries left the folder for bin\; hookshot is the launcher now)
+    if launcher:   # (a folder built before the launcher: its libraries left the folder for bin\; relink is the launcher now)
         stale = [] if LINUX else sorted(f for f in os.listdir(out) if f.endswith(".dll") and f.startswith(("av", "sw")))
-        for n in BESIDE + stale + ["hookshot.map", "hookshot-game.exe"]:
+        for n in BESIDE + stale + ["relink-game.map", "relink-game.exe"]:
             try:
                 if os.path.isfile(os.path.join(out, n)):
                     os.remove(os.path.join(out, n))
@@ -1204,11 +1204,11 @@ def main(a=None):
     place_ngx_runtime(out)
     # every shader of the game, for its first start to translate (gpu/vk/vk_shader.cpp seed_open). Without it the game still runs, compiling them
     # as it meets them: not worth stopping a finished build for
-    if run(shader_census_cmd(romfs, os.path.join(out, "hookshot_shaders.bin")), check=False, output=sys.stderr):
+    if run(shader_census_cmd(romfs, os.path.join(out, "relink_shaders.bin")), check=False, output=sys.stderr):
         print("the shader list was not made: the game will compile its shaders as it plays", flush=True)
-    icon = os.path.join(ROOT, "assets", "hookshot.png")
+    icon = os.path.join(ROOT, "assets", "relink.png")
     if LINUX and os.path.exists(icon):   # (the window's icon: host/posix/display_sdl.c)
-        shutil.copy2(icon, os.path.join(out, "hookshot.png"))
+        shutil.copy2(icon, os.path.join(out, "relink.png"))
     seed_pipelines(out)
     ship_state_list(out)
     language = os.path.join(out, "language.txt")   # (the same text as host/nn_applet.c writes)
@@ -1225,10 +1225,10 @@ def main(a=None):
             if tag:
                 break
     if tag:
-        with open(os.path.join(out, "hookshot_version.txt"), "w", encoding="utf-8", newline="\n") as f:
+        with open(os.path.join(out, "relink_version.txt"), "w", encoding="utf-8", newline="\n") as f:
             f.write("version=%s\n" % tag)
-            if os.environ.get("HOOKSHOT_BUILDER_EXE"):
-                f.write("builder=%s\n" % os.environ["HOOKSHOT_BUILDER_EXE"])
+            if os.environ.get("RELINK_BUILDER_EXE"):
+                f.write("builder=%s\n" % os.environ["RELINK_BUILDER_EXE"])
     # (the game's code as read: written again by every build, so not left behind in the work folder. The translated code (sa\gen)
     # and the compiled objects stay: the next build skips the lift when nothing it reads changed (#428) and compiles only what
     # changed; the builder says how much stays and lets it go. Kept in a development checkout)
@@ -1236,11 +1236,11 @@ def main(a=None):
         shutil.rmtree(exefs, ignore_errors=True)
         # (players asked for the space back: the translated code and the compiled objects (4 GB and more) go too once the game is
         # ready, on Windows and Linux alike. The next update translates and compiles again, about as long as a first build.
-        # HOOKSHOT_KEEP_BUILD_FILES=1 keeps them for quick updates, as before)
-        if os.environ.get("HOOKSHOT_KEEP_BUILD_FILES", "0") in ("", "0"):
+        # RELINK_KEEP_BUILD_FILES=1 keeps them for quick updates, as before)
+        if os.environ.get("RELINK_KEEP_BUILD_FILES", "0") in ("", "0"):
             for sub in ("sa", "objcache", "probe"):
                 shutil.rmtree(os.path.join(work, sub), ignore_errors=True)
-            print("the build files in %s were deleted (HOOKSHOT_KEEP_BUILD_FILES=1 keeps them for quicker updates)" % work, flush=True)
+            print("the build files in %s were deleted (RELINK_KEEP_BUILD_FILES=1 keeps them for quicker updates)" % work, flush=True)
     total_seconds = time.time() - STARTED
     previous = record_times(work, run_files, compile_seconds, total_seconds, modules=plan[1],
                             kind="update" if a.update else "build")

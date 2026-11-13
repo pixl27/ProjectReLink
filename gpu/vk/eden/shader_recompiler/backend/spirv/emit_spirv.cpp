@@ -17,7 +17,7 @@
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 #include "shader_recompiler/frontend/ir/basic_block.h"
 #include "shader_recompiler/frontend/ir/program.h"
-#include "shader_recompiler/backend/spirv/mma_layout.h"   // (hookshot)
+#include "shader_recompiler/backend/spirv/mma_layout.h"   // (relink)
 
 namespace Shader::Backend::SPIRV {
 namespace {
@@ -112,7 +112,7 @@ void EmitInstOf(EmitContext& ctx, IR::Inst* inst) {
 }
 
 void EmitInst(EmitContext& ctx, IR::Inst* inst) {
-    // (hookshot) the emitters that are left unimplemented say only "SPIR-V Instruction": name the IR op
+    // (relink) the emitters that are left unimplemented say only "SPIR-V Instruction": name the IR op
     try {
         EmitInstOf(ctx, inst);
     } catch (const NotImplementedException& e) {
@@ -264,7 +264,7 @@ spv::ExecutionMode ExecutionMode(TessSpacing spacing) {
 void DefineEntryPoint(const IR::Program& program, EmitContext& ctx, Id main) {
     const std::span interfaces(ctx.interfaces.data(), ctx.interfaces.size());
     if (ctx.mesh_fallback && (program.stage == Stage::Task || program.stage == Stage::Mesh)) {
-        // (hookshot, issue 640: on a GPU without mesh shaders, a task or mesh program is a compute shader)
+        // (relink, issue 640: on a GPU without mesh shaders, a task or mesh program is a compute shader)
         ctx.AddExecutionMode(main, spv::ExecutionMode::LocalSize, program.workgroup_size[0], 1U, 1U);
         ctx.AddEntryPoint(spv::ExecutionModel::GLCompute, main, "main", interfaces);
         return;
@@ -381,7 +381,7 @@ void DefineEntryPoint(const IR::Program& program, EmitContext& ctx, Id main) {
     default:
         throw NotImplementedException("Stage {}", program.stage);
     }
-    // (eglantine) EDEN_NX2_MAXRECONV=1: a program with subgroup operations reconverges where its structure says
+    // (relink) EDEN_NX2_MAXRECONV=1: a program with subgroup operations reconverges where its structure says
     // (SPV_KHR_maximal_reconvergence), so a ballot or shuffle after a divergent loop sees every lane still running.
     // A test for the culling's ballots (ground plants); off by default
     const Info& sg_info{program.info};
@@ -496,7 +496,7 @@ void SetupCapabilities(const Profile& profile, const Info& info, EmitContext& ct
     if ((!profile.support_vertex_instance_id &&
          (info.loads[IR::Attribute::InstanceId] || info.loads[IR::Attribute::VertexId])) ||
         info.loads[IR::Attribute::BaseInstance] || info.loads[IR::Attribute::BaseVertex] ||
-        info.loads[IR::Attribute::DrawID] || ctx.wants_mesh_first) {   // (hookshot: a task program's DrawIndex, its draw's first)
+        info.loads[IR::Attribute::DrawID] || ctx.wants_mesh_first) {   // (relink: a task program's DrawIndex, its draw's first)
         ctx.AddExtension("SPV_KHR_shader_draw_parameters");
         ctx.AddCapability(spv::Capability::DrawParameters);
     }
@@ -521,7 +521,7 @@ void SetupCapabilities(const Profile& profile, const Info& info, EmitContext& ct
         ctx.AddCapability(spv::Capability::VulkanMemoryModelDeviceScope);
         ctx.SetMemoryModel(spv::MemoryModel::VulkanKHR);
     }
-    if (info.uses_cooperative_matrix && mma_software) {   // (hookshot: DefineSoftwareMatrixFunction's)
+    if (info.uses_cooperative_matrix && mma_software) {   // (relink: DefineSoftwareMatrixFunction's)
         ctx.AddCapability(spv::Capability::GroupNonUniform);
         ctx.AddCapability(spv::Capability::GroupNonUniformShuffle);
     }
@@ -672,7 +672,7 @@ std::vector<u32> EmitSPIRV(const Profile& profile, const RuntimeInfo& runtime_in
     EmitContext ctx{profile, runtime_info, program, bindings};
     if (program.info.uses_cooperative_matrix && mma_software) DefineSoftwareMatrixFunction(ctx);
     Id main{};
-    if (runtime_info.mesh_fallback_vertex) {   // (hookshot: the fallback's generated vertex stage, which reads the records)
+    if (runtime_info.mesh_fallback_vertex) {   // (relink: the fallback's generated vertex stage, which reads the records)
         const Id void_function{ctx.TypeFunction(ctx.void_id)};
         main = ctx.OpFunction(ctx.void_id, spv::FunctionControlMask::MaskNone, void_function);
         ctx.AddLabel();

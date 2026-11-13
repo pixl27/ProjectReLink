@@ -53,7 +53,7 @@ Id Module::OpAtomicIAdd(Id result_type, Id pointer, Id memory, Id semantics, Id 
                  << value << EndOp{};
 }
 
-// (eglantine) SPV_EXT_shader_atomic_float_add
+// (relink) SPV_EXT_shader_atomic_float_add
 Id Module::OpAtomicFAdd(Id result_type, Id pointer, Id memory, Id semantics, Id value) {
     code->Reserve(7);
     return *code << OpId{spv::Op::OpAtomicFAddEXT, result_type} << pointer << memory << semantics

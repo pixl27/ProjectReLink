@@ -19,7 +19,7 @@ void Translate(Environment& env, IR::Block* block, u32 location_begin, u32 locat
         for (Location pc = location_begin; pc != location_end; ++pc) {
             u64 const insn = env.ReadInstruction(pc.Offset());
             Opcode const opcode = Decode(insn);
-            // (hookshot) the REGMAP_nx2 prefixes right before this word, whichever block they are in
+            // (relink) the REGMAP_nx2 prefixes right before this word, whichever block they are in
             visitor.register_map.fill(0);
             if (opcode != Opcode::REGMAP_nx2) {
                 Location prev{pc};

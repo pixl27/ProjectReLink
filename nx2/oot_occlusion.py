@@ -1,7 +1,7 @@
 """Occlusion Off for Ocarina of Time 1.1.1: C added after six instructions of the game (a64_lift.py Lifter.after).
 
 The game decides at six places whether to make its z-prepass occlusion queries and its samples-passed queries, each by a
-byte it loads (ldrb w8, [x0]). With hos_occlusion_off set (HOOKSHOT_OCCLUSION_OFF=1), that byte reads 0: the game makes
+byte it loads (ldrb w8, [x0]). With hos_occlusion_off set (RELINK_OCCLUSION_OFF=1), that byte reads 0: the game makes
 no occlusion queries, so it issues no occlusion reports and no conditional renders, and every candidate object is drawn.
 Our renderer has no real occlusion counts (each draw adds 16 samples), so the game's visibility answers came from that guess.
 

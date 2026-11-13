@@ -275,7 +275,7 @@ struct MeshInfo {
 struct Info {
     static constexpr size_t MAX_INDIRECT_CBUFS{14};
     static constexpr size_t MAX_CBUFS{18};
-    // (hookshot, as Lichii #434: 64. Fritchii's pass binds every candidate pointer of an ambiguous access; the back end's
+    // (relink, as Lichii #434: 64. Fritchii's pass binds every candidate pointer of an ambiguous access; the back end's
     // layouts are built from the list, gpu/vk/vk_draw.cpp ensure_layout)
     static constexpr size_t MAX_SSBOS{64};
 
@@ -320,7 +320,7 @@ struct Info {
     bool uses_local_memory{};
 
     bool uses_fp16{};
-    bool uses_cooperative_matrix{};   // (hookshot: HMMA_nx2)
+    bool uses_cooperative_matrix{};   // (relink: HMMA_nx2)
     bool uses_fp64{};
     bool uses_fp16_denorms_flush{};
     bool uses_fp16_denorms_preserve{};
@@ -368,7 +368,7 @@ struct Info {
     u32 constant_buffer_mask{};
     std::array<u32, MAX_CBUFS> constant_buffer_used_sizes{};
     u32 nvn_buffer_base{};
-    // (hookshot) storage buffer tables: NVN descriptors (address, size) at cbuf_offset + 16k of a constant buffer,
+    // (relink) storage buffer tables: NVN descriptors (address, size) at cbuf_offset + 16k of a constant buffer,
     // which global memory accesses pick at run time (OoT's froxel fog: c4 + 0xe0 + 16 * a loop index). The global
     // memory fallbacks search their kGlobalTableSize entries (AddNVNStorageBuffers adds them as descriptors).
     static constexpr u32 kGlobalTableSize{16};

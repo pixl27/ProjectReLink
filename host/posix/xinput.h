@@ -1,6 +1,6 @@
 /* (linux) XInput is Windows' alone: no pad answers here, and every controller comes through SDL (host/pad_sdl.c). */
-#ifndef HOOKSHOT_POSIX_XINPUT_H
-#define HOOKSHOT_POSIX_XINPUT_H
+#ifndef RELINK_POSIX_XINPUT_H
+#define RELINK_POSIX_XINPUT_H
 #include <windows.h>
 #define XUSER_MAX_COUNT 4
 #define XINPUT_GAMEPAD_DPAD_UP 0x0001

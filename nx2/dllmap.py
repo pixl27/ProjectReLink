@@ -1,4 +1,4 @@
-"""hookshot_game.dll offset -> lifted function (f_<guest address>) + offset, from the linker map (build.py --dll).
+"""relink_game.dll offset -> lifted function (f_<guest address>) + offset, from the linker map (build.py --dll).
 
 Usage:  python -I nx2/dllmap.py <hex offset> [...]
 """
@@ -15,7 +15,7 @@ BASE = 0x180000000
 
 def load():
     rows = []
-    for line in open(os.path.join(kit.WORK, "build", "hookshot_game.map"), errors="replace"):
+    for line in open(os.path.join(kit.WORK, "build", "relink_game.map"), errors="replace"):
         m = re.match(r"\s*[0-9a-f]{4}:[0-9a-f]{8}\s+(\S+)\s+([0-9a-f]{16})", line)
         if m:
             rows.append((int(m.group(2), 16), m.group(1)))

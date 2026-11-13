@@ -85,8 +85,8 @@ sealed class Runner
         };
         si.Environment["PYTHONIOENCODING"] = "utf-8";
         // (written into the game folder's version file: the game starts this app again to update, host/hos_update.c)
-        if (Environment.ProcessPath != null) si.Environment["HOOKSHOT_BUILDER_EXE"] = Environment.ProcessPath;
-        si.Environment.Remove("HOOKSHOT_NGX_SDK");
+        if (Environment.ProcessPath != null) si.Environment["RELINK_BUILDER_EXE"] = Environment.ProcessPath;
+        si.Environment.Remove("RELINK_NGX_SDK");
         // (the folder's own compiler, headers and libraries, when it has them: nothing of the PC's but Windows' own)
         var sets = new[] { ("EMSDK", "emsdk"), ("RX_CPM", "cpm"), ("WGPU_NATIVE", "wgpu-native") };
         foreach (var (name, folder) in sets)

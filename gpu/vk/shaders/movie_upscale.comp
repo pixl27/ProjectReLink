@@ -1,5 +1,5 @@
 #version 450
-// (hookshot) The movie upscaler's last pass, on cards that leave the networks out: its input sampled linearly into its output. A shader and not a
+// (relink) The movie upscaler's last pass, on cards that leave the networks out: its input sampled linearly into its output. A shader and not a
 // blit: an AMD card showed a blit of this image as black, while the network's own sampling and storing of the same two images works there.
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(binding = 0) uniform sampler2D src;

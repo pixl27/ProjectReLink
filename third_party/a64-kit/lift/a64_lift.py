@@ -531,7 +531,7 @@ static inline __m128i a64_v_ovf(const Ctx *c, __m128i a, __m128i b, __m128i t) {
     const __m128i inf = _mm_cmpeq_epi32(a64_v_abs(t), _mm_set1_epi32(0x7f800000));
     return _mm_andnot_si128(_mm_or_si128(a64_v_nonfin(a), a64_v_nonfin(b)), inf);
 }
-/* (eglantine, 12/11) Lanes with a quiet NaN operand that need nothing else: no signalling NaN operand and, under FZ, no
+/* (relink, 12/11) Lanes with a quiet NaN operand that need nothing else: no signalling NaN operand and, under FZ, no
    subnormal one. Arm's result there is the first operand if it is a NaN, else the second (FPProcessNaNs), and no flag is
    raised. Put into r from the operands themselves, so it does not depend on which operand the host's instruction keeps
    when both are NaNs. Why: in OoT's cloth and collision code one lane of most vectors is a quiet NaN the game never
@@ -551,7 +551,7 @@ static inline __m128i a64_v_put(__m128i r, uint32_t v, int j) {   /* lane j of r
     const __m128i at = _mm_cmpeq_epi32(_mm_set1_epi32(j), _mm_setr_epi32(0, 1, 2, 3));
     return _mm_or_si128(_mm_andnot_si128(at, r), _mm_and_si128(at, _mm_set1_epi32((int)v)));
 }
-/* (eglantine, 12/11) a64_vfpx_..._fix: the gate open and some lanes out of the fast test (the bits of bad). Only those are
+/* (relink, 12/11) a64_vfpx_..._fix: the gate open and some lanes out of the fast test (the bits of bad). Only those are
    redone, with the easy helper, which gives Arm's result and flags for any operands (FPX_EASY_HEADER); the others keep
    r, which the fast test made right lane by lane. Before, the four lanes went one by one through the outlined scalar
    wrapper from a64_vfpx_..._lanes (kept for the gate shut): in OoT's cloth and collision code one lane of most vectors
@@ -607,7 +607,7 @@ static __attribute__((noinline, cold)) void a64_vfpx_mul32_lanes(Ctx *c, uint64_
     memcpy(d, r, 16); }
 #if RECOMP_FPX_HOST == 2
 static __attribute__((noinline)) void a64_vfpx_mul32_fix(Ctx *c, uint64_t *d, const uint64_t *n, const uint64_t *m, __m128i r, int bad) {
-    uint32_t x[4], y[4]; memcpy(x, n, 16); memcpy(y, m, 16);   /* (eglantine: as a64_vfpx_add32_fix) */
+    uint32_t x[4], y[4]; memcpy(x, n, 16); memcpy(y, m, 16);   /* (relink: as a64_vfpx_add32_fix) */
     for (int j = 0; j < 4; j++) {
         uint64_t v;
         if (!(bad >> j & 1)) continue;
@@ -638,7 +638,7 @@ static inline __attribute__((always_inline)) void a64_vfpx_mul32(Ctx *c, uint64_
                 r = _mm_or_si128(_mm_andnot_si128(tiny, t), _mm_and_si128(tiny, _mm_and_si128(t, _mm_set1_epi32((int)0x80000000u))));
             }
         }
-        if (!RECOMP_LIKELY(!_mm_movemask_epi8(bad)))   /* (eglantine: quiet NaN lanes, then the overflowed ones) */
+        if (!RECOMP_LIKELY(!_mm_movemask_epi8(bad)))   /* (relink: quiet NaN lanes, then the overflowed ones) */
             bad = _mm_andnot_si128(_mm_or_si128(a64_v_qnan(c, a, b, &r), a64_v_ovf(c, a, b, t)), bad);
         if (RECOMP_LIKELY(!_mm_movemask_epi8(bad))) {
             _mm_storeu_si128((__m128i *)d, r);
@@ -735,9 +735,9 @@ static inline __attribute__((always_inline)) int a64_fpx_sticky32(const Ctx *c, 
 }
 """
 
-# (eglantine, 2026-11-12) The operations the fast paths and the rescues above give up on, without the software body:
+# (relink, 2026-11-12) The operations the fast paths and the rescues above give up on, without the software body:
 # see the comment in the text.
-FPX_EASY_HEADER = r"""/* (eglantine, 12/11) What the fast paths give up on, done with the host's own arithmetic where Arm's result is known
+FPX_EASY_HEADER = r"""/* (relink, 12/11) What the fast paths give up on, done with the host's own arithmetic where Arm's result is known
    without the software body (recomp_fpe_*): a NaN or an infinite operand, an invalid operation, an overflow, a
    subnormal operand, a tiny result. Called inside the RECOMP_FPX_OPEN gate only (round to nearest, no trap enabled,
    no default NaN, IXC raised already), after the fast tests have refused the operation. 1: *v is Arm's result and
@@ -745,7 +745,7 @@ FPX_EASY_HEADER = r"""/* (eglantine, 12/11) What the fast paths give up on, done
    Why: in OoT's cloth and collision code (f_81c7f880 and its neighbours) a lane of most vectors holds a NaN or an
    infinity the game never looks at, every vector operation left its fast path for it, and the software body ran for
    that lane: 15.6 % of the game threads' running time in the Lost Woods, 20.2 % of the actors' threads' (hs1360,
-   py/slowfp.py). Tests: eglantine/tools/port/fpxtest (fpxtest.c: these two against recomp_fpe_add32 / _sub32 / _fma32,
+   py/slowfp.py). Tests (fpxtest.c: these two against recomp_fpe_add32 / _sub32 / _fma32,
    every pair of 80 special values and 144 million checks in all; fpxtest2.c: the wrappers and the vector helpers that
    call them, 66 million checks; results and FPSR the same). */
 #if RECOMP_FPX_HOST
@@ -871,12 +871,12 @@ def fpx_header(used):
         rescue = ""
         if (fast, exact) in (("mul32", "fma32"), ("fma32", "fma32")):
             rescue = "if (a64_fpx_sticky32(c, a0, a1, a2, %d, &v)) { A64_FPX_STICKY_PROBE(); return v; } " % (fast == "mul32")
-            if fast == "mul32":   # (eglantine: a multiply, asked for as a fused multiply-add of a zero of its sign)
+            if fast == "mul32":   # (relink: a multiply, asked for as a fused multiply-add of a zero of its sign)
                 rescue += ("if ((uint32_t)a2 == (((uint32_t)a0 ^ (uint32_t)a1) & 0x80000000u) && "
                            "a64_fpx_easy_mul32(c, a0, a1, &v)) return v; ")
         elif fast in ("add32", "sub32"):
             rescue = ("if ((c->fpsr & 0xCu) && a64_fpx_fz_%s(c, a0, a1, &v)) return v; "
-                      "if (a64_fpx_easy_sum32(c, a0, a1, %d, &v)) return v; " % (fast, fast == "sub32"))   # (eglantine)
+                      "if (a64_fpx_easy_sum32(c, a0, a1, %d, &v)) return v; " % (fast, fast == "sub32"))   # (relink)
         out.append("A64_FPX_FN uint64_t a64_fpx_%s_%s(Ctx *c, %s) { uint64_t v; "
                    "if (RECOMP_FPX_OPEN(c)) { if (RECOMP_LIKELY(recomp_fpx_%s(%s, RECOMP_FPX_FZ(c), &v))) return v; %s} "
                    "return recomp_fpe_%s(c, %s); }" % (fast, exact, params, fast,
@@ -913,7 +913,7 @@ class Lifter:
         self.hooks = dict(img.hooks)
         self.names = getattr(img, "names", {}) or {}
         self.comments = comments
-        # (hookshot) C emitted right after the instruction at a guest address ({pc: text}): a game patch that adds to an
+        # (relink) C emitted right after the instruction at a guest address ({pc: text}): a game patch that adds to an
         # instruction instead of replacing a function (nx2/oot_wide.py). Only after plain instructions (kind "op")
         self.after = {}
         self.funcs = {}       # entry -> (body {pc: kind}, labels set)
@@ -959,7 +959,7 @@ class Lifter:
     SETJMP_NAMES = ("__setjmp", "setjmp", "_setjmp")
 
     def find_setjmp_owners(self):
-        """(hookshot) the functions that call __setjmp, with the call's return addresses: entries (walked here), so
+        """(relink) the functions that call __setjmp, with the call's return addresses: entries (walked here), so
         a longjmp can run the owner's code after its setjmp (emit_function wraps the owner's callers)"""
         self.setjmp_owner = {}
         for e, (body, _) in list(self.funcs.items()):
@@ -1618,7 +1618,7 @@ class Lifter:
             elif kind == "bl":
                 t = self.callee(k[1])
                 if t in self.entries and t in getattr(self, "setjmp_owner", {}):
-                    # (hookshot) a call of a function that calls __setjmp: this frame takes a host setjmp. A guest
+                    # (relink) a call of a function that calls __setjmp: this frame takes a host setjmp. A guest
                     # longjmp's BR to one of the owner's setjmp return addresses comes back here (host/hos_setjmp.c),
                     # with the registers it restored, and runs the owner's code from there, as the owner would.
                     # (recomp_sj_setjmp, not __builtin_setjmp: on Win64 clang's frame pointer sits above the frame

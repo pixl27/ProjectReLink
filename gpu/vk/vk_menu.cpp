@@ -1,15 +1,15 @@
 // The Insert menu. Drawn on the CPU (GDI text into a bitmap) and copied over the window's image at the last step of a present,
 // so it costs nothing while closed and it never touches the game's picture, nor what frame interpolation sees. Keys: Insert
 // opens and closes it, Up and Down choose, Left and Right change, Esc closes; the game gets no keyboard input while it is open.
-// (hookshot) A gamepad's Home button, or Select and Start together, opens it too; the D-pad chooses and changes, the bottom
+// (relink) A gamepad's Home button, or Select and Start together, opens it too; the D-pad chooses and changes, the bottom
 // face button changes too, the right one closes. The game gets no gamepad input while it is open either.
 // Its Controls page binds the Switch's buttons to gamepad inputs and keys.
-// (hookshot) The mouse is free while it is open (the window lets it go: WM_APP + 8, host/display.c and
+// (relink) The mouse is free while it is open (the window lets it go: WM_APP + 8, host/display.c and
 // host/posix/display_sdl.c): the row under the cursor is selected, a click on a tab shows it, on a value's left or right
 // half changes it down or up, on a toggle flips it, on a slider's track sets it (or drag it); the wheel changes the value
 // under the cursor, else moves the selection; a right click is Esc. On the Cheats page and its lists a click is Enter (on a
 // choice's or an amount's left or right half, Left or Right) and a right click goes back. vk_menu_hit.h has the layout.
-// (hookshot) The rows that take a restart (Row::restart) say "(after restart)" while their value is not the one the game
+// (relink) The rows that take a restart (Row::restart) say "(after restart)" while their value is not the one the game
 // started with, and the Graphics tab lists them. Closing the menu then asks whether to restart now (menu_restart.h):
 // Later keeps the saved settings for the next start and is not asked again until they change; Restart now saves and
 // closes the window as the player would, and the game starts again (WM_APP + 9: host/hos_relaunch.c).
@@ -34,8 +34,8 @@
 #include "vk_reflex.h"
 #include "upscaler_rows.h"
 #include "menu_restart.h"
-#ifndef HOOKSHOT_VERSION   // (nx2/build.py gives it to this file: nx2/version.py)
-#define HOOKSHOT_VERSION "unknown"
+#ifndef RELINK_VERSION   // (nx2/build.py gives it to this file: nx2/version.py)
+#define RELINK_VERSION "unknown"
 #endif
 
 namespace mkwvk {
@@ -80,7 +80,7 @@ const char* tx_framegen(int v) {
     return t[v];
 }
 const char* tx_onoff(int v) { return v ? "On" : "Off"; }
-// (hookshot) Motion controls: the choice, and whether a connected controller has a gyroscope (host/pad_sdl.c). Either can be
+// (relink) Motion controls: the choice, and whether a connected controller has a gyroscope (host/pad_sdl.c). Either can be
 // chosen whatever is connected: a pad plugged in later is read when it comes
 const char* tx_gyro(int v) {
     const int status = host && host->gyro_status ? host->gyro_status() : -1;
@@ -289,7 +289,7 @@ const char* tx_gpu(int v) {
     return buf;
 }
 const char* tx_pad_layout(int v);
-// (hookshot) the Microphone row: Off, the system's default, or one of the host's microphones (host/nn_audio_in.c: the
+// (relink) the Microphone row: Off, the system's default, or one of the host's microphones (host/nn_audio_in.c: the
 // ocarina's input streams), told to the host by its name (host->mic_select) whenever it changes. The chosen one is kept by
 // its name, mic_want, also while it is unplugged: the row then has one more entry for it, "<name> (not connected)", the
 // host lets the default stand in and opens it again once it is back, and the name stays in the ini. In the ini the name is
@@ -515,7 +515,7 @@ Row rows[] = {
      nullptr, false, true},
     {TAB_CONTROLS, "Layout preset", &opts.pad_layout, 0, 3, 1, tx_pad_layout,
      "Which face button is which. Binding one yourself on the Controls page makes it Custom.", hn_pad_layout},
-    {TAB_CONTROLS, "Controls", nullptr, 0, 0, 0, nullptr,   // (hookshot: opens its page)
+    {TAB_CONTROLS, "Controls", nullptr, 0, 0, 0, nullptr,   // (relink: opens its page)
      "Which gamepad button and which keys press each of the Switch's buttons."},
     {TAB_GAMEPLAY, "Cheats", nullptr, 0, 0, 0, nullptr,
      "Open the private gameplay tools."},
@@ -699,7 +699,7 @@ bool menu_refresh = false;
 int marquee_pos = 0, marquee_max = 0;
 int64_t marquee_next = 0;
 constexpr int64_t kMarqueeStep = 150000000LL, kMarqueeRest = 1200000000LL;   // (ns)
-// (hookshot) the mouse (menu_tick): the tab strip's part under the cursor (a tab 0 to 2, 3 the previous, 4 the next; -1
+// (relink) the mouse (menu_tick): the tab strip's part under the cursor (a tab 0 to 2, 3 the previous, 4 the next; -1
 // none); paint_menu's record of each shown row's value's left edge (as with its arrows, whether shown or not) and of the
 // rows a slider's track was drawn on; the slider held with the left button (its row in the tab, -1 none)
 int hover_tab = -1;
@@ -719,7 +719,7 @@ std::string ini_path() {
     char exe[MAX_PATH];
     const DWORD n = game_module_path(exe, MAX_PATH);
     std::string dir(exe, n);
-    return dir.substr(0, dir.find_last_of("\\/") + 1) + "hookshot_options.ini";
+    return dir.substr(0, dir.find_last_of("\\/") + 1) + "relink_options.ini";
 }
 const char* ini_key(const Row& r) {
     if (r.value == &opts.output_res) return "output_res";   // (host/nn_applet.c reads it at the start)
@@ -733,7 +733,7 @@ const char* ini_key(const Row& r) {
     k[n] = 0;
     return k;
 }
-// (hookshot) the controls, kept by the host (host/nn_hid.c reads them back from here): pad_<button>, key_<button>
+// (relink) the controls, kept by the host (host/nn_hid.c reads them back from here): pad_<button>, key_<button>
 const char* const bind_names[HOS_KEY_N] = {"a", "b", "x", "y", "ls", "rs", "l", "r", "zl", "zr", "plus", "minus",
                                            "left", "up", "right", "down", "move_up", "move_down", "move_left",
                                            "move_right", "cam_up", "cam_down", "cam_left", "cam_right"};
@@ -772,7 +772,7 @@ int detect_pad_layout() {
     if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_NORTH && y == HOS_PAD_WEST) return 2;
     return 3;
 }
-// (hookshot) the row's choice to the host: off, the default, or a microphone by its name (and its place in the host's list,
+// (relink) the row's choice to the host: off, the default, or a microphone by its name (and its place in the host's list,
 // -1 while it is unplugged: of two with one name, the one chosen). Unplugged, the name is the kept one, cut: the host takes
 // a name that starts with it
 void mic_tell_host() {
@@ -785,7 +785,7 @@ void mic_row_ends() {
     for (Row& r : rows)
         if (r.value == &opts.mic) r.hi = 1 + mic_listed + (mic_missing ? 1 : 0);
 }
-// (hookshot) the microphones listed again (one plugged in since shows up), the row on mic_want's: the one at the row's place
+// (relink) the microphones listed again (one plugged in since shows up), the row on mic_want's: the one at the row's place
 // when it still has that name (two microphones of one name: the second stays chosen), else the first of that name, else
 // its "(not connected)" entry while it is unplugged
 void refresh_mics() {
@@ -819,7 +819,7 @@ void mic_chosen() {
     mic_tell_host();
 }
 void save() {
-    // (hookshot) the lines that are not the menu's are kept: the controls, pad_ and key_ (host/nn_hid.c)
+    // (relink) the lines that are not the menu's are kept: the controls, pad_ and key_ (host/nn_hid.c)
     std::string kept;
     if (FILE* f = fopen(ini_path().c_str(), "r")) {
         char line[256];
@@ -830,7 +830,7 @@ void save() {
     if (FILE* f = fopen(ini_path().c_str(), "w")) {
         for (const Row& r : rows)
             if (r.value) fprintf(f, "%s=%d\n", ini_key(r), *r.value);
-        if (!mic_want.empty()) fprintf(f, "microphone_device=%s\n", mic_want.c_str());   // (hookshot: also while it is unplugged)
+        if (!mic_want.empty()) fprintf(f, "microphone_device=%s\n", mic_want.c_str());   // (relink: also while it is unplugged)
         // (2: game_speed below 2 was only ever the old default, see menu_init; 3: the mouse's buttons are bindings, see
         // host/nn_hid.c binds_load)
         fprintf(f, "options_version=3\n");
@@ -874,7 +874,7 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
             sync_preset_budgets(0);
         }
     }
-    if (r.value == &opts.mic && can_mic()) mic_chosen();   // (hookshot)
+    if (r.value == &opts.mic && can_mic()) mic_chosen();   // (relink)
     {   // (a row that takes a restart, or a preset that sets one: asked again at the next close)
         int now[mr::kMax];
         restart_values(now);
@@ -883,7 +883,7 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
     if (keep) save();
 }
 
-// ---- (hookshot) the Controls page: what presses each of the Switch's buttons, a gamepad input and up to two keys ----
+// ---- (relink) the Controls page: what presses each of the Switch's buttons, a gamepad input and up to two keys ----
 struct Control {
     int button;   // HOS_SW_*, or HOS_KEY_* (keys only)
     const char* name;
@@ -1110,7 +1110,7 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
         HFONT small = font(12 * s, FW_NORMAL);
         SelectObject(dc, small);
         SetTextColor(dc, RGB(140, 150, 144));
-        std::string ver = HOOKSHOT_VERSION;
+        std::string ver = RELINK_VERSION;
         const int room = (int)w - 32 * s - tsz.cx - 12 * s;
         SIZE sz{};
         GetTextExtentPoint32A(dc, ver.c_str(), (int)ver.size(), &sz);
@@ -1123,7 +1123,7 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
         DeleteObject(small);
     }
     SelectObject(dc, body);
-    if (page == 5) {   // (hookshot) the restart question, as the menu closes with a setting that takes a restart
+    if (page == 5) {   // (relink) the restart question, as the menu closes with a setting that takes a restart
         SetTextColor(dc, RGB(236, 240, 236));
         const std::string ask = "Restart to apply " + restart_list(" and ") + "?";
         const int asked = wrap_help(dc, ask.c_str(), (int)w - 32 * s, 16 * s, 46 * s, true);   // (one line or two)
@@ -1155,7 +1155,7 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
         DeleteObject(body);
         return;
     }
-    if (page == 1) {   // (hookshot) the Controls page
+    if (page == 1) {   // (relink) the Controls page
         TextOutA(dc, 16 * s + 110 * s, 12 * s + 4 * s, "Controls", 8);
         const int rh = menu_hit::kCtlRowH * s, top = menu_hit::kCtlTop * s, xpad = menu_hit::kCtlPad * s,
                   xkey = menu_hit::kCtlKey * s;
@@ -1556,7 +1556,7 @@ void copy_over(VkCommandBuffer cmd, VkImage dst, Bitmap& b, Upload& u, int x, in
     vkCmdCopyBufferToImage(cmd, u.buf, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
 }
 
-// ---- (hookshot) the start-up screen (vk_startup_paint.h): centred on black ----
+// ---- (relink) the start-up screen (vk_startup_paint.h): centred on black ----
 StartupView startup;
 Bitmap startup_bmp;
 std::atomic<bool> startup_on{false};
@@ -1572,7 +1572,7 @@ void startup_screen(const StartupView* view) {
     static int drawn_pct = 0;
     const int pct = startup_scale(dev.swap_extent.width, dev.swap_extent.height);
     StartupView v = *view;
-    if (v.version.empty()) v.version = version_text(HOOKSHOT_VERSION);   // ("v2.0.5"; "v2.0.5 dev" between releases)
+    if (v.version.empty()) v.version = version_text(RELINK_VERSION);   // ("v2.0.5"; "v2.0.5 dev" between releases)
     // (the bar to whole pixels: a redraw only when it moves)
     const double span = (kStartupW - 120) * pct / 100.0;
     if (v.fraction >= 0) v.fraction = std::floor(std::min(v.fraction, 1.0) * span) / span;
@@ -1614,7 +1614,7 @@ void menu_init() {
             has_resolution |= !strcmp(line, "resolution");
             v2 |= !strcmp(line, "options_version");
             if (!strcmp(line, "dynamic_resolution")) old_dynres = atoi(eq + 1);
-            if (!strcmp(line, "microphone_device")) {   // (hookshot: the microphone, by its name)
+            if (!strcmp(line, "microphone_device")) {   // (relink: the microphone, by its name)
                 mic_want = mic_key(eq + 1);
                 while (!mic_want.empty() && (mic_want.back() == '\n' || mic_want.back() == '\r')) mic_want.pop_back();
             }
@@ -1751,7 +1751,7 @@ int list_item(int line, const TeleportSection* sec, int sections) {
     while (section + 1 < sections && line >= sec[section + 1].first + section + 1) section++;
     return line == sec[section].first + section ? -1 : line - section - 1;
 }
-/// (hookshot) the mouse on a list page (the teleport list, the inventory): the item under the cursor chosen, a click on it
+/// (relink) the mouse on a list page (the teleport list, the inventory): the item under the cursor chosen, a click on it
 /// as Enter (on an amount's left or right half, with amounts, as Left or Right), the wheel moves the choice, a right click
 /// goes back
 void list_mouse(const MkwVkPointer& ptr, int mx, int my, int mw, int mh, int scale, bool moved, bool amounts, int n,
@@ -1806,7 +1806,7 @@ void menu_tick() {
         press[i] = host && host->take_key_press ? mine && queued : down && !held[i];
         held[i] = down;
     }
-    // (hookshot) the gamepads, by position: Home, or Select and Start together, as Insert; the D-pad as the arrows,
+    // (relink) the gamepads, by position: Home, or Select and Start together, as Insert; the D-pad as the arrows,
     // the bottom face button as Enter, the right one as Esc (not while a binding waits for its button)
     static uint32_t pad_held = 0;
     const uint32_t raw = mine && host && host->pad_raw ? host->pad_raw() : 0, pad_press = raw & ~pad_held;
@@ -1852,7 +1852,7 @@ void menu_tick() {
     bool changed = scale != cur_scale || menu_refresh;
     menu_refresh = false;
     cur_scale = scale;
-    // (hookshot) the mouse, while the menu is open: the cursor in the menu's pixels (mx, my), whether it moved since the
+    // (relink) the mouse, while the menu is open: the cursor in the menu's pixels (mx, my), whether it moved since the
     // last frame, and its clicks and wheel since then (vk_menu_hit.h)
     MkwVkPointer ptr{};
     int mx = -1, my = -1, mw = 0, mh = 0;
@@ -1893,7 +1893,7 @@ void menu_tick() {
         if (open_now.load()) dlss_probe();   // (whether the Upscaler row can offer DLSS here: NGX asked once)
         if (open_now.load()) refresh_mics();   // (the microphones as they are now)
     }
-    if (open_now.load() && page == 5) {   // (hookshot) the restart question: Later (the default) or Restart now
+    if (open_now.load() && page == 5) {   // (relink) the restart question: Later (the default) or Restart now
         if (mouse) {   // (a button under the cursor chosen, a click on it pressed; the wheel changes it, a right click is Later)
             const menu_hit::Hit hit = menu_hit::ask(mx, my, scale, mw, mh);
             if (hit.part == menu_hit::kButton && (moved || ptr.pressed) && hit.index != ask_sel) ask_sel = hit.index, changed = true;
@@ -1912,7 +1912,7 @@ void menu_tick() {
             PostMessageA(app_window(), WM_APP + 9, 0, 0);
         }
         if (changed && open_now.load()) redraw_menu(scale);
-    } else if (open_now.load() && page == 1) {   // (hookshot) the Controls page
+    } else if (open_now.load() && page == 1) {   // (relink) the Controls page
         if (!can_bind()) page = 0;
         else if (listening) {
             if (press[5] || prof_now() > listen_end) listening = 0, changed = true;   // (Esc, or nothing for a while)
@@ -2193,7 +2193,7 @@ void menu_tick() {
         }
         if (changed) redraw_menu(scale);
     }
-    {   // (hookshot) the window lets the mouse go while the menu is open, and takes it back after (host/display.c)
+    {   // (relink) the window lets the mouse go while the menu is open, and takes it back after (host/display.c)
         static bool told = false;
         const bool now_open = open_now.load();
         if (!now_open) {
@@ -2220,7 +2220,7 @@ void menu_tick() {
 }
 
 void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_t h) {
-    if (startup_on.load(std::memory_order_acquire)) {   // (hookshot) under the counter and the menu
+    if (startup_on.load(std::memory_order_acquire)) {   // (relink) under the counter and the menu
         VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         mb.srcStageMask = mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
         mb.srcAccessMask = mb.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;

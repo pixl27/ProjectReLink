@@ -155,7 +155,7 @@ int hos_vk_take_key_press(int key) {
 #define host_take_key_press NULL
 #endif
 
-/* (eglantine) the game's freed address space inside [lo, hi), decommitted (hos_mem.c): the back end's ranges no import holds */
+/* (relink) the game's freed address space inside [lo, hi), decommitted (hos_mem.c): the back end's ranges no import holds */
 uint64_t hos_region_release_gaps(uint64_t lo, uint64_t hi);
 static uint64_t host_region_release_gaps(uint64_t lo, uint64_t hi) { return hos_region_release_gaps(lo, hi); }
 
@@ -231,7 +231,7 @@ static void flush_early(void) {
     ReleaseSRWLockExclusive(&early_lock);
 }
 
-static void (*program_set_fn)(const nvn_prog *p);   /* (eglantine) hookshot_vk.dll's hookshot_program_set, when there */
+static void (*program_set_fn)(const nvn_prog *p);   /* (relink) relink_vk.dll's relink_program_set, when there */
 /* dll: mkw_vk.dll (our Vulkan back end) or mkw_eden.dll (Eden's renderer driven natively, gpu/eden): one export */
 static const MkwVkRenderer *load_vulkan(const char *dll) {
     char path[MAX_PATH];
@@ -246,8 +246,8 @@ static const MkwVkRenderer *load_vulkan(const char *dll) {
     }
     vk_module = m;
     mkwvk_init_fn init = (mkwvk_init_fn)(void *)GetProcAddress(m, "mkwvk_init");
-    /* (eglantine) the back end's own extra entry, when it has it: compute programs made ahead of their first dispatch */
-    program_set_fn = (void (*)(const nvn_prog *))(void *)GetProcAddress(m, "hookshot_program_set");
+    /* (relink) the back end's own extra entry, when it has it: compute programs made ahead of their first dispatch */
+    program_set_fn = (void (*)(const nvn_prog *))(void *)GetProcAddress(m, "relink_program_set");
     const MkwVkRenderer *r = init ? init(&vk_host) : NULL;
     if (!r || r->version != MKWVK_API_VERSION) {
         hos_log("rx: the Vulkan back end did not start: WebGPU");
@@ -259,8 +259,8 @@ static const MkwVkRenderer *load_vulkan(const char *dll) {
 int rx_start(void *hwnd) {
     const char *b = getenv("RX_BACKEND");
     const int eden = b && !_stricmp(b, "eden");
-    if (!b || !_stricmp(b, "vulkan") || eden) {   /* (hookshot: Vulkan unless told otherwise; a started game has no RX_BACKEND) */
-        const char *dll = eden ? "mkw_eden.dll" : "hookshot_vk.dll";
+    if (!b || !_stricmp(b, "vulkan") || eden) {   /* (relink: Vulkan unless told otherwise; a started game has no RX_BACKEND) */
+        const char *dll = eden ? "mkw_eden.dll" : "relink_vk.dll";
         const MkwVkRenderer *r = load_vulkan(dll);
         if (r && r->start(hwnd)) {
             vk = r;
@@ -274,13 +274,13 @@ int rx_start(void *hwnd) {
     flush_early();
     return ok;
 }
-/* (hookshot) hookshot --prepare-shaders: the Vulkan back end started with no window and no game, which prepares
+/* (relink) relink --prepare-shaders: the Vulkan back end started with no window and no game, which prepares
    every shader in its start (gpu/vk/vk_main.cpp started_up) and is then let go. 0 when there is no usable Vulkan */
 int rx_prepare_shaders(void) {
-    const MkwVkRenderer *r = load_vulkan("hookshot_vk.dll");
+    const MkwVkRenderer *r = load_vulkan("relink_vk.dll");
     return r && r->start(NULL);
 }
-/* (hookshot) the window is being closed: a back end still preparing its shaders stops and keeps what it made first (a few
+/* (relink) the window is being closed: a back end still preparing its shaders stops and keeps what it made first (a few
    seconds at most). One without the export (an older one) has nothing to keep */
 void rx_close_asked(void) {
     if (!vk_module) return;
@@ -313,7 +313,7 @@ void rx_nvn_present(const nvn_tex *t, const int crop[4]) {
     InterlockedIncrement(&presents);
     vk ? vk->nvn_present(t, crop) : wgr_nvn_present(t, crop);
 }
-/* (hookshot, nx2/oot_jitter.py) NVIDIA DLSS's camera jitter: this frame's sub-pixel offset of the scene's projection, in clip
+/* (relink, nx2/oot_jitter.py) NVIDIA DLSS's camera jitter: this frame's sub-pixel offset of the scene's projection, in clip
    space (what P[0][2] and P[1][2] get), into out, for the projection matrix at guest address projection (row major, as the
    game fills its views' uniform buffers from it); 0 when there is none: DLSS off (or a renderer without it: rx_option
    HOS_OPT_DLSS_JITTER_W and _H, the scene's size in pixels, are 0), or a projection that is not one of the picture's
@@ -437,7 +437,7 @@ int rx_guest_imported(uint64_t lo, uint64_t hi) {
     if (away) hos_vcore_back();
     return r;
 }
-/* (eglantine, hos_mem.c: the game freed the address region [lo, hi)) the back end takes the range and, at its next
+/* (relink, hos_mem.c: the game freed the address region [lo, hi)) the back end takes the range and, at its next
    submission, has the host decommit what no import holds of it (a short list lock: no wait on the replay) */
 void rx_guest_release(uint64_t lo, uint64_t hi) {
     if (vk && vk->guest_release) vk->guest_release(lo, hi);

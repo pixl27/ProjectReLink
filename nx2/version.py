@@ -1,10 +1,10 @@
-"""Which Hookshot a build is: the release it came from and a fingerprint of its sources.
+"""Which ReLink a build is: the release it came from and a fingerprint of its sources.
 
-The game prints it as the first line of hookshot_log.txt and in the Insert menu, so a report says what was run.
+The game prints it as the first line of relink_log.txt and in the Insert menu, so a report says what was run.
 
     python -I nx2/version.py            prints it for this folder
 
-The release name comes from, in order: HOOKSHOT_VERSION; a VERSION file at the root (written when a release is packaged,
+The release name comes from, in order: RELINK_VERSION; a VERSION file at the root (written when a release is packaged,
 since the builder's tools folder has no git history); `git describe --tags --always --dirty` in a checkout, matching
 only version tags (`v0.1.0`, not the branch-like tags from before the scheme). The
 fingerprint is a hash of the sources in this folder (host/, gpu/, nx2/), line endings aside: every build from the
@@ -22,7 +22,7 @@ SOURCE_EXT = (".c", ".cc", ".cpp", ".h", ".hpp", ".inc", ".py", ".glsl", ".comp"
 
 
 def release(root=ROOT):
-    name = os.environ.get("HOOKSHOT_VERSION", "").strip()
+    name = os.environ.get("RELINK_VERSION", "").strip()
     if not name:
         for file in ("VERSION", "version.txt"):   # (version.txt: the release's tag, written into the builder's tools when it is packed)
             try:
@@ -65,7 +65,7 @@ def describe(root=ROOT):
 
 
 def define(root=ROOT):
-    return '-DHOOKSHOT_VERSION="%s"' % describe(root)
+    return '-DRELINK_VERSION="%s"' % describe(root)
 
 
 if __name__ == "__main__":

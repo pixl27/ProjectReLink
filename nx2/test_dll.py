@@ -1,4 +1,4 @@
-"""The production build against Unicorn: random functions run from work/build/hookshot_game.dll itself.
+"""The production build against Unicorn: random functions run from work/build/relink_game.dll itself.
 
 test_leaf.py compiles the functions it picks into its own harness. This test picks the same way (self-contained
 functions, or with --calls whole call trees) and checks them in the real game library instead: built by
@@ -20,7 +20,7 @@ import kit
 import test_leaf
 import toolchain
 
-DLL = os.path.join(kit.WORK, "build", "hookshot_game.dll")
+DLL = os.path.join(kit.WORK, "build", "relink_game.dll")
 
 HOST = r"""
 #include "a64.h"

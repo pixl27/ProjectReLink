@@ -60,7 +60,7 @@ bool resolve(const nvn_tex* t, const nvn_view* v, bool has_v, const NVNcopyRegio
     if (!t || !t->gpu) return false;
     const nvn_view* view = has_v ? v : nullptr;
     if (dst) {
-        // (eglantine, 12/11) a destination the GPU drew and the game finalized is not uploaded over from the game's memory
+        // (relink, 12/11) a destination the GPU drew and the game finalized is not uploaded over from the game's memory
         // first (vk_texture.cpp texture_touch): a copy or a clear of part of it kept the rest as that memory had it. One the
         // CPU filled is uploaded as before: a copy into part of it needs the rest
         Texture* w = texture_get(t, false);
@@ -93,7 +93,7 @@ bool resolve(const nvn_tex* t, const nvn_view* v, bool has_v, const NVNcopyRegio
                  s.tex->astc ? " ASTC" : "", s.tex->skip);
         return false;
     }
-    if (!s.down && view_level(view) >= s.tex->skip + s.tex->levels) {   // (hookshot-amd: a level the image left out at its end)
+    if (!s.down && view_level(view) >= s.tex->skip + s.tex->levels) {   // (relink-amd: a level the image left out at its end)
         static int logged;
         if (logged++ < 20)
             logf("vk: copy with level %u of texture %#llx %ux%u, %u levels (its last levels left out): skipped",
@@ -182,7 +182,7 @@ void copy_b2t(VkCommandBuffer cmd, NvnState& st, const nvn_p_copy_bt& p, bool to
                          view_layer(p.has_view ? &p.view : nullptr) + (uint32_t)std::max(0, p.r.zoffset), p.r.xoffset,
                          p.r.yoffset, (uint32_t)std::max(0, p.r.width), (uint32_t)std::max(0, p.r.height), p.buf);
     }
-    {   // (hookshot, RX_VK_LOG_B2T=1) the first 60 copies into textures 960 wide or more: where they read, and what
+    {   // (relink, RX_VK_LOG_B2T=1) the first 60 copies into textures 960 wide or more: where they read, and what
         static const bool on = getenv("RX_VK_LOG_B2T") != nullptr;
         static std::atomic<int> n{0};
         if (on && to_image && p.tex && p.r.width >= 960 && n.fetch_add(1) < 60) {
@@ -221,7 +221,7 @@ void copy_b2t(VkCommandBuffer cmd, NvnState& st, const nvn_p_copy_bt& p, bool to
         warn(5, "copy of a buffer into a depth-stencil texture: skipped");
         return;
     }
-    if (pass_trace_on())   // (eglantine, diagnostic)
+    if (pass_trace_on())   // (relink, diagnostic)
         trace_line("copy %s #%u %#llx %ux%u f%#x%s, buffer %#llx (guest %#llx), %llu bytes", to_image ? "b2t" : "t2b", s.tex->id,
                    (unsigned long long)s.tex->gpu, s.tex->width, s.tex->height, s.tex->nvn_format, s.tex->released ? " (finalized)" : "",
                    (unsigned long long)p.buf, (unsigned long long)host->gpu_guest(p.buf), (unsigned long long)size);
@@ -256,7 +256,7 @@ void copy_t2t(VkCommandBuffer cmd, NvnState& st, const nvn_p_copy_tt& p) {
                  d.w, d.h, p.flags);
     }
     log_big_copy("texture", d.tex, d.level, d.layer, d.x, d.y, d.w, d.h, s.tex->gpu);
-    if (pass_trace_on())   // (eglantine, diagnostic: the copies in the frame's pass trace)
+    if (pass_trace_on())   // (relink, diagnostic: the copies in the frame's pass trace)
         trace_line("copy t2t #%u %#llx %ux%u f%#x%s -> #%u %#llx %ux%u f%#x%s", s.tex->id, (unsigned long long)s.tex->gpu,
                    s.tex->width, s.tex->height, s.tex->nvn_format, s.tex->released ? " (finalized)" : "", d.tex->id,
                    (unsigned long long)d.tex->gpu, d.tex->width, d.tex->height, d.tex->nvn_format, d.tex->released ? " (finalized)" : "");
@@ -279,7 +279,7 @@ void copy_t2t(VkCommandBuffer cmd, NvnState& st, const nvn_p_copy_tt& p) {
         if (d.tex->bc && same_size) {
             done = texture_copy_into_bc(cmd, s.tex, s.level, s.layer, s.x, s.y, d.tex, d.level, d.layer, d.x, d.y, s.w, s.h,
                                         s.layers);
-        } else if (s.tex->bc && !d.tex->bc && s.tex->bc_resized) {   // (hookshot-amd: its texels are not the game's)
+        } else if (s.tex->bc && !d.tex->bc && s.tex->bc_resized) {   // (relink-amd: its texels are not the game's)
             static int logged;
             if (logged++ < 8)
                 logf("vk: a copy out of resized BC3 texture %#llx left out", (unsigned long long)s.tex->gpu);
@@ -332,7 +332,7 @@ void clear_tex(VkCommandBuffer cmd, NvnState& st, const nvn_p_clear_tex& p) {
     const uint32_t lw = std::max(1u, s.tex->width >> s.level), lh = std::max(1u, s.tex->height >> s.level);
     const bool whole = !s.x && !s.y && s.w == lw && s.h == lh;
     if ((p.mask & 0xf) != 0xf && (s.tex->aspect & VK_IMAGE_ASPECT_COLOR_BIT)) warn(8, "texture clear with a channel mask: cleared whole");
-    if (pass_trace_on())   // (eglantine, diagnostic)
+    if (pass_trace_on())   // (relink, diagnostic)
         trace_line("clear tex #%u %#llx %ux%u f%#x%s", s.tex->id, (unsigned long long)s.tex->gpu, s.tex->width, s.tex->height,
                    s.tex->nvn_format, s.tex->released ? " (finalized)" : "");
     end_pass(cmd);

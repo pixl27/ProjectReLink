@@ -1,4 +1,4 @@
-// (hookshot) NVIDIA DLSS Super Resolution in place of OoT's gameplay upscale network (vk_dlss.h).
+// (relink) NVIDIA DLSS Super Resolution in place of OoT's gameplay upscale network (vk_dlss.h).
 //
 // OoT has no DLSS of its own: its scene is drawn at a lower size and a network of its own (the program
 // fd029a317a9a4b94 at 3/4, another for each other share; one dispatch, cooperative matrices) scales it up, from the
@@ -24,7 +24,7 @@
 //
 // RX_VK_DLSS=0 / 1 / 2: the game's own, DLSS, DLAA over the Insert menu's Upscaler row (0 also leaves NGX's extensions
 // off). DLSS's runtime (Windows: nvngx_dlss.dll; Linux: libnvidia-ngx-dlss.so.*) is looked for in RX_VK_DLSS_DIR=<folder>
-// when set, the game folder's ngx folder, and %LOCALAPPDATA%\Hookshot\ngx (Linux: $XDG_DATA_HOME/hookshot/ngx): NGX takes
+// when set, the game folder's ngx folder, and %LOCALAPPDATA%\ReLink\ngx (Linux: $XDG_DATA_HOME/relink/ngx): NGX takes
 // the newest one it finds in them. Windows' paths are wide all the way (GetModuleFileNameW, _wgetenv), so any folder name
 // works. The Insert menu's DLSS model row (opts.dlss_model, upscaler_rows.h) chooses DLSS's preset: K by default, M, L, or
 // NVIDIA's default (0). RX_VK_DLSS_PRESET=<letter> (or 0) over it.
@@ -33,8 +33,8 @@
 // own log in ours.
 // RX_VK_DLSS_SQUARE=0: the output not squared.
 //
-// NVIDIA's NGX SDK is not part of Hookshot (NVIDIA's license): a local build fetches it (scripts/ngx_sdk.py) and builds with
-// HOOKSHOT_NGX_SDK, which compiles this file with HOOKSHOT_NGX. Without it only the stubs at the end are here.
+// NVIDIA's NGX SDK is not part of ReLink (NVIDIA's license): a local build fetches it (scripts/ngx_sdk.py) and builds with
+// RELINK_NGX_SDK, which compiles this file with RELINK_NGX. Without it only the stubs at the end are here.
 // NGX's core is the driver's (Windows: _nvngx.dll, which NVIDIA's loader finds in the driver's own folder; Linux:
 // libnvidia-ngx.so). It is never put beside the game: a copy there would be loaded in place of the driver's.
 #include "vk_dlss.h"
@@ -58,7 +58,7 @@
 #include "vk_paths.h"
 #include "vk_texture.h"
 
-#ifdef HOOKSHOT_NGX
+#ifdef RELINK_NGX
 #include "nvsdk_ngx_vk.h"
 #include "nvsdk_ngx_helpers.h"
 #include "nvsdk_ngx_helpers_vk.h"
@@ -98,7 +98,7 @@ int dlss_mode() {
 bool dlss_wanted() { return dlss_mode() != 0; }
 bool dlss_full_scale() { return dlss_mode() == 2; }
 
-#ifdef HOOKSHOT_NGX
+#ifdef RELINK_NGX
 
 namespace {
 
@@ -266,7 +266,7 @@ void NVSDK_CONV ngx_log(const char* message, NVSDK_NGX_Logging_Level, NVSDK_NGX_
 
 namespace fs = std::filesystem;
 #ifdef _WIN32
-/// The game folder (game_module_path's rule: bin\hookshot.exe beside image.bin is the folder above bin), from
+/// The game folder (game_module_path's rule: bin\relink-game.exe beside image.bin is the folder above bin), from
 /// GetModuleFileNameW: a folder with characters outside the ANSI code page is still the right one
 fs::path game_dir() {
     std::wstring exe(32768, L'\0');
@@ -328,12 +328,12 @@ bool ngx_init() {
 #ifdef _WIN32
     if (fs::path e = env_path(L"RX_VK_DLSS_DIR"); !e.empty()) dirs.push_back(e);
     dirs.push_back(game_dir() / L"ngx");
-    if (fs::path l = env_path(L"LOCALAPPDATA"); !l.empty()) dirs.push_back(l / L"Hookshot" / L"ngx");
+    if (fs::path l = env_path(L"LOCALAPPDATA"); !l.empty()) dirs.push_back(l / L"ReLink" / L"ngx");
 #else
     if (fs::path e = env_path("RX_VK_DLSS_DIR"); !e.empty()) dirs.push_back(e);
     dirs.push_back(game_dir() / "ngx");
-    if (fs::path x = env_path("XDG_DATA_HOME"); !x.empty()) dirs.push_back(x / "hookshot" / "ngx");
-    else if (fs::path h = env_path("HOME"); !h.empty()) dirs.push_back(h / ".local" / "share" / "hookshot" / "ngx");
+    if (fs::path x = env_path("XDG_DATA_HOME"); !x.empty()) dirs.push_back(x / "relink" / "ngx");
+    else if (fs::path h = env_path("HOME"); !h.empty()) dirs.push_back(h / ".local" / "share" / "relink" / "ngx");
 #endif
     std::vector<std::wstring> wdirs;
     for (const auto& d : dirs) wdirs.push_back(wide(d));
@@ -351,7 +351,7 @@ bool ngx_init() {
     info.LoggingInfo.MinimumLoggingLevel = verbose ? NVSDK_NGX_LOGGING_LEVEL_ON : NVSDK_NGX_LOGGING_LEVEL_OFF;
     // (NGX also writes its own log files into the data folder; with RX_VK_DLSS_LOG=1 its lines go to ours instead)
     info.LoggingInfo.DisableOtherLoggingSinks = verbose;
-    // (a project id of Hookshot's own: NGX wants one with the custom engine type, any GUID)
+    // (a project id of ReLink's own: NGX wants one with the custom engine type, any GUID)
     NVSDK_NGX_Result r = NVSDK_NGX_VULKAN_Init_with_ProjectID("7b2f5d0c-6a1e-4c39-9f84-3d5e2a1b0c96", NVSDK_NGX_ENGINE_TYPE_CUSTOM,
                                                               "1.0", wdata.c_str(), dev.instance, dev.physical, dev.device,
                                                               instance_proc(), vkGetDeviceProcAddr, &info);

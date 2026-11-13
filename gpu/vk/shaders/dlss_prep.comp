@@ -1,5 +1,5 @@
 #version 450
-// (hookshot) NVIDIA DLSS's inputs for OoT's gameplay upscale (vk_dlss.cpp), at the render size, in one pass:
+// (relink) NVIDIA DLSS's inputs for OoT's gameplay upscale (vk_dlss.cpp), at the render size, in one pass:
 //  - colour: the network's input as it samples it, the square root of the scene colour (tonemapped, perceptual): DLSS
 //    takes it as LDR colour
 //  - depth: the scene's depth as a plain float image

@@ -43,7 +43,7 @@ bool image_pool_tried = false;
 // would halve, at twice the memory objects: the driver allows ~4096, the imported pools take ~2400)
 const uint64_t kImageBlock = (getenv("RX_VK_IMAGE_BLOCK_MB") ? (uint64_t)std::max(16, atoi(getenv("RX_VK_IMAGE_BLOCK_MB"))) : 128u) << 20;
 thread_local int image_pool_hint = 0;
-VmaPool asset_pool = VK_NULL_HANDLE;   // (eglantine, RX_VK_ASSET_POOL=1: the game's compressed textures, apart)
+VmaPool asset_pool = VK_NULL_HANDLE;   // (relink, RX_VK_ASSET_POOL=1: the game's compressed textures, apart)
 
 VmaPool images_pool() {
     if (image_pool_tried) return image_pool;
@@ -62,7 +62,7 @@ VmaPool images_pool() {
     if (vmaFindMemoryTypeIndexForImageInfo(vma, &rep, &ai, &type) != VK_SUCCESS) return VK_NULL_HANDLE;
     VmaPoolCreateInfo pi{};
     pi.memoryTypeIndex = type;
-    // (eglantine, RX_VK_IMAGE_BLOCK_MB=<n>, experiment: smaller blocks empty out whole more often, and VMA gives an empty block
+    // (relink, RX_VK_IMAGE_BLOCK_MB=<n>, experiment: smaller blocks empty out whole more often, and VMA gives an empty block
     // back to the driver; in 128 MB blocks a block half used by a few small textures kept its whole size counted)
     const uint64_t block = getenv("RX_VK_IMAGE_BLOCK_MB") ? (uint64_t)std::max(8, atoi(getenv("RX_VK_IMAGE_BLOCK_MB"))) << 20 : kImageBlock;
     pi.blockSize = block;
@@ -76,7 +76,7 @@ VmaPool images_pool() {
     return image_pool;
 }
 
-// (eglantine, diagnostic) the images' bytes by kind: render targets (attachments) and the rest, for the heaps' log line
+// (relink, diagnostic) the images' bytes by kind: render targets (attachments) and the rest, for the heaps' log line
 std::mutex img_kind_mu;
 std::unordered_map<VmaAllocation, std::pair<int, uint64_t>> img_kind;
 uint64_t img_kind_bytes[2];
@@ -108,7 +108,7 @@ bool create_image_raw(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation
         if (vmaCreateImage(vma, &ci, &dai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
     }
     static const bool no_pool = getenv("RX_VK_NO_IMAGE_POOL") != nullptr;
-    // (eglantine, RX_VK_DEDICATED_MB=<n>, experiment, off by default) images of n MB and more in memory of their own: in the 128 MB
+    // (relink, RX_VK_DEDICATED_MB=<n>, experiment, off by default) images of n MB and more in memory of their own: in the 128 MB
     // blocks a 47-64 MB texture left a hole when it went, which the driver still counted (hs179 outdoors: 7.5 GB used of 7.26
     // allowed, 2 GB of it free inside the blocks), so the texture budget shrank and textures were evicted and made again
     static const uint64_t dedicated_mb = (uint64_t)(getenv("RX_VK_DEDICATED_MB") ? std::max(0, atoi(getenv("RX_VK_DEDICATED_MB"))) : 0) << 20;
@@ -134,7 +134,7 @@ bool create_image_raw(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation
         if (vmaCreateImage(vma, &ci, &pai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
     }
     if (vmaCreateImage(vma, &ci, &ai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
-    // (hookshot) VRAM is full (a 4 GB card at a high resolution, #96): an image left unmade is a black screen, so it goes
+    // (relink) VRAM is full (a 4 GB card at a high resolution, #96): an image left unmade is a black screen, so it goes
     // to system memory instead, slow but drawn
     if (getenv("RX_VK_IMAGES_VRAM_ONLY")) return false;
     VmaAllocationCreateInfo sai{};
@@ -144,7 +144,7 @@ bool create_image_raw(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation
     if (told++ < 4) logf("vk: VRAM full: a %ux%u image (format %d) in system memory", ci.extent.width, ci.extent.height, (int)ci.format);
     return true;
 }
-// (eglantine) The image pool's defragmentation. Its 128 MB blocks kept ~1.2-1.9 GB free between long-lived images scattered by
+// (relink) The image pool's defragmentation. Its 128 MB blocks kept ~1.2-1.9 GB free between long-lived images scattered by
 // the load peaks and the dynamic resolution's targets (hs195/hs196), and the driver counts the blocks: 7.5 GB used of 7.25
 // allowed outdoors, so the texture budget squeezed and ~10-17k textures were evicted and made again in 300 s. A pass moves a
 // few images into the free space of other blocks (vk_texture.cpp makes each again there and copies it on the GPU) and VMA
@@ -326,7 +326,7 @@ void vma_log_heaps() {
                       b[h].statistics.blockCount, (unsigned long long)(b[h].statistics.blockBytes >> 20),
                       b[h].statistics.allocationCount, (unsigned long long)(b[h].statistics.allocationBytes >> 20),
                       (unsigned long long)(b[h].usage >> 20), (unsigned long long)(b[h].budget >> 20));
-    for (int k = 0; k < 2; k++) {   // (eglantine: where the free space inside the blocks is: the images' pools, or the rest)
+    for (int k = 0; k < 2; k++) {   // (relink: where the free space inside the blocks is: the images' pools, or the rest)
         VmaPool pl = k ? asset_pool : image_pool;
         if (!pl || n >= 1700) continue;
         VmaStatistics ps{};

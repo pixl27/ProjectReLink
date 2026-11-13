@@ -49,7 +49,7 @@ def _text(xreg, yreg):
 
 
 def wanted():
-    """A build with NVIDIA DLSS (make_game.py: HOOKSHOT_NGX_SDK with its library): OOT_DLSS_JITTER=1, in the lift's key"""
+    """A build with NVIDIA DLSS (make_game.py: RELINK_NGX_SDK with its library): OOT_DLSS_JITTER=1, in the lift's key"""
     return os.environ.get("OOT_DLSS_JITTER") == "1"
 
 

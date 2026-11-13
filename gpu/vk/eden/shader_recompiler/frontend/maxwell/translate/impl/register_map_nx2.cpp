@@ -1,4 +1,4 @@
-// (hookshot) REGMAP_nx2: the prefix frontend/ampere/lower_to_maxwell.h puts before each lowered word of a native
+// (relink) REGMAP_nx2: the prefix frontend/ampere/lower_to_maxwell.h puts before each lowered word of a native
 // instruction whose GPRs reach the lowering's reserved registers (RegisterMapPrefix). The translator reads it when it
 // comes to the next word (Translate, translate.cpp): each run's numbers name IR registers 256 + its target there. The
 // prefix itself does nothing.

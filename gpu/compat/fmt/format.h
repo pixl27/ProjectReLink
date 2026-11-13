@@ -23,8 +23,8 @@ struct runtime_format_string {
 };
 inline runtime_format_string runtime(std::string_view s) { return {s}; }
 
-// (hookshot) Formats read as they run, not checked at compile time: std::format_string is missing from Visual Studio's
-// C++ library before 17.5, and a player's build stopped on it with 303 files failed (Hookshot issue 39)
+// (relink) Formats read as they run, not checked at compile time: std::format_string is missing from Visual Studio's
+// C++ library before 17.5, and a player's build stopped on it with 303 files failed (upstream issue 39)
 template <typename... Args>
 std::string format(std::string_view f, Args&&... args) {
     return std::vformat(f, std::make_format_args(args...));

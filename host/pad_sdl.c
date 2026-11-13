@@ -8,7 +8,7 @@
    changes. HOS_NO_SDL=1 leaves SDL out. The inputs go by position (HOS_PAD_*, SDL's own order: the bottom face button
    first, cross on a DualSense, A on an Xbox pad); nn_hid.c's controls make them the Switch's buttons.
 
-   (hookshot) Motion: with the Insert menu's Motion controls on (the default), the open pad with a gyroscope and an
+   (relink) Motion: with the Insert menu's Motion controls on (the default), the open pad with a gyroscope and an
    accelerometer (Switch Pro and pads in Switch mode, DualSense, DualShock 4, others) that was used last has them read
    each poll and turned into the six-axis state OoT aims with (host/hos_motion.h), which nn_hid.c's
    GetSixAxisSensorStates gives the game; Motion sensitivity X/Y and Invert motion X/Y apply there. Off, or with no such pad, the game sees the pad

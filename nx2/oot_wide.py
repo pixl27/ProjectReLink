@@ -8,7 +8,7 @@ movies play in that middle 16:9, and the picture a save keeps shows that middle 
 
 The sites and what each does come from NX2navi's recomp/patches-v111.txt, where they are credited to Ivan0xFF (MIT,
 "The matrix-update, UI and movie sites: Copyright (c) 2026 Ivan0xFF"); the picture and scene size sites are the same
-constants that file names; the save picture's site is Hookshot's own (issue 952). Here each is written as C after the
+constants that file names; the save picture's site is ReLink's own (issue 952). Here each is written as C after the
 original instruction instead of a replacement of it.
 Each site's original instruction word is checked: another game version leaves the site out (and says so).
 """

@@ -4,7 +4,7 @@ host/ and gpu/vk keep paths as UTF-8 char strings and call Windows' A functions 
 with them. Without a manifest those take and give the system's ANSI code page (1252 on a Western Windows), and a game folder
 whose name it cannot spell (Japanese on a Western Windows, an emoji anywhere) came back as "?": the game found neither
 image.bin nor its log's folder and closed with nothing on screen. activeCodePage UTF-8 (Windows 10 1903 and newer) makes
-every A function and the C runtime's narrow file functions UTF-8 for the whole process, its DLLs too (hookshot_vk.dll,
+every A function and the C runtime's narrow file functions UTF-8 for the whole process, its DLLs too (relink_vk.dll,
 SDL2, FFmpeg). host/hos_main.c says so in a message box when the Windows is too old for it and the folder's name needs it.
 
     python nx2/win_manifest.py [out.res]
@@ -15,7 +15,7 @@ import sys
 
 MANIFEST = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="Hookshot.Game" version="1.0.0.0"/>
+  <assemblyIdentity type="win32" name="ReLink.Game" version="1.0.0.0"/>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
@@ -43,7 +43,7 @@ def res_bytes(manifest=MANIFEST):
 
 
 def write(path):
-    """hookshot_manifest.res at path, rewritten only when its bytes change (the link reads it each time)"""
+    """relink_manifest.res at path, rewritten only when its bytes change (the link reads it each time)"""
     data = res_bytes()
     try:
         with open(path, "rb") as f:
@@ -57,4 +57,4 @@ def write(path):
 
 
 if __name__ == "__main__":
-    print(write(sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.getcwd(), "hookshot_manifest.res")))
+    print(write(sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.getcwd(), "relink_manifest.res")))

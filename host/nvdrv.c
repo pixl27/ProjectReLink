@@ -147,7 +147,7 @@ void hos_gpu_track(uint64_t guest, uint64_t size, int on) {
     LOCK();
     if (on) map_add(guest, size, guest);
     else map_remove(guest);
-    /* (eglantine) kept sorted by (lo, hi): found by bisection, and hos_gpu_guest_ranges merges it without sorting */
+    /* (relink) kept sorted by (lo, hi): found by bisection, and hos_gpu_guest_ranges merges it without sorting */
     int l = 0, r = ntracked;
     while (l < r) {
         const int m = (l + r) / 2;
@@ -193,7 +193,7 @@ int hos_gpu_guest_ranges(uint64_t (*out)[2], int max) {
             capmerged = nall + 64;
             merged = (uint64_t (*)[2])realloc(merged, (size_t)capmerged * sizeof *merged);
         }
-        /* (eglantine) the GPU mappings come sorted by VA, which is their guest order when each maps its own address (the
+        /* (relink) the GPU mappings come sorted by VA, which is their guest order when each maps its own address (the
            native NVN pools): the tracked pools alone are sorted, then the two lists merged. A qsort of all of them ran
            on the game's main thread at every submit after a pool came or went (OoT's change every frame): qsort and its
            comparator were the main thread's busiest host code when it ran alone. Other mappings: qsort as before */

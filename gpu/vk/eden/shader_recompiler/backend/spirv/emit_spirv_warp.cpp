@@ -365,7 +365,7 @@ Id EmitDPdyCoarse(EmitContext& ctx, Id op_a) {
     return ctx.OpDPdyCoarse(ctx.F32[1], op_a);
 }
 
-// (hookshot) HMMA in software, from Lichii (zortos293/Lichii, emit_spirv_tensor.cpp, GPL-3.0): the 32 lanes' fragments
+// (relink) HMMA in software, from Lichii (zortos293/Lichii, emit_spirv_tensor.cpp, GPL-3.0): the 32 lanes' fragments
 // through subgroup shuffles in one helper function, accumulated with FMA in f32 and rounded to f16 after every 8
 // columns of K, as HMMA.F16 does. It needs no cooperative matrices (RX_VK_MMA_SOFTWARE=1, vk_coopmat.cpp).
 void DefineSoftwareMatrixFunction(EmitContext& ctx) {
@@ -489,7 +489,7 @@ void DefineSoftwareMatrixFunction(EmitContext& ctx) {
 }
 
 
-// (hookshot) HMMA_nx2: D(16x8) = A(16x16) * B(16x8) + C on the subgroup's cooperative matrices. Each
+// (relink) HMMA_nx2: D(16x8) = A(16x16) * B(16x8) + C on the subgroup's cooperative matrices. Each
 // lane's fragment registers hold its elements in the console's order (two f16 a word); they go to and come
 // from the device's elements in its own order (mma_layout.h, measured by vk_coopmat.cpp).
 Id EmitMatrixMulAddF16(EmitContext& ctx, Id a, Id b, Id c) {

@@ -71,7 +71,7 @@ uint64_t hos_sys_alloc(uint64_t size, uint64_t align) {
 static uint64_t region_alloc(uint64_t size, uint64_t align, int commit);
 uint64_t hos_region_alloc(uint64_t size, uint64_t align) { return region_alloc(size, align, 1); }
 
-/* (eglantine, night 10/11) What the game maps in its address regions (AllocateMemoryPages / FreeMemoryPages above 4 GB), said
+/* (relink, night 10/11) What the game maps in its address regions (AllocateMemoryPages / FreeMemoryPages above 4 GB), said
    every 30 s at most: HOS_REGION_LOG=1 */
 static int64_t region_mapped, region_allocated, region_freed, region_kept;
 static void region_count(int64_t *what, int64_t by) { __atomic_fetch_add(what, by, __ATOMIC_RELAXED); }
@@ -170,7 +170,7 @@ static void discard_pages(uint64_t addr, uint64_t size) {
 #endif
 }
 
-/* (eglantine, night 10/11) The parts of [lo, hi) that no region holds now, in the address regions' part of the window,
+/* (relink, night 10/11) The parts of [lo, hi) that no region holds now, in the address regions' part of the window,
    decommitted: what the game mapped in regions it has freed since. The game frees a region without unmapping its pages first
    (20.9 GB mapped and 52 MB unmapped over six areas, hs493), and a freed region's pages were only discarded: the regions'
    commit stood at their whole span, 8 GB, for the ~2.9 GB mapped at a time. The Vulkan back end calls this under its pool
@@ -221,7 +221,7 @@ void hos_region_free(uint64_t addr) {
     UNLOCK();
     if (freed_size) {
         discard_pages(freed, freed_size);
-        /* (eglantine) and its pages given back, but for those a GPU import holds: those go when the import does */
+        /* (relink) and its pages given back, but for those a GPU import holds: those go when the import does */
         extern void rx_guest_release(uint64_t lo, uint64_t hi);
         rx_guest_release(freed, freed + freed_size);
     }
@@ -287,7 +287,7 @@ HLE(_ZN2nn2os19AllocateMemoryBlockEPmm) {
 /* nn::os::AllocateAddressRegion(unsigned long*, unsigned long) -> Result */
 HLE(_ZN2nn2os21AllocateAddressRegionEPmm) {
     HOS_TRACE_CALL("AllocateAddressRegion");
-    /* (eglantine, night 10/11) A region the game asks for is address space only, as on the console: the game maps its pages
+    /* (relink, night 10/11) A region the game asks for is address space only, as on the console: the game maps its pages
        before it uses them (AllocateMemoryPages commits them), and a page touched without that is committed by the first-touch
        handler (mkw_glue.c). OoT's "Resource Memory" thread asks for a region per resource (5078 in the first 100 s, 2194 of
        them of 11 MB in a 3 minute walk) and maps what the console leaves it: 2923 MB once Kokiri Forest is loaded, the 9809 MB

@@ -1,10 +1,10 @@
 // (EvilOOT) RX_VK_HANG_DUMP=<file>: a watchdog for freezes. When no frame has been presented for RX_VK_HANG_SEC seconds
 // (default 20) after the first, every thread of the process is suspended in turn and its stack unwound with Windows'
 // own unwinder (the modules' .pdata); the return addresses go to <file> as module+offset, with the thread's name, once
-// all threads run again. hookshot.map / hookshot_vk.map turn the offsets into functions.
+// all threads run again. relink-game.map / relink_vk.map turn the offsets into functions.
 // (11-07: a freeze right after Load, every thread waiting, none spinning: which wait is it.)
 // Nothing is allocated, locked or logged while a thread is suspended: it may hold the heap's or the log's lock.
-#ifdef _WIN32   // (hookshot: thread stacks through the Win32 debug API; the Linux build has none, see the end)
+#ifdef _WIN32   // (relink: thread stacks through the Win32 debug API; the Linux build has none, see the end)
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
 #define NOMINMAX

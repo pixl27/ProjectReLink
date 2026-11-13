@@ -36,13 +36,13 @@ struct HosThread {
        whether it has run without one since an escape (vc_acquire; until its next block: hos_vcore_away) */
     int vc_held, vc_last, vc_queued, vc_escaped;
     volatile int vc_kick;
-    int vc_prio_over;   /* (eglantine, HOS_VC_PRIO) the priority the virtual cores schedule it at, 0: its own */
+    int vc_prio_over;   /* (relink, HOS_VC_PRIO) the priority the virtual cores schedule it at, 0: its own */
     int64_t vc_since;
-    /* (eglantine, vc_bg_cap) a background thread: until when it waits for the cores held to be few enough, and until
+    /* (relink, vc_bg_cap) a background thread: until when it waits for the cores held to be few enough, and until
        when it is then left alone */
     int64_t vc_cap_until, vc_free_until;
     CONDITION_VARIABLE vc_cv;
-    /* (hookshot) fibers: the context running now (NULL: ctx, the thread's own), the thread's host fiber once it
+    /* (relink) fibers: the context running now (NULL: ctx, the thread's own), the thread's host fiber once it
        switched to a guest fiber */
     Ctx *volatile run_ctx;
     void *host_fiber;
@@ -301,7 +301,7 @@ static void setup_guest(HosThread *t) {
     G64(t->tlr + 0x1F8) = t->guest_tt;
     t->kernel_handle = (uint32_t)InterlockedIncrement(&next_handle);
     G32(t->guest_tt + TT_HANDLE) = t->kernel_handle;
-    /* (hookshot) SDK 22's InternalCriticalSection::IsLockedByCurrentThread reads the owner handle from TLR+0x110
+    /* (relink) SDK 22's InternalCriticalSection::IsLockedByCurrentThread reads the owner handle from TLR+0x110
        directly (SDK 21: ThreadType+0x1B0 through TLR+0x1F8). Left 0, every free mutex looked held by the caller
        and the first heap lock aborted in pthread_mutex_lock. */
     G32(t->tlr + 0x110) = t->kernel_handle;
@@ -562,7 +562,7 @@ static const NameSpec *match_name_spec(const NameSpec *s, int n, const char *nam
         if (strcmp(s[i].pat, "*") ? strstr(name, s[i].pat) != NULL : 1) return &s[i];
     return NULL;
 }
-/* (eglantine) HOS_VC_PRIO=<name part>=<priority>,... (experiment): the priority the virtual cores schedule a thread at
+/* (relink) HOS_VC_PRIO=<name part>=<priority>,... (experiment): the priority the virtual cores schedule a thread at
    (who waits for a core, who is asked to give one up), the game's own priority left as it is. OoT's OptimizeChangeBanc
    (a background thread the main thread waits for about every 40 frames on the way to Saria) waited for a core 28% of
    its time, asked to give it up by the frame's threads ~17000 times a second (hs173) */
@@ -597,7 +597,7 @@ uint64_t hos_reserved_cpus(void) {
     return mask;
 }
 
-/* (hookshot) The game's render thread on the reserved core itself: in the default synchronous mode (RX_VK_ASYNC unset) the
+/* (relink) The game's render thread on the reserved core itself: in the default synchronous mode (RX_VK_ASYNC unset) the
    Vulkan back end replays a submission on the thread that submits it, and OoT's "Presentation Thread" submits most of each
    frame's (4 of its 6 queues). The core kept for the replay thread had nothing on it then. On a Ryzen 9 3900X in Kokiri
    Forest: the replay ~24 -> ~22 ms a frame, 34 -> 36 fps (2026-11-08). HOS_PIN_RENDER=0: kept off the core as before */
@@ -710,7 +710,7 @@ static void sleep_ns(int64_t ns) {
        its job workers 25x longer, ~2000 a second on the frame's critical path). HOS_SHORT_SLEEP_TIMER=1: as before */
     static int short_timer = -1;
     if (short_timer < 0) short_timer = getenv("HOS_SHORT_SLEEP_TIMER") != NULL;
-    /* (eglantine, HOS_SLEEP_PAUSES=<n>, experiment; 0: as before) n pauses between two looks at the clock when no other thread
+    /* (relink, HOS_SLEEP_PAUSES=<n>, experiment; 0: as before) n pauses between two looks at the clock when no other thread
        wanted the processor. OoT's job system waits for its workers in 20 us sleeps (~350 a frame in the Kokiri village,
        ~1.15 logical processor spent in this loop while the frame's commands are generated, hs801 / hs840): one pause a
        turn is a system call and a clock read every ~150 ns beside the thread working on the same core's other half */
@@ -759,7 +759,7 @@ HLE(_ZN2nn2os12CreateThreadEPNS0_10ThreadTypeEPFvPvES3_S3_mi) {
 }
 
 /* nn::os::CreateThread(ThreadType*, void (*)(void*), void* arg, void* stack, unsigned long size, int prio,
-   int idealCore) (hookshot: OoT's Porter thread pool uses this overload; left to the guest SDK it reached
+   int idealCore) (relink: OoT's Porter thread pool uses this overload; left to the guest SDK it reached
    ThreadManagerImplByHorizon::MapAliasStack, which needs svcMapMemory, and aborted) */
 HLE(_ZN2nn2os12CreateThreadEPNS0_10ThreadTypeEPFvPvES3_S3_mii) {
     HOS_TRACE_CALL("CreateThread");
@@ -858,7 +858,7 @@ void hos_sleep_logged(int64_t ns, uint64_t lr) {
     ReleaseSRWLockExclusive(&lk);
 }
 
-/* (hookshot) OoT's present waits for its frame's GPU work by polling an NVN event, sleeping ~1.6 ms between looks
+/* (relink) OoT's present waits for its frame's GPU work by polling an NVN event, sleeping ~1.6 ms between looks
    (0x80590500: `while (nvnEventGetValue(e) != 1) SleepThread(...)`, ~3.5 sleeps a frame, 2 ms each on Windows): the
    frame noticed the GPU's signal late, ~7 ms of the 25 ms frame asleep on its critical path. The GPU writes the event
    into guest memory itself, so the sleep looks at it between yields (its virtual core given up) and ends once it is
@@ -894,7 +894,7 @@ static int present_poll(Ctx *c, int64_t ns) {
 }
 HLE(_ZN2nn2os11SleepThreadENS_8TimeSpanE) {
     if (present_poll(c, (int64_t)ARG(0))) return;
-    if (c->x[30] == 0x80590520 && getenv("HOS_SLEEP_LOG")) {   /* (hookshot, diagnostic: OoT's present poll) */
+    if (c->x[30] == 0x80590520 && getenv("HOS_SLEEP_LOG")) {   /* (relink, diagnostic: OoT's present poll) */
         static int logged;
         if (logged++ < 3) {
             const char *hos_hostcall_name(uint64_t addr);
@@ -955,13 +955,13 @@ HLE(_ZN2nn2os13GetSystemTickEv) {
     static int on = -1;
     if (on < 0) on = getenv("HOS_TICK_LOG") != NULL;
     if (on) tick_log(c->x[30]);
-    /* (hookshot) The graphics module: x19 at its frame-end clock read (main+0x346c770 is after the bl), for nn_vi.c's
+    /* (relink) The graphics module: x19 at its frame-end clock read (main+0x346c770 is after the bl), for nn_vi.c's
        real-time step */
     if (c->x[30] == 0x8348c770) hos_gfx_module = c->x[19];
     RET(hos_ticks());
 }
 HLE(_ZN2nn2os22GetSystemTickFrequencyEv) { RET(HOS_TICK_HZ); }
-/* (hookshot) At the counter's own rate, HOS_TICK_HZ (31.25 MHz: 32 ns a tick). These converted at the Switch 1's
+/* (relink) At the counter's own rate, HOS_TICK_HZ (31.25 MHz: 32 ns a tick). These converted at the Switch 1's
    19.2 MHz (ticks = ns * 12 / 625) while GetSystemTick counts 31.25 MHz, so a tick span came out 1.63x too long: OoT's
    present slept 1.63 ms for its 1 ms poll step (0x80590500: SleepThread(ConvertToTimeSpan(frequency / 1000))), and
    any of its timing through these was off by as much. HOS_TICK_CONVERT_192=1: as before */
@@ -981,7 +981,7 @@ HLE(_ZN2nn2os17ConvertToTimeSpanENS0_4TickE) {
     RET(t * (int64_t)(1000000000ULL / HOS_TICK_HZ));
 }
 
-/* ---- fibers (hookshot: nn::async's FiberTaskCoordinator, on OoT's nn.npln threads) ----------------------------
+/* ---- fibers (relink: nn::async's FiberTaskCoordinator, on OoT's nn.npln threads) ----------------------------
    A guest fiber is a Win32 fiber with its own guest context: the lifted frames on its host stack keep using that
    context wherever it runs, so a fiber may resume on another thread. Switching in, it takes the running thread's
    identity (TLS registers, host thread object); the thread's own context stays in HosThread.ctx. The fiber function
@@ -1150,7 +1150,7 @@ static int vcp(const HosThread *t) { return t->vc_prio_over ? t->vc_prio_over : 
 static int vc_better(HosThread *a, HosThread *b) {
     return vcp(a) != vcp(b) ? vcp(a) < vcp(b) : a->vc_since < b->vc_since;
 }
-/* (eglantine, 12/11) Background threads and the host's cores. On the console a thread on an idle core costs the others
+/* (relink, 12/11) Background threads and the host's cores. On the console a thread on an idle core costs the others
    nothing. Here the six virtual cores run on the host's physical cores, and a 6-core machine has five for the game's
    threads once one is kept for the replay (hos_reserved_cpus): a background thread that runs while the frame's threads
    are busy takes its share of a physical core from one of them (the sibling logical processor). Measured at the Lost
@@ -1216,7 +1216,7 @@ static void vc_take(HosThread *t, int c) {
     t->vc_held = c + 1;
     t->vc_last = c + 1;
     t->vc_kick = 0;
-    /* (eglantine, vc_bg_cap) a frame thread took a core past the cap: the worst background holder not left alone gives
+    /* (relink, vc_bg_cap) a frame thread took a core past the cap: the worst background holder not left alone gives
        its own up at its next checkpoint (vc_kick 3: vc_yield lets it go even with nobody waiting for that core) */
     const int cap = vc_bg_cap();
     if (cap && vcp(t) <= 18 && vc_held_n() > cap) {
@@ -1256,7 +1256,7 @@ static void vc_grant(int c) {
     vc_take(best, c);
     WakeConditionVariable(&best->vc_cv);
 }
-/* (eglantine, HOS_VCORE_WAITS=1, diagnostic) who waits for a core: by thread name, the waits and their time since the last
+/* (relink, HOS_VCORE_WAITS=1, diagnostic) who waits for a core: by thread name, the waits and their time since the last
    "vcores:" line, the eight longest printed with it. vc_lock held */
 static struct { char name[48]; int64_t ns; int n; } vc_by[96];
 static int vc_waits_on(void) {
@@ -1350,7 +1350,7 @@ static void vc_acquire(HosThread *t) {
             __atomic_store_n(rc ? &rc->poll : &worst->ctx.poll, 1, __ATOMIC_RELAXED);
             vc_st.kicks++;
         }
-        /* (eglantine, HOS_VCORE_SPIN_US, experiment) before its first sleep the waiter spins a little for a release to give it
+        /* (relink, HOS_VCORE_SPIN_US, experiment) before its first sleep the waiter spins a little for a release to give it
            a core: the frame's threads hand cores to each other all the time (4000 waits in 5 s in the Kokiri village, 0.4-0.8 ms
            each), and a sleep and its wake-up are far longer than the hand-over itself. Once a wait: a thread kept waiting
            (background work behind the frame's threads) sleeps as before */
@@ -1411,7 +1411,7 @@ static void vc_release(HosThread *t) {
     t->vc_held = 0;
     t->vc_kick = 0;
     vc_grant(c);
-    /* (eglantine, vc_bg_cap) fewer cores held: a background thread kept waiting by the cap may take a free core of its own
+    /* (relink, vc_bg_cap) fewer cores held: a background thread kept waiting by the cap may take a free core of its own
        mask now, not only this one */
     if (vc_nq && vc_bg_cap())
         for (int k = 0; k < vc_cores(); k++)
@@ -1428,7 +1428,7 @@ static void vc_yield(HosThread *t, int strict) {
         HosThread *w = vc_queue[i];
         any = (vc_allowed(w) >> c & 1) && (strict ? vcp(w) < vcp(t) : vcp(w) <= vcp(t));
     }
-    /* (eglantine, vc_bg_cap) asked by vc_take: a background thread while too many cores are held */
+    /* (relink, vc_bg_cap) asked by vc_take: a background thread while too many cores are held */
     if (!any && t->vc_kick == 3 && vc_held_n() > vc_bg_cap() && hos_now_ns() >= t->vc_free_until) any = 1;
     t->vc_kick = 0;
     if (any) vc_st.yields++;
@@ -1441,7 +1441,7 @@ static void vc_yield(HosThread *t, int strict) {
    one since an escape. An escape lasts until the thread's next block, as every other thread waits for a core after one;
    it took none again before, so an escaped thread ran with no core, and the core number of a core another thread held,
    for the rest of its life (upstream issue 1929, its fix c8b9a9f0 brought here on 12/11).
-   (eglantine) What it did to OoT: the threads that escape do so while the opening movie plays (its decoder and the audio
+   (relink) What it did to OoT: the threads that escape do so while the opening movie plays (its decoder and the audio
    thread hold cores for more than the escape time), a different set at every start. With OptimizeChangeBanc or
    ParallelDecompThread among them, that background thread ran for the whole session beside the six cores' threads instead
    of in the time they leave: at the Lost Woods' heavy spot 50-52.7 fps instead of 54.3-56.7 (still.ps1, 20 runs; the

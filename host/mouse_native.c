@@ -1,4 +1,4 @@
-/* (hookshot) Native mouse look (the Insert menu's "Mouse camera", off by default; HOS_MOUSE_NATIVE=1 or 0 overrides it):
+/* (relink) Native mouse look (the Insert menu's "Mouse camera", off by default; HOS_MOUSE_NATIVE=1 or 0 overrides it):
    the captured mouse turns the camera itself, its yaw and pitch in degrees, with no decay, no response curve and no top
    speed, in place of the mouse as the right stick (nn_hid.c's mouse_stick).
 

@@ -1,7 +1,7 @@
 /* (linux) Tool Help: the thread snapshots the profiler and the stall reports walk. There is no snapshot here
    (CreateToolhelp32Snapshot fails), so those debugging aids find no threads. */
-#ifndef HOOKSHOT_POSIX_TLHELP32_H
-#define HOOKSHOT_POSIX_TLHELP32_H
+#ifndef RELINK_POSIX_TLHELP32_H
+#define RELINK_POSIX_TLHELP32_H
 #include <windows.h>
 #define TH32CS_SNAPTHREAD 0x4
 typedef struct {

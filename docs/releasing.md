@@ -36,8 +36,8 @@ The repository must be public for players to download a release's files.
 
 `ReLink-Setup.exe` reads two environment variables, for tests:
 
-- `HOOKSHOT_SETUP_LIST=<url>`: another list than the latest release's.
-- `HOOKSHOT_SETUP_BASE=<folder>`: install there instead of `%LOCALAPPDATA%\ReLink`.
+- `RELINK_SETUP_LIST=<url>`: another list than the latest release's.
+- `RELINK_SETUP_BASE=<folder>`: install there instead of `%LOCALAPPDATA%\ReLink`.
 
 The launcher has its own: `RELINK_LATEST_TAG=<tag>` (or `none`) stands in for GitHub's answer, `RELINK_NO_SEARCH=1` skips the
 search for `.nup` files, `RELINK_LANG=fr|en` chooses its language, and

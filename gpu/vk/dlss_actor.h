@@ -1,4 +1,4 @@
-// (hookshot) NVIDIA DLSS's actor motion (vk_dlss.cpp): what is worked out on the CPU for a skinned draw drawn again, kept
+// (relink) NVIDIA DLSS's actor motion (vk_dlss.cpp): what is worked out on the CPU for a skinned draw drawn again, kept
 // apart so tests/test_dlss_actor.cpp checks it without a GPU. Header only, no Vulkan.
 #pragma once
 

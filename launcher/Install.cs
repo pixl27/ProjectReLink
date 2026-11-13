@@ -646,7 +646,7 @@ public partial class MainWindow
     }
 
     /// The build files (translated code, compiled objects), the downloads and older launcher versions go as soon as the game is
-    /// ready; the next update then translates and compiles again. HOOKSHOT_KEEP_BUILD_FILES=1 keeps them for quick updates.
+    /// ready; the next update then translates and compiles again. RELINK_KEEP_BUILD_FILES=1 keeps them for quick updates.
     async Task FreeAfterBuild()
     {
         if (!Storage.KeepBuildFiles)

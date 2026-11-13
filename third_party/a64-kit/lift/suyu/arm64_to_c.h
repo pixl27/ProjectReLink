@@ -6544,7 +6544,7 @@ inline const char* FpxH() {
    set (a64_fpx_fz_add32/sub32), and the native
    FMUL/FNMUL/FMLA-family S result, tiny, infinite or of flushed inputs
    included, when every flag the op could raise (IDC, UFC, OFC) is already
-   set (a64_fpx_sticky32; checked game-free by Hookshot's
+   set (a64_fpx_sticky32; checked game-free by ReLink's
    tests/test_fpx_sticky.py). The shadow build keeps the inline form above
    and never reaches those wrappers, so it does not validate them.
 

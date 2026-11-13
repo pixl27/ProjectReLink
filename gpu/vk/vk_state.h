@@ -29,7 +29,7 @@ struct NvnState {
     nvn_p_set_rt rt{};
     uint64_t rt_serial = 0;      // bumped at each NOP_SET_RT (the draw path resolves the targets once per change)
     uint64_t bind_gen = 0;       // bumped when a binding the descriptors read changes (a rebind of the same values does not)
-    // (hookshot) what bind_gen was when a stage's textures, samplers or images (tex_gen) or its storage buffers (ssbo_gen) last changed: the
+    // (relink) what bind_gen was when a stage's textures, samplers or images (tex_gen) or its storage buffers (ssbo_gen) last changed: the
     // driver banks c2 and c0 of a graphics stage are made from those alone, so a draw after another uniform buffer's bind keeps its banks
     uint64_t tex_gen[kNvnStages] = {}, ssbo_gen[kNvnStages] = {};
     float viewport[16][4]{};
@@ -42,7 +42,7 @@ struct NvnState {
     uint32_t restart_index = 0;
     bool depth_clamp = false, raster_discard = false, render_enabled = true;
     int64_t copy_stride = 0;
-    uint8_t cs_push[0x400]{};   // (hookshot) compute push constants (PushComputeConstants), c0 from 0x10
+    uint8_t cs_push[0x400]{};   // (relink) compute push constants (PushComputeConstants), c0 from 0x10
     uint32_t cs_push_n = 0;
     uint32_t grid[3]{};          // the dispatch being made (compute programs read it from c0)
     uint64_t samples_passed = 0;
@@ -58,8 +58,8 @@ void register_sampler_copy(int id, const nvn_samp_par& p);
 const void* descriptor_ok(const void* p, size_t n);
 void texture_released(uint64_t serial);
 bool texture_of(int id, nvn_tex* t, nvn_view* v, bool* has_view);
-void cs_slot_counts(const NvnState& s, uint32_t* tex, uint32_t* img);   // (hookshot) the compute program's slot counts
-/// (hookshot) set while a seed compute program is translated: its control section, which the c0 layout is read from in place of
+void cs_slot_counts(const NvnState& s, uint32_t* tex, uint32_t* img);   // (relink) the compute program's slot counts
+/// (relink) set while a seed compute program is translated: its control section, which the c0 layout is read from in place of
 /// the bound program's (vk_bank.cpp)
 extern thread_local const uint8_t* seed_cs_control;
 bool sampler_of(int id, nvn_samp_par* p);

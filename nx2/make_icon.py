@@ -72,14 +72,14 @@ def main():
         entries += struct.pack("<BBBBHHII", b, b, 0, 0, 1, 32, len(data), offset + len(body))
         group += struct.pack("<BBBBHHIH", b, b, 0, 0, 1, 32, len(data), i + 1)
         body += data
-    with open(os.path.join(out, "hookshot.ico"), "wb") as f:
+    with open(os.path.join(out, "relink.ico"), "wb") as f:
         f.write(head + entries + body)
 
     res = res_entry(0, 0, b"", 0)   # (a .res file starts with an empty entry)
     for i, (s, data) in enumerate(images):
         res += res_entry(3, i + 1, data)   # RT_ICON
     res += res_entry(14, 1, group, 0x1030)   # RT_GROUP_ICON: resource 1, what the window class loads
-    with open(os.path.join(out, "hookshot.res"), "wb") as f:
+    with open(os.path.join(out, "relink.res"), "wb") as f:
         f.write(res)
     print("make_icon: %d sizes, %d KB" % (len(images), len(res) >> 10))
 

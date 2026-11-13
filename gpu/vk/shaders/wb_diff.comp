@@ -1,5 +1,5 @@
 #version 460
-// (hookshot) The write-back's diff (vk_memory.cpp, "the write-back's diff"): a mirror's run copied back to guest memory where it
+// (relink) The write-back's diff (vk_memory.cpp, "the write-back's diff"): a mirror's run copied back to guest memory where it
 // differs from the shadow (the pool's copy of what guest memory holds), the shadow kept the same. One workgroup a chunk of a
 // run (64 KB at most), from a table the CPU wrote. A chunk of 16-byte vectors goes a subgroup's span at a time, written whole
 // when any of its vectors differs (whole lines over PCIe: word by word it went at ~1 GB/s); a chunk's odd words one by one.

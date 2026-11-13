@@ -79,7 +79,7 @@ void a64_trap(Ctx *c, uint64_t pc, uint32_t insn) {
 /* Addresses the OS layer made at run time (host calls: e.g. NVN procs handed out by nvnDeviceGetProcAddress) are
    not in the lifted function table; the OS layer claims them here. Returns 1 if it ran the call. */
 A64_WEAK int a64_call_miss(Ctx *c, uint64_t target) { (void)c; (void)target; return 0; }
-/* (hookshot) every BR that is not a jump table and misses its site's cache asks this first: a longjmp's BR to a
+/* (relink) every BR that is not a jump table and misses its site's cache asks this first: a longjmp's BR to a
    setjmp return address (host/hos_setjmp.c), which is an entry as well, must unwind the host stack rather than
    call that entry (it does not return when it is one). Targets it takes are never cached at the site. */
 A64_WEAK void a64_ijump_hook(Ctx *c, uint64_t target) { (void)c; (void)target; }

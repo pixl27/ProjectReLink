@@ -1,4 +1,4 @@
-// (hookshot) Every Vulkan command that does GPU work, or orders it, counts in work_epoch. full_barrier (vk_texture.cpp) leaves out a
+// (relink) Every Vulkan command that does GPU work, or orders it, counts in work_epoch. full_barrier (vk_texture.cpp) leaves out a
 // barrier recorded right after another one on the same command buffer with nothing in between: the second orders nothing the first
 // did not. Include this header AFTER the file's other includes: it turns the calls below into a count and the call (a header
 // included after it that names one of them with a '(' after it would be changed too).

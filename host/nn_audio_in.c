@@ -1,4 +1,4 @@
-/* (hookshot) nn::audio's input streams: the microphone, as the ocarina's "play with your voice / an instrument" option uses it.
+/* (relink) nn::audio's input streams: the microphone, as the ocarina's "play with your voice / an instrument" option uses it.
 
    The game lists the virtual input devices once at its start (ListVirtualInputDevices) and opens two input streams only if
    there is one: one on the default virtual device, one on the "true raw" one (GetTrueRawAudioInputDevice), both 48 kHz,

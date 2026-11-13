@@ -1,5 +1,5 @@
-// (hookshot) The pipelines the notes predict (vk_draw.cpp predict_run builds them when the shaders are prepared). The notes
-// (hookshot_pipelines.bin) name the pipelines play built: a program and the draw state that went with it. Most programs of the game
+// (relink) The pipelines the notes predict (vk_draw.cpp predict_run builds them when the shaders are prepared). The notes
+// (relink_pipelines.bin) name the pipelines play built: a program and the draw state that went with it. Most programs of the game
 // are in no note, and their first draw builds their pipeline in play. Each is predicted the "1x1" way: the vertex layout of the notes
 // whose vertex program is the same module (else the layout most programs with its vertex inputs had), and the targets the notes of
 // its fragment module had (else those most programs with its outputs had). One pipeline for each pair of what it takes, with the

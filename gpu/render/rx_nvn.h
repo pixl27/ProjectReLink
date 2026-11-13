@@ -151,8 +151,8 @@ enum {
     NOP_DRAW_INDIRECT, NOP_DISPATCH_INDIRECT,   /* (mkw-recomp: NVN2's GPU-driven draws) */
     NOP_DRAW_MESH,                              /* (mkw-recomp: NVN2 mesh shading; the WebGPU replay leaves it out) */
     NOP_WAIT_EVENT,                             /* (mkw-recomp: a wait for an event another queue's work signals) */
-    NOP_PUSH_CONST,                             /* (hookshot: nvnCommandBufferPushComputeConstants) */
-    NOP_CLEAR_BUF,                              /* (hookshot: nvnCommandBufferClearBuffer) */
+    NOP_PUSH_CONST,                             /* (relink: nvnCommandBufferPushComputeConstants) */
+    NOP_CLEAR_BUF,                              /* (relink: nvnCommandBufferClearBuffer) */
     NOP_COUNT_
 };
 typedef struct { int32_t n; const nvn_tex *color[8]; nvn_view cview[8]; uint8_t has_cview[8]; const nvn_tex *depth; nvn_view dview; uint8_t has_dview; } nvn_p_set_rt;
@@ -190,9 +190,9 @@ typedef struct { uint64_t type, addr; } nvn_p_counter;
 #define NVN_COUNTER_WRITTEN (1ull << 32)   /* (type: the report's counter word is in memory already: a clear flag, host/nvn_native.c) */
 typedef struct { uint64_t src, dst, size; } nvn_p_copy_bb;
 typedef struct { uint64_t dst, size; /* data follows */ } nvn_p_update_ub;
-/* (hookshot) compute push constants: the bytes at offset in the compute driver bank's push area */
+/* (relink) compute push constants: the bytes at offset in the compute driver bank's push area */
 typedef struct { uint32_t offset, size; /* data follows */ } nvn_p_push_const;
-/* (hookshot) a buffer range filled with a 32-bit value */
+/* (relink) a buffer range filled with a 32-bit value */
 typedef struct { uint64_t dst, size; uint32_t value, pad; } nvn_p_clear_buf;
 typedef struct { int32_t enable, index; } nvn_p_restart;
 /* (mkw-recomp) indirect draws: up to max draws of `stride`-byte arguments at `indirect` (indexed: count, instances,
@@ -227,7 +227,7 @@ void rx_nvn_submit(const uint64_t *handles, int n);
 void rx_nvn_submit_q(const uint64_t *handles, int n, uint64_t queue);
 /* fence value of everything submitted so far; waits until the GPU reached a fence (1: reached, 0: timed out) */
 uint64_t rx_nvn_fence(void);
-uint64_t rx_nvn_fence_q(uint64_t queue);   /* (hookshot) a fence of one queue */
+uint64_t rx_nvn_fence_q(uint64_t queue);   /* (relink) a fence of one queue */
 /* submits and presents queued so far / replayed so far (recordings released after a submit stay until it replayed) */
 uint64_t rx_nvn_pushed(void);
 uint64_t rx_nvn_replayed(void);
@@ -246,7 +246,7 @@ void rx_nvn_set_texture_pool_size(int n);
 void rx_nvn_texture_released(const nvn_tex *t);
 void rx_nvn_texture_created(const nvn_tex *t);
 void rx_nvn_program_released(const nvn_prog *p);
-/* (eglantine) the game set a program's shaders: the Vulkan back end makes a compute program's pipeline ahead (gpu/vk vk_draw.cpp) */
+/* (relink) the game set a program's shaders: the Vulkan back end makes a compute program's pipeline ahead (gpu/vk vk_draw.cpp) */
 void rx_nvn_program_set(const nvn_prog *p);
 /* CPU reads / writes of a texture (ReadTexels / WriteTexels) */
 void rx_nvn_read_texels(const nvn_tex *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, uint8_t *dst,

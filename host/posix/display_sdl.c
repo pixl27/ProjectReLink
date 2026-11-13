@@ -12,8 +12,8 @@
 #include "../hos.h"
 #include "../hos_sdl.h"
 
-/* (the window's app id: the applications menu's entry names it as its StartupWMClass, builder/linux/hookshot_builder.py) */
-#define HOS_APP_ID "io.github.NotRexed.Hookshot"
+/* (the window's app id: the applications menu's entry names it as its StartupWMClass, builder/linux/relink_builder.py) */
+#define HOS_APP_ID "io.github.pixl27.ProjectReLink"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -137,7 +137,7 @@ static DWORD WINAPI renderer_main(void *p) {
     return 0;
 }
 
-/* (hookshot) host/display.c's: the game's first work for the GPU waits for the renderer (nvn_native.c), so nothing it submits while
+/* (relink) host/display.c's: the game's first work for the GPU waits for the renderer (nvn_native.c), so nothing it submits while
    the shaders are prepared is lost. Without a window the renderer starts on the game's own thread, before this is asked */
 void hos_renderer_wait(void) {
     { const char *e = getenv("HOS_NO_RENDERER_WAIT"); if (e && atoi(e) != 0) return; }
@@ -181,7 +181,7 @@ int hos_display_init(void) {
         hos_log("display: no SDL: no window");
         return 0;
     }
-    hos_sdl_identity("Hookshot", HOS_APP_ID);
+    hos_sdl_identity("ReLink", HOS_APP_ID);
     hos_sdl_hint("SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", "0");
     hos_sdl_hint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
     /* (bundled SDL tries x11 before wayland. NVIDIA's X11 surface has no mailbox, and an immediate
@@ -233,12 +233,12 @@ void hos_display_loop(void) {
     }
     vk_window.window = window;
     hos_posix_window[0] = 1;
-    {   /* the window's icon: hookshot.png beside the game (make_game.py puts it there), for X11 and the compositors that
+    {   /* the window's icon: relink.png beside the game (make_game.py puts it there), for X11 and the compositors that
            take one from the window; the others find it through the menu entry */
         char png[MAX_PATH];
         DWORD n = GetModuleFileNameA(NULL, png, MAX_PATH);
         while (n && png[n - 1] != '/') n--;
-        snprintf(png + n, sizeof png - n, "hookshot.png");
+        snprintf(png + n, sizeof png - n, "relink.png");
         hos_sdl_icon(window, png);
     }
     if (getenv("HOS_FULLSCREEN") && atoi(getenv("HOS_FULLSCREEN"))) set_fullscreen(1);

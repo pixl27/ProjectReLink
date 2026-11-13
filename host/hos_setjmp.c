@@ -1,4 +1,4 @@
-/* (hookshot) setjmp / longjmp in lifted code.
+/* (relink) setjmp / longjmp in lifted code.
 
    The guest's __setjmp and longjmp (sdk+0xaec40 / +0xaed50, musl's with pointer-auth hashes) run as lifted code and
    save and restore the guest registers themselves. What lifting breaks is longjmp's last instruction, BR x30 to the

@@ -202,10 +202,10 @@ static Obj *obj(uint64_t key, int kind) {
    hos_vcore_away), which needs it: with threads taking a core again after an escape, OoT's audio thread stood in
    event_signal behind mw_lock 77 % of the time, holding its core (hs1511), and the game started at 0.3 frames a second. */
 static Obj *obj_nockpt(uint64_t key, int kind) {
-    /* (hookshot: 128 still missed: obj_lookup was the busiest leaf in dense Kokiri, 3.2% of all samples, 4.3% of the instants when one
+    /* (relink: 128 still missed: obj_lookup was the busiest leaf in dense Kokiri, 3.2% of all samples, 4.3% of the instants when one
        thread alone ran; each actor has its own mutexes) */
-    /* (eglantine: 4096; at 1024 obj_lookup was still 2.2% of OoT's game threads outdoors) */
-    /* (eglantine, 10/11, MEASURED, not kept: 32768 entries (a table per thread made at its first call) for these 4096. In the
+    /* (relink: 4096; at 1024 obj_lookup was still 2.2% of OoT's game threads outdoors) */
+    /* (relink, 10/11, MEASURED, not kept: 32768 entries (a table per thread made at its first call) for these 4096. In the
        Kokiri village obj_lookup is the main thread's busiest leaf while the frame's commands are generated (5.3% of its running
        time, hs800), but the bigger cache gave nothing: 52.1 and 50.7 fps with it, 53.1 without (hs880 / hs882 / hs881)) */
     static _Thread_local struct { uint64_t key; Obj *o; } cache[4096];
@@ -694,7 +694,7 @@ void hos_event_signal(uint64_t guest_event) { event_signal(obj(guest_event, K_EV
 
 HLE(_ZN2nn2os15InitializeEventEPNS0_9EventTypeEbNS0_14EventClearModeE) { event_init(ARG(0), (int)(ARG(1) & 1), (int)ARG(2)); }
 HLE(_ZN2nn2os13FinalizeEventEPNS0_9EventTypeE) { drop(ARG(0)); }
-/* (eglantine) HOS_EVENT_WATCH_LR=<hex> (diagnostic): WaitEvent calls returning there are timed, and the threads (and callers) that
+/* (relink) HOS_EVENT_WATCH_LR=<hex> (diagnostic): WaitEvent calls returning there are timed, and the threads (and callers) that
    SignalEvent the events they wait on are counted; every 5 s. OoT's main thread waits so every 40 frames, outdoors */
 static uint64_t ew_lr = ~0ull;
 static uint64_t ew_keys[16];
@@ -950,7 +950,7 @@ HLE(_ZN2nn2os24InitializeLightSemaphoreEPNS0_18LightSemaphoreTypeEii) { sema_ini
 HLE(_ZN2nn2os22FinalizeLightSemaphoreEPNS0_18LightSemaphoreTypeE) { drop(ARG(0)); }
 HLE(_ZN2nn2os21AcquireLightSemaphoreEPNS0_18LightSemaphoreTypeE) { sema_acquire(obj(ARG(0), K_SEMA)); }
 HLE(_ZN2nn2os21ReleaseLightSemaphoreEPNS0_18LightSemaphoreTypeE) { sema_release(obj(ARG(0), K_SEMA), 1); }
-/* (hookshot) the count overload, which OoT imports: left to the guest SDK it would bypass the host's state */
+/* (relink) the count overload, which OoT imports: left to the guest SDK it would bypass the host's state */
 HLE(_ZN2nn2os21ReleaseLightSemaphoreEPNS0_18LightSemaphoreTypeEi) { sema_release(obj(ARG(0), K_SEMA), (int)ARG(1)); }
 
 /* ---- message queues (normal and light): the guest's buffer size is the capacity ------------------------------ */
@@ -1245,7 +1245,7 @@ HLE(_ZN2nn2os11SystemEventD2Ev) { drop(ARG(0)); }
 
 /* ---- the remaining waits on the HLE's objects ----------------------------------------------------------------- */
 HLE(_ZN2nn2os9WaitEventEPNS0_9EventTypeE) {
-    if (ew_on() && c->x[30] == ew_lr) {   /* (eglantine, HOS_EVENT_WATCH_LR) */
+    if (ew_on() && c->x[30] == ew_lr) {   /* (relink, HOS_EVENT_WATCH_LR) */
         const uint64_t key = ARG(0);
         AcquireSRWLockExclusive(&ew_lk);
         int known = 0;

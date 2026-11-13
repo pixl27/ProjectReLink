@@ -1,8 +1,8 @@
-/* (hookshot) The update offer: at start, the latest release on GitHub is asked for (a few seconds at most, nothing when offline), and
-   when it is not the release this game folder was built with, the player is asked whether to update. Yes starts the Hookshot Builder
-   that made the folder (hookshot_version.txt, written by nx2/make_game.py) with --update: it downloads the new release and builds the
-   folder again from the game files the folder keeps, and the game closes. A folder with no hookshot_version.txt (built from the
-   repository, or before updates came in) is never asked about. HOOKSHOT_NO_UPDATE_CHECK=1 (hookshot_env.txt) turns it off */
+/* (relink) The update offer: at start, the latest release on GitHub is asked for (a few seconds at most, nothing when offline), and
+   when it is not the release this game folder was built with, the player is asked whether to update. Yes starts the ReLink Builder
+   that made the folder (relink_version.txt, written by nx2/make_game.py) with --update: it downloads the new release and builds the
+   folder again from the game files the folder keeps, and the game closes. A folder with no relink_version.txt (built from the
+   repository, or before updates came in) is never asked about. RELINK_NO_UPDATE_CHECK=1 (relink_env.txt) turns it off */
 #ifdef _WIN32
 #include "hos_paths.h"
 #include <windows.h>
@@ -79,7 +79,7 @@ static int latest_tag(char *tag, size_t cap) {
 }
 
 void hos_update_check(void) {
-    if (getenv("HOOKSHOT_NO_UPDATE_CHECK") && strcmp(getenv("HOOKSHOT_NO_UPDATE_CHECK"), "0")) return;
+    if (getenv("RELINK_NO_UPDATE_CHECK") && strcmp(getenv("RELINK_NO_UPDATE_CHECK"), "0")) return;
     wchar_t dir[MAX_PATH], file[MAX_PATH + 64];
     DWORD n = hos_game_path_w(dir, MAX_PATH);
     if (!n || n >= MAX_PATH) return;
@@ -87,9 +87,9 @@ void hos_update_check(void) {
     if (!n) return;
     dir[n - 1] = 0;
     char have[128], builder[MAX_PATH * 3], skipped[128] = "", tag[128];
-    _snwprintf(file, MAX_PATH + 64, L"%ls\\hookshot_version.txt", dir);
+    _snwprintf(file, MAX_PATH + 64, L"%ls\\relink_version.txt", dir);
     if (!read_value(file, "version", have, sizeof have)) return;
-    _snwprintf(file, MAX_PATH + 64, L"%ls\\user\\hookshot_update_skip.txt", dir);
+    _snwprintf(file, MAX_PATH + 64, L"%ls\\user\\relink_update_skip.txt", dir);
     read_value(file, "skip", skipped, sizeof skipped);
     if (!latest_tag(tag, sizeof tag)) {
         fprintf(stderr, "update: the latest release could not be asked for (offline?)\n");
@@ -101,7 +101,7 @@ void hos_update_check(void) {
     wchar_t wtag[128], whave[128], wbuilder[MAX_PATH], text[2048];
     MultiByteToWideChar(CP_UTF8, 0, tag, -1, wtag, 128);
     MultiByteToWideChar(CP_UTF8, 0, have, -1, whave, 128);
-    _snwprintf(file, MAX_PATH + 64, L"%ls\\hookshot_version.txt", dir);
+    _snwprintf(file, MAX_PATH + 64, L"%ls\\relink_version.txt", dir);
     const int has_builder = read_value(file, "builder", builder, sizeof builder) &&
                             MultiByteToWideChar(CP_UTF8, 0, builder, -1, wbuilder, MAX_PATH) > 0 &&
                             GetFileAttributesW(wbuilder) != INVALID_FILE_ATTRIBUTES;
@@ -123,7 +123,7 @@ void hos_update_check(void) {
         wchar_t user[MAX_PATH + 16];
         _snwprintf(user, MAX_PATH + 16, L"%ls\\user", dir);
         CreateDirectoryW(user, NULL);
-        _snwprintf(file, MAX_PATH + 64, L"%ls\\user\\hookshot_update_skip.txt", dir);
+        _snwprintf(file, MAX_PATH + 64, L"%ls\\user\\relink_update_skip.txt", dir);
         FILE *f = _wfopen(file, L"wb");
         if (f) fprintf(f, "skip=%s\n", tag), fclose(f);
         return;
@@ -157,7 +157,7 @@ void hos_update_check(void) {
 #include <string.h>
 #include <unistd.h>
 
-/* (the same offer as Windows, when the player started bin/hookshot itself. The launcher sets HOOKSHOT_NO_UPDATE_CHECK
+/* (the same offer as Windows, when the player started bin/relink itself. The launcher sets RELINK_NO_UPDATE_CHECK
    and asks in its own window. curl and zenity do the network and the question; without either, the game just starts) */
 
 static int read_value(const char *path, const char *name, char *out, size_t cap) {
@@ -220,17 +220,17 @@ static int latest_tag(char *tag, size_t cap) {
                  "https://api.github.com/repos/pixl27/ProjectReLink/releases/latest 2>/dev/null", tag, cap))
         return 1;
     return pipe_tag("curl -fsSL --max-time 8 --retry 2 -A ReLink-update-check "
-                    "https://github.com/pixl27/ProjectReLink/releases/latest/download/hookshot-linux.txt 2>/dev/null", tag, cap);
+                    "https://github.com/pixl27/ProjectReLink/releases/latest/download/relink-linux.txt 2>/dev/null", tag, cap);
 }
 
-/* the builder an update installed (builder/linux/linux_update.py): <data>/hookshot/builder/versions/<current>/AppRun. The
+/* the builder an update installed (builder/linux/linux_update.py): <data>/relink/builder/versions/<current>/AppRun. The
    builder= line names the AppImage that built the folder, which the player may have deleted since */
 static int installed_builder(char *out, size_t cap) {
-    const char *home = getenv("HOOKSHOT_BUILDER_HOME"), *data = getenv("XDG_DATA_HOME"), *user = getenv("HOME");
+    const char *home = getenv("RELINK_BUILDER_HOME"), *data = getenv("XDG_DATA_HOME"), *user = getenv("HOME");
     char root[MAX_PATH * 2], path[MAX_PATH * 2 + 64], tag[128];
-    if (home && *home) snprintf(root, sizeof root, "%s/hookshot/builder", home);
-    else if (data && *data) snprintf(root, sizeof root, "%s/hookshot/builder", data);
-    else if (user && *user) snprintf(root, sizeof root, "%s/.local/share/hookshot/builder", user);
+    if (home && *home) snprintf(root, sizeof root, "%s/relink/builder", home);
+    else if (data && *data) snprintf(root, sizeof root, "%s/relink/builder", data);
+    else if (user && *user) snprintf(root, sizeof root, "%s/.local/share/relink/builder", user);
     else return 0;
     snprintf(path, sizeof path, "%s/current", root);
     FILE *f = fopen(path, "rb");
@@ -245,7 +245,7 @@ static int installed_builder(char *out, size_t cap) {
 }
 
 void hos_update_check(void) {
-    const char *off = getenv("HOOKSHOT_NO_UPDATE_CHECK");
+    const char *off = getenv("RELINK_NO_UPDATE_CHECK");
     if (off && strcmp(off, "0")) return;
     char path[MAX_PATH + 64], have[128], builder[MAX_PATH * 2], skipped[128] = "", tag[128];
     DWORD n = hos_game_path_a(path, MAX_PATH);
@@ -256,9 +256,9 @@ void hos_update_check(void) {
     char dir[MAX_PATH];
     memcpy(dir, path, n);
     dir[n] = 0;
-    snprintf(path, sizeof path, "%shookshot_version.txt", dir);
+    snprintf(path, sizeof path, "%srelink_version.txt", dir);
     if (!read_value(path, "version", have, sizeof have) || !safe_tag(have)) return;
-    snprintf(path, sizeof path, "%suser/hookshot_update_skip.txt", dir);
+    snprintf(path, sizeof path, "%suser/relink_update_skip.txt", dir);
     read_value(path, "skip", skipped, sizeof skipped);
     if (!latest_tag(tag, sizeof tag)) {
         fprintf(stderr, "update: the latest release could not be asked for (offline?)\n");
@@ -266,7 +266,7 @@ void hos_update_check(void) {
     }
     fprintf(stderr, "update: this folder is %s, the latest release is %s\n", have, tag);
     if (!strcmp(tag, have) || !strcmp(tag, skipped)) return;
-    snprintf(path, sizeof path, "%shookshot_version.txt", dir);
+    snprintf(path, sizeof path, "%srelink_version.txt", dir);
     const int has_builder = installed_builder(builder, sizeof builder) ||
                             (read_value(path, "builder", builder, sizeof builder) && access(builder, X_OK) == 0);
     char text[1600], cmd[4096];
@@ -284,7 +284,7 @@ void hos_update_check(void) {
     if (!strncmp(answer, "Skip", 4)) {
         snprintf(path, sizeof path, "%suser", dir);
         mkdir(path, 0755);
-        snprintf(path, sizeof path, "%suser/hookshot_update_skip.txt", dir);
+        snprintf(path, sizeof path, "%suser/relink_update_skip.txt", dir);
         FILE *f = fopen(path, "wb");
         if (f) fprintf(f, "skip=%s\n", tag), fclose(f);
         return;

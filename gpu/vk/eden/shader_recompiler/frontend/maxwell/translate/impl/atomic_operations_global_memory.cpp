@@ -201,7 +201,7 @@ void TranslatorVisitor::ATOM(u64 insn) {
     GlobalAtomic(*this, atom.dest_reg, atom.operand_reg, offset, atom.size, atom.op, true);
 }
 
-// (hookshot) ATOM.E.CAS Rd, [Ra + offset], Rb, Rb+1: Rb the comparator, Rb+1 the value. 32 bits only (size 0).
+// (relink) ATOM.E.CAS Rd, [Ra + offset], Rb, Rb+1: Rb the comparator, Rb+1 the value. 32 bits only (size 0).
 void TranslatorVisitor::ATOM_cas(u64 insn) {
     union {
         u64 raw;

@@ -11,7 +11,7 @@ namespace mkwvk {
 /// Something other than the draw path pushed or bound descriptors in the recording (its next push is whole)
 void descriptors_disturbed();
 
-/// A graphics pipeline as hookshot_pipelines.bin keeps it (the precompile's notes): what built it
+/// A graphics pipeline as relink_pipelines.bin keeps it (the precompile's notes): what built it
 struct PipeNote {
     uint64_t key, prog, variant;
     uint32_t topo, n, samples, depth_format, has_depth;
@@ -41,7 +41,7 @@ struct DrawArgs {
     // mesh shading (NVN2 task / mesh programs): workgroups, or indirect as above
     bool mesh = false;
     int groups[3] = {0, 1, 1};
-    int first_task = 0;   // (hookshot: a direct mesh draw's first task workgroup, NVN's DrawMeshTasks(first, count))
+    int first_task = 0;   // (relink: a direct mesh draw's first task workgroup, NVN's DrawMeshTasks(first, count))
 };
 
 /// A recording starts (its slot's descriptor pool and upload stream are reset); value: the timeline value it signals
@@ -58,12 +58,12 @@ void clear_depth_stencil(VkCommandBuffer cmd, NvnState& s, float depth, bool dep
 void clear_stats(int64_t* clears, int64_t* masked);
 /// indirect: the workgroup counts' GPU address (x, y, z unused)
 void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t z, uint64_t indirect);
-void dry_mark_written(NvnState& s, bool compute, bool first);   // (hookshot: the parallel replay's dry pass)
-void dry_mark_cleared(NvnState& s, int index);   // (eglantine: and at its clears; index: the colour target, -1: depth and stencil)
+void dry_mark_written(NvnState& s, bool compute, bool first);   // (relink: the parallel replay's dry pass)
+void dry_mark_cleared(NvnState& s, int index);   // (relink: and at its clears; index: the colour target, -1: depth and stencil)
 void draw_stats(int64_t* draws, int64_t* skipped, int64_t* dispatches, int64_t* pipelines);
 void draw_stats2(int64_t* passes, int64_t* mesh, double* pipeline_ms);
 void draw_stats3(int64_t* pending_skips, int64_t* waits, double* wait_ms);
-void draw_skip_report(double frames);   // (hookshot) skips by the line that made them
+void draw_skip_report(double frames);   // (relink) skips by the line that made them
 int64_t draw_desc_reused();
 /// RX_VK_FLASH_RECORD=<key>,...: the last frames' draws of those programs, written to the log for frames around a flash
 void draw_records_log(uint64_t frame_lo, uint64_t frame_hi);
@@ -78,7 +78,7 @@ uint64_t ub_generation();
 void ub_thread_off();
 /// The pipeline cache to disk (force: whatever was built since the last save; else only after a few new ones)
 void pipeline_cache_save(bool force);
-/// (eglantine) After the start's precompile: the cache read from the file is let go (its pipelines are made), a small one takes
+/// (relink) After the start's precompile: the cache read from the file is let go (its pipelines are made), a small one takes
 /// its place for what play builds (vk_draw.cpp, pcache_loaded)
 void pipeline_cache_slim();
 

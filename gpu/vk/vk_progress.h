@@ -1,4 +1,4 @@
-// (hookshot) The start-up screen's numbers (vk_main.cpp, vk_menu.cpp): how far the shaders' preparation is, and about how long
+// (relink) The start-up screen's numbers (vk_main.cpp, vk_menu.cpp): how far the shaders' preparation is, and about how long
 // it has left. Plain C++, no Vulkan: tests/test_startup_progress.py compiles it on its own.
 #pragma once
 

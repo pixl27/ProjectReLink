@@ -1,7 +1,7 @@
 /* (linux) psapi: the process's memory counters, from /proc/self/status (the working set is the resident set, private
    memory the anonymous part of it), for the back end's memory log lines */
-#ifndef HOOKSHOT_POSIX_PSAPI_H
-#define HOOKSHOT_POSIX_PSAPI_H
+#ifndef RELINK_POSIX_PSAPI_H
+#define RELINK_POSIX_PSAPI_H
 #include <windows.h>
 typedef struct {
     DWORD cb, PageFaultCount;

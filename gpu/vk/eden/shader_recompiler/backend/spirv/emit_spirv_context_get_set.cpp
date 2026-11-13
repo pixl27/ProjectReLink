@@ -309,7 +309,7 @@ Id EmitGetAttribute(EmitContext& ctx, IR::Attribute attr, Id vertex) {
     if (IR::IsGeneric(attr)) {
         const u32 index{IR::GenericAttributeIndex(attr)};
         if (ctx.stage == Stage::Fragment && ctx.runtime_info.point_coord_generics.test(index)) {
-            // (hookshot) the point sprite's coordinate in place of the generic (RuntimeInfo::point_coord_generics)
+            // (relink) the point sprite's coordinate in place of the generic (RuntimeInfo::point_coord_generics)
             if (element < 2) {
                 return ctx.OpLoad(ctx.F32[1],
                                   ctx.OpAccessChain(ctx.input_f32, ctx.point_coord, ctx.Const(element)));

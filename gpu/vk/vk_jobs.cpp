@@ -24,11 +24,11 @@ struct Entry {
     const std::atomic<bool>* flag;   // (what the job sets when done, for jobs_wait to find it while queued)
 };
 std::deque<Entry> queue;
-std::deque<std::function<void()>> later;   // (eglantine: background work, taken only when queue is empty: jobs_push_background)
+std::deque<std::function<void()>> later;   // (relink: background work, taken only when queue is empty: jobs_push_background)
 std::atomic<int> pending{0};
 bool started = false;
 unsigned workers_n = 0;
-int background_running = 0;   // (eglantine: workers on background jobs now; at most workers_n / 2, the rest kept for what draws wait on)
+int background_running = 0;   // (relink: workers on background jobs now; at most workers_n / 2, the rest kept for what draws wait on)
 
 // (a job that throws: the game ended at once ("approach Malon, crash": an exception escaped a worker, KERNELBASE's RaiseException
 // with no handler, 2026-11-08). It is logged and let go; what it was making stays not ready and is asked for again)
@@ -77,7 +77,7 @@ void worker() {
 }
 
 void start() {
-    // (eglantine: half the hardware threads, 2 to 6, and background work (compute pipelines made ahead) on half of them at most: with
+    // (relink: half the hardware threads, 2 to 6, and background work (compute pipelines made ahead) on half of them at most: with
     // four workers all in multi-second compute compiles, a pipeline a draw waited on had no worker for seconds)
     const unsigned n = std::clamp(std::thread::hardware_concurrency() / 2, 2u, 6u);
     workers_n = n;

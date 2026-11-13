@@ -147,7 +147,7 @@ def main():
         new = {e for e in extra if img.in_code(e)} - img.entries
         img.entries |= new
         print("extra entries: %d of %d listed are new code addresses" % (len(new), len(extra)))
-    if not a.no_adr_entries:   # (hookshot) callbacks reached only through a pointer the code builds
+    if not a.no_adr_entries:   # (relink) callbacks reached only through a pointer the code builds
         spans = adr_entries.fde_spans(img.modules)
         refs = adr_entries.code_address_refs(open(os.path.join(img_dir, "image.bin"), "rb").read(), meta, spans=spans)
         new = {e for e in refs if img.in_code(e)} - img.entries
@@ -155,13 +155,13 @@ def main():
         print("ADR / ADRP+ADD code addresses outside the %d unwind-covered functions: %d, %d of them new entries" % (
             len(spans), len(refs), len(new)))
     L = a64_lift.Lifter(img)
-    if a.standalone:   # (hookshot) widescreen and ultrawide: C after a few of the game's instructions
+    if a.standalone:   # (relink) widescreen and ultrawide: C after a few of the game's instructions
         import oot_wide
         oot_wide.install(L, img)
         import oot_jitter   # (NVIDIA DLSS's camera jitter in a build with it, none unless DLSS runs: host/rx_backend.c)
         if oot_jitter.wanted():
             oot_jitter.install(L, img)
-        import oot_occlusion   # (no occlusion queries when HOOKSHOT_OCCLUSION_OFF=1: Fritchii's Occlusion Off)
+        import oot_occlusion   # (no occlusion queries when RELINK_OCCLUSION_OFF=1: Fritchii's Occlusion Off)
         oot_occlusion.install(L, img)
     L.discover(max_insns=a.max_func)
     print("discovered %d functions (%.0fs)" % (len(L.funcs), time.time() - t0))

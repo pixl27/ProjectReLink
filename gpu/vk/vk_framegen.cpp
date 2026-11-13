@@ -278,7 +278,7 @@ void pass(VkCommandBuffer cmd, const Pipe& p, std::initializer_list<std::pair<Vk
     full_barrier(cmd);
 }
 
-// (hookshot) The display thread's wait for a frame's time, on a high-resolution timer. sleep_for rests on the system timer,
+// (relink) The display thread's wait for a frame's time, on a high-resolution timer. sleep_for rests on the system timer,
 // whose 1 ms (timeBeginPeriod) Windows 11 does not keep for a process whose window it takes as unseen: with the presents
 // no longer blocking (a present queue of their own) the thread slept before most frames and woke up to 20 ms after their time.
 void wait_until_near(int64_t ns) {
@@ -319,7 +319,7 @@ void display_main() {
             memset(hist, 0, sizeof hist);
             stat = {0, 0, 0, j.at};
         }
-        // (hookshot) The pacer. The game hands over frames 12 to 28 ms apart around a mean of 19, and shown as they came that
+        // (relink) The pacer. The game hands over frames 12 to 28 ms apart around a mean of 19, and shown as they came that
         // was the stutter, whatever the frame rate. Every frame now has its place on an even line, the recent frame time
         // apart, a frame early waiting for it: never more than one game frame behind what the game handed over, and a line
         // that has fallen behind what came starts again from now. RX_VK_PACE=0: as they come.

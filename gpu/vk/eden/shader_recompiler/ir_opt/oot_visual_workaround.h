@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// (hookshot) From Orchid (MythosOfs/Orchid, src/shader_recompiler/ir_opt/oot_visual_workaround.h, GPL-3.0), matched by
+// (relink) From Orchid (MythosOfs/Orchid, src/shader_recompiler/ir_opt/oot_visual_workaround.h, GPL-3.0), matched by
 // the IR's shape here instead of Orchid's shader hashes: a visual workaround for Ocarina of Time, not a fix. The root
 // cause of the washed-out outdoors is open there and here.
 //  - fog: the one compute shader with an add of 2^x and -2^y, the fog integration: its slice distance scaled before
@@ -62,7 +62,7 @@ inline size_t ApplyOotVisualWorkaround(IR::Program& program, f32 fog_scale, f32 
     return matches.size();
 }
 
-/// (hookshot) Not a NaN or an infinity into a float colour target. One such pixel in the scene went through the bloom's chain of
+/// (relink) Not a NaN or an infinity into a float colour target. One such pixel in the scene went through the bloom's chain of
 /// averages to the whole picture: the one-frame white flash, the HUD over it (RX_VK_FRAMELOG, RX_VK_PROBE=2 caught it: a NaN in the
 /// scene target, the blur after it all at its top). What the console's blend does with one is unknown; nothing here wants it.
 /// float_targets: bit i, target i is a float one (an integer target's bits go as they are)

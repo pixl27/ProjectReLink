@@ -1,6 +1,6 @@
 #version 450
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
-// (hookshot) NVIDIA DLSS's actor motion (dlss_actor.vert): where the draw is what the scene shows (its depth within
+// (relink) NVIDIA DLSS's actor motion (dlss_actor.vert): where the draw is what the scene shows (its depth within
 // pc.tolerance steps of the scene's), the motion from where it is now (the pixel, the jitter taken off) to where it was, in
 // render pixels as shaders/dlss_prep.comp makes them
 layout(std430, binding = 0) readonly buffer Data { uint w[]; } data;

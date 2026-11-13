@@ -78,7 +78,7 @@ void WriteStorageByCasLoop(EmitContext& ctx, const IR::Value& binding, const IR:
 }
 } // Anonymous namespace
 
-// (hookshot) 8- and 16-bit loads through a pointer no storage buffer was found for: the aligned 32-bit word by the same
+// (relink) 8- and 16-bit loads through a pointer no storage buffer was found for: the aligned 32-bit word by the same
 // search as LoadGlobal32, and the byte or half of it the address names (the console's loads are naturally aligned). They
 // threw "not implemented": 30 of OoT's mesh programs (LoadGlobalS16) were left untranslated on every card, issue 351
 namespace {
@@ -136,7 +136,7 @@ Id EmitLoadGlobal128(EmitContext& ctx, Id address) {
     return ctx.Const(0u, 0u, 0u, 0u);
 }
 
-// (hookshot) 8- and 16-bit stores through a pointer no storage buffer was found for: the aligned 32-bit word by the same
+// (relink) 8- and 16-bit stores through a pointer no storage buffer was found for: the aligned 32-bit word by the same
 // search as LoadGlobal32, changed in place with a compare-exchange loop (spirv_emit_context.cpp). They threw "not
 // implemented", the same gap as the narrow loads (issue 192)
 namespace {

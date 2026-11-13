@@ -32,19 +32,19 @@ struct RenderAreaLayout {
 constexpr u32 RESCALING_LAYOUT_WORDS_OFFSET = offsetof(RescalingLayout, rescaling_textures);
 constexpr u32 RESCALING_LAYOUT_DOWN_FACTOR_OFFSET = offsetof(RescalingLayout, down_factor);
 constexpr u32 RENDERAREA_LAYOUT_OFFSET = offsetof(RenderAreaLayout, render_area);
-// (hookshot) guest memory's page table, a u64 device address pushed to every compute program that reads global memory, after the blocks
+// (relink) guest memory's page table, a u64 device address pushed to every compute program that reads global memory, after the blocks
 // above. It was a constant in the SPIR-V, and the address changes from run to run: the drivers' pipeline caches never hit
 constexpr u32 GUEST_PAGES_PUSH_OFFSET = sizeof(RescalingLayout) + sizeof(RenderAreaLayout);
-// (hookshot) a task program's first workgroup: NVN draws tasks [first, first + count), Vulkan from 0. The address of the draw's first
+// (relink) a task program's first workgroup: NVN draws tasks [first, first + count), Vulkan from 0. The address of the draw's first
 // (a u32, 16 bytes per draw of an indirect draw, read at + DrawIndex * 16) is pushed here
 constexpr u32 MESH_FIRST_PUSH_OFFSET = GUEST_PAGES_PUSH_OFFSET + 8;
-// (hookshot) the mesh shader fallback's buffers, after it: the task payloads and the vertex records (u64 device addresses).
+// (relink) the mesh shader fallback's buffers, after it: the task payloads and the vertex records (u64 device addresses).
 // Paths without the fallback never push them.
 constexpr u32 MESH_FALLBACK_PUSH_OFFSET = MESH_FIRST_PUSH_OFFSET + 8;
 constexpr u32 MESH_FALLBACK_PAYLOAD_PUSH_OFFSET = MESH_FALLBACK_PUSH_OFFSET;
 constexpr u32 MESH_FALLBACK_RECORDS_PUSH_OFFSET = MESH_FALLBACK_PUSH_OFFSET + 8;
 constexpr u32 MESH_FALLBACK_PUSH_END = MESH_FALLBACK_PUSH_OFFSET + 16;
-// (hookshot) the fallback's mesh workgroups a draw can run: each gets a record slot and a payload. The vertex stage draws
+// (relink) the fallback's mesh workgroups a draw can run: each gets a record slot and a payload. The vertex stage draws
 // this many slots and holds the ones no mesh workgroup wrote to outside the clip volume.
 constexpr u32 MESH_FALLBACK_CAPACITY = 1024;
 

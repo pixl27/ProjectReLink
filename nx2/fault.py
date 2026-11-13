@@ -46,7 +46,7 @@ def main():
             if "backtrace" in line or line.startswith("[recomp]   x"):
                 continue
             print(line)
-        m = re.search(r"rip in hookshot_game\.dll\+(0x[0-9a-f]+)", block)
+        m = re.search(r"rip in relink_game\.dll\+(0x[0-9a-f]+)", block)
         if m:
             t = dllmap.BASE + int(m.group(1), 16)
             i = bisect.bisect_right(keys, t) - 1

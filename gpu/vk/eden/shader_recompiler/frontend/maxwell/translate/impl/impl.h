@@ -65,7 +65,7 @@ struct TranslatorVisitor {
 #include "shader_recompiler/frontend/maxwell/maxwell.inc"
 #undef INST
 
-    // (hookshot) REGMAP_nx2 (register_map_nx2.cpp): the numbers of the word being translated that name the
+    // (relink) REGMAP_nx2 (register_map_nx2.cpp): the numbers of the word being translated that name the
     // extended registers 256 + n; set from the prefixes before each word, cleared after it
     std::array<u16, 256> register_map{};
     void ApplyRegisterMap(u64 insn);

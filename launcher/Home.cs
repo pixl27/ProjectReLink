@@ -391,7 +391,7 @@ public partial class MainWindow
         foreach (var k in psi.Environment.Keys.Where(k => k.StartsWith("HOS_", StringComparison.OrdinalIgnoreCase) ||
                                                           k.StartsWith("RX_", StringComparison.OrdinalIgnoreCase)).ToList())
             psi.Environment.Remove(k);   // (a test's leftovers must not change the game)
-        psi.Environment["HOOKSHOT_NO_UPDATE_CHECK"] = "1";   // (the launcher already looked: the game does not ask again)
+        psi.Environment["RELINK_NO_UPDATE_CHECK"] = "1";   // (the launcher already looked: the game does not ask again)
         if (!s.Audio) psi.Environment["HOS_AUDIO"] = "0";
         if (s.InvertY) psi.Environment["HOS_MOUSE_INVERT_Y"] = "1";
         if (s.FrameRate != 0) psi.Environment["HOS_FPS_UNLOCKED"] = "1";   // (the game reads the unlocked rate from here only: host/nn_vi.c)

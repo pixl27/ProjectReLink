@@ -249,7 +249,7 @@ Id EmitStorageAtomicExchange32(EmitContext& ctx, const IR::Value& binding, const
 }
 
 Id EmitStorageAtomicCompareExchange32(EmitContext& ctx, const IR::Value& binding, const IR::Value& offset,
-                                      Id comparator, Id value) {   // (hookshot: ATOMG.CAS)
+                                      Id comparator, Id value) {   // (relink: ATOMG.CAS)
     const Id pointer{StoragePointer(ctx, ctx.storage_types.U32, &StorageDefinitions::U32, binding,
                                     offset, sizeof(u32))};
     const auto [scope, semantics]{AtomicArgs(ctx)};
@@ -372,7 +372,7 @@ Id EmitStorageAtomicExchange32x2(EmitContext& ctx, const IR::Value& binding,
 
 Id EmitStorageAtomicAddF32(EmitContext& ctx, const IR::Value& binding, const IR::Value& offset,
                            Id value) {
-    // (eglantine) the device's own float add where it has one (VK_EXT_shader_atomic_float): the compare-exchange loop below
+    // (relink) the device's own float add where it has one (VK_EXT_shader_atomic_float): the compare-exchange loop below
     // spun under contention, OoT's sky light sums (ab7699ee, every thread adding into the same 4 floats) took 1.4 ms of a
     // frame over the Kokiri village (hs371). EDEN_NX2_NO_FADD=1: the loop everywhere, as before
     if (ctx.profile.support_float32_atomic_add && binding.IsImmediate() && Sirit::ValidId(ctx.ssbos[binding.U32()].F32)) {
@@ -434,35 +434,35 @@ Id EmitStorageAtomicMaxF32x2(EmitContext& ctx, const IR::Value& binding, const I
     return ctx.OpPackHalf2x16(ctx.U32[1], result);
 }
 
-Id EmitGlobalAtomicIAdd32(EmitContext& ctx, Id address, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicIAdd32(EmitContext& ctx, Id address, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_func_u32[0])) {
         throw NotImplementedException("SPIR-V Instruction");
     }
     return ctx.OpFunctionCall(ctx.U32[1], ctx.atomic_global_func_u32[0], address, value);
 }
 
-Id EmitGlobalAtomicSMin32(EmitContext& ctx, Id address, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicSMin32(EmitContext& ctx, Id address, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_func_u32[1])) {
         throw NotImplementedException("SPIR-V Instruction");
     }
     return ctx.OpFunctionCall(ctx.U32[1], ctx.atomic_global_func_u32[1], address, value);
 }
 
-Id EmitGlobalAtomicUMin32(EmitContext& ctx, Id address, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicUMin32(EmitContext& ctx, Id address, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_func_u32[2])) {
         throw NotImplementedException("SPIR-V Instruction");
     }
     return ctx.OpFunctionCall(ctx.U32[1], ctx.atomic_global_func_u32[2], address, value);
 }
 
-Id EmitGlobalAtomicSMax32(EmitContext& ctx, Id address, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicSMax32(EmitContext& ctx, Id address, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_func_u32[3])) {
         throw NotImplementedException("SPIR-V Instruction");
     }
     return ctx.OpFunctionCall(ctx.U32[1], ctx.atomic_global_func_u32[3], address, value);
 }
 
-Id EmitGlobalAtomicUMax32(EmitContext& ctx, Id address, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicUMax32(EmitContext& ctx, Id address, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_func_u32[4])) {
         throw NotImplementedException("SPIR-V Instruction");
     }
@@ -477,35 +477,35 @@ Id EmitGlobalAtomicDec32(EmitContext&) {
     throw NotImplementedException("SPIR-V Instruction");
 }
 
-Id EmitGlobalAtomicAnd32(EmitContext& ctx, Id address, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicAnd32(EmitContext& ctx, Id address, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_func_u32[5])) {
         throw NotImplementedException("SPIR-V Instruction");
     }
     return ctx.OpFunctionCall(ctx.U32[1], ctx.atomic_global_func_u32[5], address, value);
 }
 
-Id EmitGlobalAtomicOr32(EmitContext& ctx, Id address, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicOr32(EmitContext& ctx, Id address, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_func_u32[6])) {
         throw NotImplementedException("SPIR-V Instruction");
     }
     return ctx.OpFunctionCall(ctx.U32[1], ctx.atomic_global_func_u32[6], address, value);
 }
 
-Id EmitGlobalAtomicXor32(EmitContext& ctx, Id address, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicXor32(EmitContext& ctx, Id address, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_func_u32[7])) {
         throw NotImplementedException("SPIR-V Instruction");
     }
     return ctx.OpFunctionCall(ctx.U32[1], ctx.atomic_global_func_u32[7], address, value);
 }
 
-Id EmitGlobalAtomicExchange32(EmitContext& ctx, Id address, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicExchange32(EmitContext& ctx, Id address, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_func_u32[8])) {
         throw NotImplementedException("SPIR-V Instruction");
     }
     return ctx.OpFunctionCall(ctx.U32[1], ctx.atomic_global_func_u32[8], address, value);
 }
 
-Id EmitGlobalAtomicCompareExchange32(EmitContext& ctx, Id address, Id comparator, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicCompareExchange32(EmitContext& ctx, Id address, Id comparator, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_cas_func_u32)) {
         throw NotImplementedException("SPIR-V Instruction");
     }
@@ -600,7 +600,7 @@ Id EmitGlobalAtomicExchange32x2(EmitContext&) {
     throw NotImplementedException("SPIR-V Instruction");
 }
 
-Id EmitGlobalAtomicAddF32(EmitContext& ctx, Id address, Id value) {   // (hookshot: the fallback)
+Id EmitGlobalAtomicAddF32(EmitContext& ctx, Id address, Id value) {   // (relink: the fallback)
     if (!Sirit::ValidId(ctx.atomic_global_add_f32_func)) {
         throw NotImplementedException("SPIR-V Instruction");
     }

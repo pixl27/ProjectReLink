@@ -123,7 +123,7 @@ void ConvertDepth(EmitContext& ctx, Id vertex) {
     ctx.OpStore(ctx.OpAccessChain(ctx.output_f32, ctx.output_position, vertex, ctx.Const(2U)), z);
 }
 
-/// (hookshot) The fallback's records: one per primitive corner, its validity word and the stage buffer's vertex and
+/// (relink) The fallback's records: one per primitive corner, its validity word and the stage buffer's vertex and
 /// primitive lines. A mesh workgroup writes its workgroup index and a fixed number of records for it; the generated
 /// vertex stage reads one record per vertex.
 u32 FallbackRecordWords(const MeshInfo& mesh) {
@@ -288,7 +288,7 @@ u32 task_cap(u32 threads) {   // (RX_VK_TASK_CAP=<n>: mesh workgroups a task may
 
 void TaskEpilogue(EmitContext& ctx) {
     Barrier(ctx);
-    // (hookshot) at most one mesh workgroup a task thread: each thread keeps or culls one meshlet (the programs compact them by subgroup
+    // (relink) at most one mesh workgroup a task thread: each thread keeps or culls one meshlet (the programs compact them by subgroup
     // ballot). It was 65535, and a payload word a task left unwritten is anything: when the task culled everything, tens of thousands of
     // mesh workgroups for a draw held the GPU past Windows' two seconds, and the device was lost, on about half the first starts
     const Id count{ctx.OpUMin(ctx.U32[1], ctx.OpLoad(ctx.U32[1], PayloadWord(ctx, ctx.Const(1U))),
@@ -379,7 +379,7 @@ void MeshEpilogue(EmitContext& ctx) {
             std::array<Id, 3> indices;
             for (u32 element = 0; element < corners; ++element) {
                 const Id address{ctx.OpIAdd(ctx.U32[1], byte, ctx.Const(element))};
-                // (hookshot) within the vertices: an index byte the program left unwritten is anything, and an index
+                // (relink) within the vertices: an index byte the program left unwritten is anything, and an index
                 // past the vertex count is undefined (a device fault on NVIDIA)
                 indices[element] = Clamped(ctx, ctx.OpLoad(ctx.U32[1], SharedWord(ctx, ctx.mesh_map, address)),
                                            mesh.max_vertices);
@@ -491,7 +491,7 @@ Id EmitIsbeRead(EmitContext& ctx, Id address) {
         ctx.OpCompositeExtract(ctx.U32[1], ctx.OpLoad(ctx.U32[3], ctx.workgroup_id), 0U)};
     if (ctx.stage == Stage::Task) {
         if (ctx.wants_mesh_first && Sirit::ValidId(ctx.rescaling_push_constants)) {
-            // (hookshot) + the draw's first workgroup: NVN draws [first, first + count). Without it every draw began at 0: the
+            // (relink) + the draw's first workgroup: NVN draws [first, first + count). Without it every draw began at 0: the
             // foliage's draws (first up to ~1900) drew the first records again and again, and the forest had no leaves
             const Id table{ctx.OpLoad(ctx.U64, ctx.OpAccessChain(ctx.TypePointer(spv::StorageClass::PushConstant, ctx.U64),
                                                                   ctx.rescaling_push_constants, ctx.Const(ctx.mesh_first_member_index)))};
@@ -538,7 +538,7 @@ void EmitIsbeWriteMapU32(EmitContext& ctx, const IR::Value& address, Id value) {
 
 void EmitMeshPrologue(EmitContext& ctx) {
     if (ctx.stage == Stage::Task) {
-        // (hookshot) the count starts at nothing: task payload memory holds whatever the last task left, and a task that keeps no meshlet
+        // (relink) the count starts at nothing: task payload memory holds whatever the last task left, and a task that keeps no meshlet
         // never writes it. The barrier: every thread has done this before any of them goes on to write the real count
         ctx.OpStore(PayloadWord(ctx, ctx.Const(1U)), ctx.u32_zero_value);
         Barrier(ctx);

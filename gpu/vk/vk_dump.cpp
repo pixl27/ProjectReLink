@@ -26,7 +26,7 @@ struct Item {
     void* map = nullptr;
     uint32_t w = 0, h = 0, src_w = 0, src_h = 0;
     Kind kind = KIND_FLOAT;
-    bool rgb9e5 = false;   // (hookshot, RX_VK_DUMP_9E5: an R11G11B10 image's words read as RGB9E5)
+    bool rgb9e5 = false;   // (relink, RX_VK_DUMP_9E5: an R11G11B10 image's words read as RGB9E5)
     int depth_bytes = 0;   // (a depth image: copied as it is, w x h = the level's; 2 = D16, 4 = D32F or D24 in 32 bits)
     bool depth_float = false;
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -352,7 +352,7 @@ void dump_image(VkCommandBuffer cmd, Texture* tex, uint32_t level, uint32_t laye
         seq++;
         return;
     }
-    {   // (eglantine, RX_VK_DUMP_Z=<z>[,<z>...]: a 3D image's slices z, each its own picture, instead of slice 0)
+    {   // (relink, RX_VK_DUMP_Z=<z>[,<z>...]: a 3D image's slices z, each its own picture, instead of slice 0)
         static const std::vector<uint32_t> zs = [] {
             std::vector<uint32_t> v;
             if (const char* e = getenv("RX_VK_DUMP_Z"))

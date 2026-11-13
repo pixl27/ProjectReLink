@@ -109,7 +109,7 @@ HLE(_ZN2nn2fs8MountRomEPKcPvm) {
     mount(gstr(ARG(0)), hos_romfs_dir, 0);
     RET(0);
 }
-/* (hookshot) MountRom(char const* name): the cacheless overload OoT uses (SDK 22). Left to the SDK it opens the
+/* (relink) MountRom(char const* name): the cacheless overload OoT uses (SDK 22). Left to the SDK it opens the
    file-system proxy over IPC and aborts on the empty reply. */
 HLE(_ZN2nn2fs8MountRomEPKc) {
     if (!hos_romfs_dir) hos_fatal(c, "fs: MountRom but no RomFS folder given (--romfs)");
@@ -490,7 +490,7 @@ HLE(_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl) {
     G64(ARG(0)) = (uint64_t)n;
     RET(0);
 }
-/* (hookshot) GetDirectoryEntryCount(long* count, DirectoryHandle): every entry the open mode lists, read or not */
+/* (relink) GetDirectoryEntryCount(long* count, DirectoryHandle): every entry the open mode lists, read or not */
 HLE(_ZN2nn2fs22GetDirectoryEntryCountEPlNS0_15DirectoryHandleE) {
     Handle *dh = get_handle(c, ARG(1));
     int64_t n = 0;

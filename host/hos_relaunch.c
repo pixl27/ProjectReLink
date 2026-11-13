@@ -1,10 +1,10 @@
-/* (hookshot) The Insert menu's Restart now (gpu/vk/vk_menu.cpp): it saves its options and asks the window to close for a
+/* (relink) The Insert menu's Restart now (gpu/vk/vk_menu.cpp): it saves its options and asks the window to close for a
    restart (WM_APP + 9: host/display.c, host/posix/display_sdl.c). The window closes as when the player closes it, and at
    the very end of that, instead of only exiting, the game is started again:
      Linux: the process becomes the game again (execve) with the arguments and the environment it started with
-     (/proc/self/cmdline and /proc/self/environ: hookshot_env.txt's lines are read again, not kept), so whatever waits
-     for it (the launcher, a stream, a test) still has it. The game is bin/hookshot on disk, never run from inside the
-     AppImage (hookshot-launch starts it with the AppImage's variables taken away), so /proc/self/exe is the game;
+     (/proc/self/cmdline and /proc/self/environ: relink_env.txt's lines are read again, not kept), so whatever waits
+     for it (the launcher, a stream, a test) still has it. The game is bin/relink on disk, never run from inside the
+     AppImage (relink-launch starts it with the AppImage's variables taken away), so /proc/self/exe is the game;
      argv[0] on the PATH if that is gone (the folder built again meanwhile).
      Windows: a new process of this executable (GetModuleFileNameW) with this one's command line (GetCommandLineW), in
      the same folder and environment; then this one exits. */
@@ -35,7 +35,7 @@ static void relaunch(void) {
     PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof si);
     si.cb = sizeof si;
-    /* (the new process waits for this one to end before it moves hookshot_log.txt to .1 and opens its own: this one still
+    /* (the new process waits for this one to end before it moves relink_log.txt to .1 and opens its own: this one still
        has it open until it exits, and a rename of an open file fails on Windows, so the new run overwrote the old run's
        log. hos_main.c reads HOS_RESTART_OF) */
     wchar_t pid[16];

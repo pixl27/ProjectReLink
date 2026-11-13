@@ -8,7 +8,7 @@
      signal's context and unwinds from there with libgcc's unwinder (the .eh_frame clang writes), the sampler waits;
    - breakpoints with perf_event_open (PERF_TYPE_BREAKPOINT, sigtrap=1: a SIGTRAP in the thread that touched the
      address, si_code TRAP_PERF), allowed on our own threads at the default perf_event_paranoid (2).
-   Frames are written as <module>+<offset from its load base>: hookshot and hookshot_vk.so,
+   Frames are written as <module>+<offset from its load base>: relink and relink_vk.so,
    offsets as in their linker maps (position-independent, based at 0). */
 #include "../hos.h"
 #include <dirent.h>
@@ -230,7 +230,7 @@ static int module_of(uintptr_t pc, uintptr_t *base) {
     for (int i = 0; i < nmods; i++)
         if (mods[i].base == *base) return i;
     if (nmods >= 64) return -1;
-    const char *n = d.dli_fname && d.dli_fname[0] ? d.dli_fname : "hookshot";
+    const char *n = d.dli_fname && d.dli_fname[0] ? d.dli_fname : "relink";
     const char *b = strrchr(n, '/');
     mods[nmods].base = *base;
     snprintf(mods[nmods].name, sizeof mods[nmods].name, "%s", b ? b + 1 : n);

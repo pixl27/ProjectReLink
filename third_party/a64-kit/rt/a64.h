@@ -123,7 +123,7 @@ A64_INLINE void recomp_stp64(GuestContext *c, uint64_t a, uint64_t v0, uint64_t 
 typedef void (*A64Fn)(Ctx *A64_NOESC);
 A64Fn a64_lookup(uint64_t addr);                    /* function at a guest address, or NULL */
 void a64_icall(Ctx *A64_NOESC c, uint64_t target);            /* BLR: indirect call */
-/* (hookshot) setjmp in lifted code: a call of a function that calls __setjmp is wrapped in a host __builtin_setjmp
+/* (relink) setjmp in lifted code: a call of a function that calls __setjmp is wrapped in a host __builtin_setjmp
    on a slot (pushed per thread with that function's setjmp return addresses, popped after the call); the guest
    longjmp's final BR to one of them comes back to the newest such slot through the host's a64_call_miss
    (host/hos_setjmp.c), and the caller runs the function's code from that address (recomp_sj_target) */

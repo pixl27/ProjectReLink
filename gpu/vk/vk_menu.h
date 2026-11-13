@@ -1,4 +1,4 @@
-// The Insert menu (vk_menu.cpp): options that apply while the game runs, kept in hookshot_options.ini beside the executable.
+// The Insert menu (vk_menu.cpp): options that apply while the game runs, kept in relink_options.ini beside the executable.
 #pragma once
 
 #include "vk_internal.h"
@@ -9,7 +9,7 @@ namespace mkwvk {
 struct Options {
     int framegen = 0;     // made frames: 0 off, or 2, 3, 4 times the game's frames
     int pace = 0;         // frames shown on an even line (vk_framegen.cpp)
-    // (eglantine: 1 by default, the 3D at the picture's size. Auto ran at 1536 x 864 and below for a 2048 x 1152 picture)
+    // (relink: 1 by default, the 3D at the picture's size. Auto ran at 1536 x 864 and below for a 2048 x 1152 picture)
     int resolution = 1;   // the 3D's (Render resolution): 0 Auto (the game's dynamic resolution), else a share of the output,
                           // 1..6 = 100%, 75%, 67%, 50%, 58%, 33% (upscaler_rows.h; nx2/oot_patches.py)
     int output_res = 0;   // the game's whole frame, docked: 0 its 2048x1152, 1 2560x1440, 2 3840x2160, 3 1920x1080; read once, at the start (host/nn_applet.c)
@@ -44,7 +44,7 @@ struct Options {
     int preset = 0;       // quality preset: 0 Custom, 1 Minimum (4GB), 2 Low (6GB), 3 Balanced (8GB), 4 High (12GB), 5 Ultra (16GB+)
     int vram_mb = 0;      // dynamic texture cache budget limit in MB
     int mirror_mb = 0;    // staging mirror limit in MB
-    int mic = 1;          // (hookshot) the ocarina's microphone: 0 Off, 1 the system's default, 2.. a device as host->mic_name lists it (host/nn_audio_in.c)
+    int mic = 1;          // (relink) the ocarina's microphone: 0 Off, 1 the system's default, 2.. a device as host->mic_name lists it (host/nn_audio_in.c)
     int framerate = 0;    // 0: the game's 60 fps; 1: unlocked, up to the display's refresh, game time following the clock (host/nn_vi.c)
 };
 extern Options opts;
@@ -70,7 +70,7 @@ void menu_note_frame(bool game_frame);   // (the frame rates the FPS counter sho
 void menu_note_present_sizes(uint32_t picture_w, uint32_t picture_h, uint32_t window_w, uint32_t window_h);
 /// Over the window's image (TRANSFER_DST_OPTIMAL), w x h: the menu and the FPS counter. slot: the frame in flight, 0 to 2.
 void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_t h);
-/// (hookshot) The start-up screen while the shaders are prepared (vk_main.cpp, vk_startup_paint.h), drawn by menu_record under the
+/// (relink) The start-up screen while the shaders are prepared (vk_main.cpp, vk_startup_paint.h), drawn by menu_record under the
 /// counter and the menu. Null takes it away.
 struct StartupView;
 void startup_screen(const StartupView* view);

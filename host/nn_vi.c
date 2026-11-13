@@ -96,7 +96,7 @@ HLE(_ZN2nn2vi15GetNativeWindowEPPvPNS0_5LayerE) {
    HOS_NO_PACING=1: as fast as it can. */
 static volatile int present_interval = 1;
 static int64_t next_frame_at, window_start, frames_in_window;
-/* (eglantine) The frame rate cap: the game's 60, or unlocked (HOS_FPS_UNLOCKED=1):
+/* (relink) The frame rate cap: the game's 60, or unlocked (HOS_FPS_UNLOCKED=1):
    up to the display's refresh, game time following the clock (realtime_step below, whatever the Game speed row says: per frame
    at 100 fps the game would run 1.67 times too fast). HOS_FPS_MAX=<fps>: that cap instead of the display's (60 to 240). */
 static int display_hz(void) {
@@ -114,7 +114,7 @@ static int fps_max(void) {
     int rx_option(int id, int otherwise);
     static int env = -1;
     if (env < 0) env = getenv("HOS_FPS_MAX") ? atoi(getenv("HOS_FPS_MAX")) : 0;
-    static int unlocked = -1;   /* (eglantine, on upstream: HOS_FPS_UNLOCKED=1 only; option 4 is the pads' row there) */
+    static int unlocked = -1;   /* (relink, on upstream: HOS_FPS_UNLOCKED=1 only; option 4 is the pads' row there) */
     if (unlocked < 0) unlocked = getenv("HOS_FPS_UNLOCKED") && atoi(getenv("HOS_FPS_UNLOCKED")) != 0;
     (void)rx_option;
     if (!unlocked && env <= 60) return 60;
@@ -128,7 +128,7 @@ static int64_t frame_period(void) {   /* (the display interval the frames are pa
 static volatile LONG64 presents;
 int hos_vi_native_interval(Ctx *c, int requested) {
     (void)c;
-    /* (hookshot) OoT's frame-rate controller asks for 2, 3 or 4 vsyncs a frame whenever one runs long (480 changes a minute
+    /* (relink) OoT's frame-rate controller asks for 2, 3 or 4 vsyncs a frame whenever one runs long (480 changes a minute
        in Kokiri): paced to them, frames snapped to 33, 50 and 67 ms, the stutter, and the frame rate sat far under what the
        PC managed. With game time following the clock (the Insert menu's Real time, realtime_step), a frame is shown as soon
        as it is ready, 60 at most; the game still reads back its own interval. HOS_GAME_INTERVAL=1, or Game speed Per frame:
@@ -140,7 +140,7 @@ int hos_vi_native_interval(Ctx *c, int requested) {
     present_interval = game_interval || !rx_option(0, 1) ? clamped : 1;
     return requested;
 }
-/* (hookshot) The window's textures as the console's display queue has them: each present is shown at its display
+/* (relink) The window's textures as the console's display queue has them: each present is shown at its display
    time, the later of its present and one interval after the frame shown before it, and a texture is free again once
    the frame presented after it is shown. The acquire of a frame waits for its texture: with `active` textures, the
    texture of the frame `active` back, freed when the frame after that one is shown. With three (OoT) a frame slower
@@ -204,7 +204,7 @@ static void scan_dt(long long presents) {
     fclose(f);
     hos_log("vi: scan %s: %zu floats", name, hits);
 }
-/* (hookshot) Game time follows the clock. The engine steps every frame by ratio = 60 / <the graphics module's nominal fps,
+/* (relink) Game time follows the clock. The engine steps every frame by ratio = 60 / <the graphics module's nominal fps,
    an int at +0x2c8> (main+0x6e6cc4, f_83b6e300 makes seconds = ratio / 60 and the rest), so at 50 fps the game ran at 83%
    speed: walking the same 8 s at 52 and 33 fps went as far as those rates. Each present writes the rate of the last 5
    display intervals there, the rounding error carried to the next frame so that no time is lost; a step is at most
@@ -264,7 +264,7 @@ static void realtime_step(int64_t now) {
     }
     const uint64_t mod = hos_gfx_module;
     if (!mod) return;
-    {   /* (hookshot) The frame limiter (f_8042cd20 sleeps to 1 / +0xfc). The engine's adaptive controller writes +0xfc when
+    {   /* (relink) The frame limiter (f_8042cd20 sleeps to 1 / +0xfc). The engine's adaptive controller writes +0xfc when
            variable refresh is on (+0x231, f_804fc0f0), any rate from 40 up. HOS_FPS_TARGET=<fps>: that rate kept, 0: left alone;
            HOS_FPS_LOG=1: what the game asks for, every 300 presents */
         static int target = -1, log_on = -1;
@@ -382,7 +382,7 @@ void hos_vi_native_presented(void) {
         const int64_t d = now - last_present;
         hist[d < 15500000 ? 0 : d < 17800000 ? 1 : d < 22000000 ? 2 : d < 30000000 ? 3 : d < 40000000 ? 4 : 5]++;
     }
-    {   /* (eglantine) HOS_PRESENT_LOG=<file>: every present's time (ns since the first), one per line, for the stutter's pattern */
+    {   /* (relink) HOS_PRESENT_LOG=<file>: every present's time (ns since the first), one per line, for the stutter's pattern */
         static FILE *plog;
         static int plog_read;
         static int64_t plog_t0;

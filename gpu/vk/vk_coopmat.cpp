@@ -1,4 +1,4 @@
-// (hookshot) Native matrix multiplies: OoT's networks (the movie upscaler, the gameplay TAAU) are HMMA.16816.F16
+// (relink) Native matrix multiplies: OoT's networks (the movie upscaler, the gameplay TAAU) are HMMA.16816.F16
 // programs, which the shuffle expansion in lower_to_maxwell.h runs at a fraction of the speed. With
 // VK_KHR_cooperative_matrix offering 16x8x16 f16 on the subgroup, HMMA lowers to HMMA_nx2 and the SPIR-V back end
 // emits one OpCooperativeMatrixMulAddKHR, moving each lane's fragment registers in and out of its elements.
@@ -334,7 +334,7 @@ bool test_multiply() {
 namespace {
 /// Without cooperative matrices (a GTX 1650, an RTX 2060 on some drivers, AMD and Intel cards): the same multiplies in a shader function on
 /// subgroup shuffles. The lowering refuses a matrix multiply it has no way to run, and the game's upscaling networks were then left out:
-/// the 3D scene came out black or as coloured noise, with the HUD over it (Hookshot issues 10 and 14)
+/// the 3D scene came out black or as coloured noise, with the HUD over it (upstream issues 10 and 14)
 void software_multiplies(const char* why) {
     Shader::Backend::SPIRV::mma_software = true;
     dev.native_mma = true;
@@ -349,7 +349,7 @@ void coopmat_init() {
     if (Shader::Backend::SPIRV::frag_nan_guard) logf("vk: colour outputs NaN-guarded");
     Shader::Backend::SPIRV::position_invariant = dev.props.vendorID != 0x10DE && !std::getenv("RX_VK_NO_INVARIANT");
     if (Shader::Backend::SPIRV::position_invariant) logf("vk: positions invariant (not an NVIDIA card)");
-    // (hookshot) RX_VK_MMA_SOFTWARE=1: HMMA_nx2 in a shader function on subgroup shuffles, no cooperative matrices
+    // (relink) RX_VK_MMA_SOFTWARE=1: HMMA_nx2 in a shader function on subgroup shuffles, no cooperative matrices
     // (emit_spirv_warp.cpp, from Lichii): the lowering still gives HMMA_nx2 (dev.native_mma)
     if (const char* sw = std::getenv("RX_VK_MMA_SOFTWARE"); sw && std::atoi(sw)) {
         Shader::Backend::SPIRV::mma_software = true;
@@ -384,7 +384,7 @@ void coopmat_init() {
         return;
     }
     bool ok = measure_order() && test_multiply();
-    // (hookshot, diagnosis) RX_VK_MMA_A_ORDER / _B_ORDER / _C_ORDER=<n,n,...>: the element orders given instead of the
+    // (relink, diagnosis) RX_VK_MMA_A_ORDER / _B_ORDER / _C_ORDER=<n,n,...>: the element orders given instead of the
     // measured ones (as if the console's fragments were laid out otherwise)
     const auto override_order = [&](const char* name, auto& order) {
         const char* e = std::getenv(name);

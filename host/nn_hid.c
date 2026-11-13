@@ -1,8 +1,8 @@
 /* nn::hid: one Pro Controller (FullKey style) on Npad No.1, from every XInput gamepad and the keyboard and mouse at
    once. Buttons map by position (the Xbox bottom face button is the Switch's bottom one, B).
 
-   (hookshot) What presses each button, on a gamepad and on the keyboard, is the player's: the Insert menu's Controls
-   page (gpu/vk/vk_menu.cpp) changes it, kept in hookshot_options.ini (binds_load). The defaults:
+   (relink) What presses each button, on a gamepad and on the keyboard, is the player's: the Insert menu's Controls
+   page (gpu/vk/vk_menu.cpp) changes it, kept in relink_options.ini (binds_load). The defaults:
    Keyboard (totk-pc-recomp's layout): WASD left stick, arrows or IJKL right stick (camera), Space X (jump), E A
    (action), Shift B (run/cancel), Q L (abilities), R R, Z ZL, X or F ZR (bow), Ctrl left-stick click (crouch), C
    right-stick click (first person), Tab or Enter Plus, M Minus (map), 1 2 3 4 d-pad left, up, right, down. Only
@@ -49,7 +49,7 @@ static int64_t sampling;
 int rx_option(int id, int otherwise);
 /* (the Insert menu takes the keyboard while it is open) */
 static int key(int vk) { return !rx_option(1, 0) && (GetAsyncKeyState(vk) & 0x8000) != 0; }
-/* (eglantine) Letter and digit keys by their place on the keyboard, not their label: the bindings are a US keyboard's
+/* (relink) Letter and digit keys by their place on the keyboard, not their label: the bindings are a US keyboard's
    (WASD, Q, E, Z...), and on a French AZERTY one 'W' 'A' 'S' 'D' by label put the left stick on W A S D, a scattered
    cross. A US key's scan code is looked up in the layout of the window in front: Z Q S D on AZERTY, W A S D on QWERTY. */
 static int pos(int us) {
@@ -400,8 +400,8 @@ static void stick_max(int32_t stick[4], const int32_t v[4]) {
         if ((v[i] < 0 ? -v[i] : v[i]) > (stick[i] < 0 ? -stick[i] : stick[i])) stick[i] = v[i];
 }
 
-/* ---- (hookshot) the controls: the gamepad input (by position) and the keys that press each Switch button, from
-   hookshot_options.ini beside the executable when it has them: pad_<button>=<HOS_PAD_* position, -1 none> and
+/* ---- (relink) the controls: the gamepad input (by position) and the keys that press each Switch button, from
+   relink_options.ini beside the executable when it has them: pad_<button>=<HOS_PAD_* position, -1 none> and
    key_<button>=<key code>,<key code> (Windows key codes, 0 none), <button> one of bind_names. Read once, at the
    first use; what the file leaves out keeps its default. Keys only, after the Switch's buttons (HOS_KEY_*): the left
    stick's and the camera's directions. A key can be a mouse button (1 2 4 5 6: left, right, middle, 4, 5), which counts
@@ -443,7 +443,7 @@ static void binds_load(void) {
     char *slash = len ? (strrchr(path, 92) ? strrchr(path, 92) : strrchr(path, 47)) : NULL;   /* (linux: '/') */
     FILE *f = NULL;
     if (slash) {
-        snprintf(slash + 1, (size_t)(path + MAX_PATH - slash - 1), "hookshot_options.ini");
+        snprintf(slash + 1, (size_t)(path + MAX_PATH - slash - 1), "relink_options.ini");
         f = fopen(path, "r");
     }
     int changed = 0;
@@ -484,7 +484,7 @@ static void binds_load(void) {
             }
         }
     }
-    if (changed) hos_log("hid: %d controls from hookshot_options.ini", changed);
+    if (changed) hos_log("hid: %d controls from relink_options.ini", changed);
     InterlockedExchange(&state, 2);
 }
 int hos_binding(int set, int button, int slot) {
@@ -630,7 +630,7 @@ static int bound_down(int i, int mouse) {
         const int vk = (int)key_bind[i][k];
         if (vk <= 0) continue;
         const int m = mouse_vk_slot(vk);
-        if (m >= 0 ? mouse && mouse_armed[m] && key(vk) : kmap_down(key_bind[i][k], kpos)) return 1;   /* (eglantine) keys by their place: ZQSD on AZERTY where WASD is bound */
+        if (m >= 0 ? mouse && mouse_armed[m] && key(vk) : kmap_down(key_bind[i][k], kpos)) return 1;   /* (relink) keys by their place: ZQSD on AZERTY where WASD is bound */
     }
     return 0;
 }
@@ -687,13 +687,13 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
        left set in a shell no longer leaves the game without controls), and otherwise the pads count only
        while the game's window is in front, like the keyboard: XInput is global, so a test run in the background
        used to follow the player's pad (and pressed things in its own menus). */
-    /* (hookshot) The player's devices count during a script too (the user plays along in test runs, 2026-11-05):
+    /* (relink) The player's devices count during a script too (the user plays along in test runs, 2026-11-05):
        the presses add to theirs. HOS_INPUT_EXCLUSIVE=1: the script alone until 5 s after its last press, as before */
     static int exclusive = -1, script_only = -1;
     if (exclusive < 0) exclusive = getenv("HOS_INPUT_EXCLUSIVE") != NULL;
     if (exclusive && npresses > 0 && script_elapsed_ms(hos_now_ns()) < script_end_ms + 5000)
         return;
-    /* (hookshot, issue 389) A scripted press (HOS_INPUT_SCRIPT, HOS_INPUT_LIVE) is the test's own, not the
+    /* (relink, issue 389) A scripted press (HOS_INPUT_SCRIPT, HOS_INPUT_LIVE) is the test's own, not the
        player's: it counts with the game's window behind another one, so a test run can drive the game on one
        monitor while the player works in the front window. HOS_INPUT_BACKGROUND still decides the pads. */
     static int scripted_background = -1;
@@ -708,7 +708,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
         if (pads_in_background(env, rx_option(4, 0))) pads_read(buttons, stick);
         return;
     }
-    {   /* (hookshot) while the Insert menu is open the pads are its own, as the keyboard is (key()), and after it
+    {   /* (relink) while the Insert menu is open the pads are its own, as the keyboard is (key()), and after it
            closed until they are let go (the press that closed it never reaches the game) */
         uint64_t pb = 0;
         int32_t ps[4] = {0};
@@ -721,7 +721,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
             stick_max(stick, ps);
         }
     }
-    binds_load();   /* (the keys: key_default's, or hookshot_options.ini's; the mouse's buttons once its capture is known) */
+    binds_load();   /* (the keys: key_default's, or relink_options.ini's; the mouse's buttons once its capture is known) */
     for (int i = 0; i < HOS_SW_N; i++)
         if (bound_down(i, 0)) *buttons |= 1ULL << i;
     int32_t mouse[4] = {0};
@@ -852,7 +852,7 @@ HLE(_ZN2nn3hid21ShowControllerSupportEPNS0_27ControllerSupportResultInfoERKNS0_2
 /* Handles: six-axis ones are opaque u32s; a vibration handle is {u8 style type (3 = full key), u8 npad id, u8 device
    index (0 left, 1 right), u8 reserved}, which the SDK's vibration classes read. Vibration goes nowhere yet. */
 HLE(_ZN2nn3hid23GetSixAxisSensorHandlesEPNS0_19SixAxisSensorHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE) {
-    /* (hookshot) OoT asks for two (a Joy-Con pair) but runs its motion path only when three come back: at two its
+    /* (relink) OoT asks for two (a Joy-Con pair) but runs its motion path only when three come back: at two its
        third source (the console's own, through JCMS) stays dead, and that branch is what marks motion active for the
        aim (spluton, issue 112). The count says three; only the handles asked for are written, so a caller's array
        sized for two is never written past (the handles are opaque: GetSixAxisSensorStates does not read them). */
@@ -864,7 +864,7 @@ HLE(_ZN2nn3hid23GetSixAxisSensorHandlesEPNS0_19SixAxisSensorHandleEiRKjNS_4util1
 }
 /* SixAxisSensorState, 0x60 bytes: {i64 delta time (ns), i64 sampling number, f32 acceleration[3] (G), angular velocity[3]
    (revolutions a second), angle[3] (revolutions), direction[3][3], u32 attributes (1 connected), pad}. Newest first.
-   (hookshot) With Motion controls on and a pad with a gyroscope (host/pad_sdl.c), the state OoT aims with
+   (relink) With Motion controls on and a pad with a gyroscope (host/pad_sdl.c), the state OoT aims with
    (host/hos_motion.h: the yaw rate and a tilt matrix, the rest neutral); else a pad lying still. */
 HLE(_ZN2nn3hid22GetSixAxisSensorStatesEPNS0_18SixAxisSensorStateEiRKNS0_19SixAxisSensorHandleE) {
     /* (the sampling number goes up once per reading, as the hardware's does: while live it is the readings' own count,
@@ -960,7 +960,7 @@ static void vibration_send(uint64_t handle, uint64_t value) {
     memcpy(v, GP(value), sizeof v);
     const int dev = (G32(handle) >> 16) & 1;
     rumble_map(v, amp[dev]);
-    {   /* (hookshot, issue 263) what the game asks for: the first values, then a count now and then */
+    {   /* (relink, issue 263) what the game asks for: the first values, then a count now and then */
         static long long n, strong;
         static float peak;
         if (v[0] > peak) peak = v[0];

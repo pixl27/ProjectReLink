@@ -271,7 +271,7 @@ enum class Reg : u64 {
 static_assert(static_cast<int>(Reg::RZ) == 255);
 
 constexpr size_t NUM_USER_REGS = 255;
-constexpr size_t NUM_REGS = 512;   // (hookshot: 256-510 are REGMAP_nx2's extended registers)
+constexpr size_t NUM_REGS = 512;   // (relink: 256-510 are REGMAP_nx2's extended registers)
 
 [[nodiscard]] constexpr Reg operator+(Reg reg, int num) {
     if (reg == Reg::RZ) {

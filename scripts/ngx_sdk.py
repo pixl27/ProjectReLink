@@ -1,6 +1,6 @@
-"""NVIDIA's DLSS SDK files for a local build with NVIDIA DLSS Super Resolution (HOOKSHOT_NGX_SDK, gpu/vk/vk_dlss.cpp).
+"""NVIDIA's DLSS SDK files for a local build with NVIDIA DLSS Super Resolution (RELINK_NGX_SDK, gpu/vk/vk_dlss.cpp).
 
-NVIDIA's files are not part of Hookshot and are never committed or bundled: they are under NVIDIA's own license (the DLSS
+NVIDIA's files are not part of ReLink and are never committed or bundled: they are under NVIDIA's own license (the DLSS
 SDK's LICENSE.txt, fetched beside them; read it before using them). This fetches them from NVIDIA's DLSS repository at one
 pinned release, each file checked against its SHA-256, into <sdk folder>:
   - LICENSE.txt and the SDK's headers (include/), the same for every platform;
@@ -13,12 +13,12 @@ Usage:  python -I scripts/ngx_sdk.py [--accept-nvidia-license] [--platform linux
                                      [--runtime-dir <folder>] [--build-only] [<sdk folder>]
   <sdk folder>: default build-linux/ngx-sdk on Linux, work/ngx-sdk on Windows
   --game: the DLSS runtime copied into <game folder>/ngx too, where the game looks first (nx2/make_game.py does the same for
-          the folder it builds when HOOKSHOT_NGX_SDK is set)
-  --runtime-dir: the runtime copied into that folder instead (Linux: $XDG_DATA_HOME/hookshot/ngx; Windows:
-          %LOCALAPPDATA%\\Hookshot\\ngx. RX_VK_DLSS_DIR names another when the game runs)
+          the folder it builds when RELINK_NGX_SDK is set)
+  --runtime-dir: the runtime copied into that folder instead (Linux: $XDG_DATA_HOME/relink/ngx; Windows:
+          %LOCALAPPDATA%\\ReLink\\ngx. RX_VK_DLSS_DIR names another when the game runs)
   --build-only: only what the build reads, not DLSS's runtime (CI's link check)
-  --accept-nvidia-license: NVIDIA's license accepted without the question (scripts, the Hookshot Builder's DLSS tick, CI)
-Then build with HOOKSHOT_NGX_SDK=<sdk folder>.
+  --accept-nvidia-license: NVIDIA's license accepted without the question (scripts, the ReLink Builder's DLSS tick, CI)
+Then build with RELINK_NGX_SDK=<sdk folder>.
 """
 import argparse
 import hashlib
@@ -75,9 +75,9 @@ PLATFORMS = {
 
 NOTICE = """\
 NVIDIA DLSS: this downloads NVIDIA's DLSS SDK (release v310.9.16) from github.com/NVIDIA/DLSS.
-NVIDIA's files are NVIDIA's, not Hookshot's, and are under NVIDIA's own license, the NVIDIA RTX SDKs license:
+NVIDIA's files are NVIDIA's, not ReLink's, and are under NVIDIA's own license, the NVIDIA RTX SDKs license:
   %s
-(saved as LICENSE.txt beside the files). Using them means accepting it. Hookshot never includes or redistributes them:
+(saved as LICENSE.txt beside the files). Using them means accepting it. ReLink never includes or redistributes them:
 they stay on this PC, in the SDK folder and the game folder's ngx folder. Never share a game folder built with them.""" % LICENSE_URL
 
 
@@ -199,7 +199,7 @@ def main(argv=None):
           flush=True)
     for folder in ([os.path.join(a.game, "ngx")] if a.game else []) + ([a.runtime_dir] if a.runtime_dir else []):
         print("ngx-sdk: the DLSS runtime in %s" % install_runtime(sdk, a.platform, folder), flush=True)
-    print("ngx-sdk: build with HOOKSHOT_NGX_SDK=%s" % sdk, flush=True)
+    print("ngx-sdk: build with RELINK_NGX_SDK=%s" % sdk, flush=True)
     return 0
 
 

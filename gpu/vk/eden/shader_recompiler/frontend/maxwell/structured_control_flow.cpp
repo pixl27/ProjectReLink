@@ -913,7 +913,7 @@ private:
                     }
                     break;
                 }
-                // (hookshot, from Lichii) Returns count at any depth: a nested early return (an EXIT under two conditions,
+                // (relink, from Lichii) Returns count at any depth: a nested early return (an EXIT under two conditions,
                 // as native fragment programs end their discarded invocations) would otherwise leave before the demote
                 // moved to the end, and write its colours.
                 if (op == IR::Opcode::Epilogue) {

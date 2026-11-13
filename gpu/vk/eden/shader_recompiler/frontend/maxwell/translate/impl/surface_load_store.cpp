@@ -159,7 +159,7 @@ unsigned SwizzleMask(u64 swizzle) {
 IR::Value MakeColor(IR::IREmitter& ir, TranslatorVisitor& v, IR::Reg reg, int num_regs) {
     std::array<IR::U32, 4> colors;
     for (int i = 0; i < num_regs; ++i) {
-        colors[static_cast<size_t>(i)] = v.X(reg + i);   // (hookshot: through REGMAP_nx2's map)
+        colors[static_cast<size_t>(i)] = v.X(reg + i);   // (relink: through REGMAP_nx2's map)
     }
     for (int i = num_regs; i < 4; ++i) {
         colors[static_cast<size_t>(i)] = ir.Imm32(0);

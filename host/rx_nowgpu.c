@@ -2,7 +2,7 @@
    has no wgpu-native release (nx2/build.py: "building without the renderer"): host/rx_backend.c and nn_hid.c still
    name its functions, so the executable did not link. Built only then (build.py leaves this file out when
    wgpu-native is there). With RX_BACKEND=vulkan none of the wgr_* calls is made; wgr_start fails, so a missing or
-   unusable hookshot_vk.dll shows as "no renderer" instead of a game that runs with nothing drawn. */
+   unusable relink_vk.dll shows as "no renderer" instead of a game that runs with nothing drawn. */
 #include "hos.h"
 #include <stdint.h>
 

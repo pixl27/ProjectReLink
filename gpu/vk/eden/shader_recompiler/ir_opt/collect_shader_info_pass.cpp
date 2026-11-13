@@ -691,7 +691,7 @@ void VisitUsages(Info& info, IR::Inst& inst) {
         break;
     case IR::Opcode::GlobalAtomicAddF32:
     case IR::Opcode::StorageAtomicAddF32:
-        // (eglantine: F32 too, for the native float add where the device has it, emit_spirv_atomic.cpp)
+        // (relink: F32 too, for the native float add where the device has it, emit_spirv_atomic.cpp)
         info.used_storage_buffer_types |= IR::Type::U32 | IR::Type::F32;
         info.uses_atomic_f32_add = true;
         break;
@@ -995,7 +995,7 @@ void CollectShaderInfoPass(Environment& env, IR::Program& program) {
         case Stage::VertexA:
         case Stage::VertexB:
             return 0x110u;
-        case Stage::Task:   // (hookshot: NVN2's tables, gpu/vk/vk_bank.cpp. At the vertex and tessellation stages' here no buffer of
+        case Stage::Task:   // (relink: NVN2's tables, gpu/vk/vk_bank.cpp. At the vertex and tessellation stages' here no buffer of
             return 0x670u;  // these programs counted as used, and every read through a pointer into one gave 0)
         case Stage::Mesh:
             return 0x770u;

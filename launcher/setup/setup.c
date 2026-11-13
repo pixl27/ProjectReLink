@@ -331,7 +331,7 @@ static void prune(const wchar_t *versions, const wchar_t *downloads, const char 
 
 static void w(const char *s8, wchar_t *out, int n) { MultiByteToWideChar(CP_UTF8, 0, s8, -1, out, n); }
 
-/* (HOOKSHOT_SETUP_LIST=<url>: another list, for testing a release before it is the latest) */
+/* (RELINK_SETUP_LIST=<url>: another list, for testing a release before it is the latest) */
 /* ---- The GitHub API's link for a release file (after PR 546 by nicholasgower, issue 544). GitHub answered the release
    page's cached link (releases/latest/download/...) with 504 for hours on 2026-11-08 while its API still answered: the API
    gives the file's own asset link, which redirects to a fresh download. Used when the release link fails. ---- */
@@ -428,7 +428,7 @@ static void wanted_tag(char *out, size_t n) {
    checking: players pressed Update and stayed on v2.0.3, 2026-11-08) */
 static const char *manifest_url(void) {
     static char u[1024];
-    const char *e = getenv("HOOKSHOT_SETUP_LIST");
+    const char *e = getenv("RELINK_SETUP_LIST");
     char tag[128];
     wanted_tag(tag, sizeof tag);
     if (e && *e) snprintf(u, sizeof u, "%s", e);
@@ -451,8 +451,8 @@ static DWORD WINAPI work(LPVOID unused) {
     wchar_t base[MAX_PATH], downloads[MAX_PATH];
     if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, base) != S_OK) fail(L"No local application data folder.");
     wcscat(base, L"\\ReLink");
-    {   /* (HOOKSHOT_SETUP_BASE=<folder>: install there instead, for testing installs and updates without touching the real one) */
-        const wchar_t *tb = _wgetenv(L"HOOKSHOT_SETUP_BASE");
+    {   /* (RELINK_SETUP_BASE=<folder>: install there instead, for testing installs and updates without touching the real one) */
+        const wchar_t *tb = _wgetenv(L"RELINK_SETUP_BASE");
         if (tb && *tb) wcsncpy(base, tb, MAX_PATH - 1), base[MAX_PATH - 1] = 0;
     }
     swprintf(downloads, MAX_PATH, L"%ls\\downloads", base);
@@ -687,7 +687,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show) {
             wchar_t *slash = wcsrchr(self, L'\\');
             if (slash) *slash = 0;
             wchar_t game[MAX_PATH], cmd[MAX_PATH + 4];
-            swprintf(game, MAX_PATH, L"%ls\\bin\\hookshot.exe", self);
+            swprintf(game, MAX_PATH, L"%ls\\bin\\relink-game.exe", self);
             /* (only beside a game: a setup someone renamed ReLink.exe, in Downloads, is still the setup) */
             if (GetFileAttributesW(game) != INVALID_FILE_ATTRIBUTES) {
                 swprintf(g_cmdline, 2047, L"--launch \"%ls\"", self);

@@ -1,5 +1,5 @@
 /* (linux) The Win32 calls of host/posix/windows.h, on POSIX. Built into the executable and, on its own, into
-   hookshot_vk.so (each its own copy, -Bsymbolic: the executable exports nothing of it). */
+   relink_vk.so (each its own copy, -Bsymbolic: the executable exports nothing of it). */
 #define _GNU_SOURCE
 #include <windows.h>
 #include <mmsystem.h>
@@ -229,7 +229,7 @@ HANDLE CreateThread(void *attr, SIZE_T stack, LPTHREAD_START_ROUTINE fn, void *a
     t->fn = fn, t->arg = arg, t->refs = 2;   /* (the handle's and the thread's own) */
     pthread_attr_t a;
     pthread_attr_init(&a);
-    /* (Windows' default is the executable's: 8 MB here, as hookshot.exe's /stack; guest threads ask 64 MB) */
+    /* (Windows' default is the executable's: 8 MB here, as relink-game.exe's /stack; guest threads ask 64 MB) */
     pthread_attr_setstacksize(&a, stack ? (stack + 0xFFFF) & ~(SIZE_T)0xFFFF : (8u << 20));
     pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
     if (flags & CREATE_SUSPENDED) fprintf(stderr, "[win32] CreateThread: CREATE_SUSPENDED is not supported: started at once\n");
@@ -1230,12 +1230,12 @@ DWORD GetWindowThreadProcessId(HWND w, DWORD *pid) {
 }
 int MessageBoxA(HWND w, LPCSTR text, LPCSTR caption, UINT type) {
     (void)w, (void)type;
-    fprintf(stderr, "%s: %s\n", caption ? caption : "Hookshot", text ? text : "");
+    fprintf(stderr, "%s: %s\n", caption ? caption : "ReLink", text ? text : "");
     typedef int (*ShowFn)(uint32_t, const char *, const char *, void *);   /* (SDL3's and SDL2's alike; its result unread) */
     void *sdl = dlopen("libSDL3.so.0", RTLD_NOW | RTLD_NOLOAD);
     if (!sdl) sdl = dlopen("libSDL2-2.0.so.0", RTLD_NOW | RTLD_NOLOAD);
     ShowFn show = sdl ? (ShowFn)dlsym(sdl, "SDL_ShowSimpleMessageBox") : NULL;
-    if (show) show(0x10, caption ? caption : "Hookshot", text ? text : "", NULL);
+    if (show) show(0x10, caption ? caption : "ReLink", text ? text : "", NULL);
     return 1;
 }
 

@@ -1,5 +1,5 @@
 #version 450
-// (hookshot) OoT's gameplay TAAU network (fd029a317a9a4b94) stood in for (vk_draw.cpp taau_stand_in): its input, the
+// (relink) OoT's gameplay TAAU network (fd029a317a9a4b94) stood in for (vk_draw.cpp taau_stand_in): its input, the
 // scene colour in RGB9E5 that its first passes made, sampled with a linear filter and written to its output at the
 // output's size. The network's translation loses the blue channel (the yellow cast); this keeps the picture right at
 // the cost of its temporal anti-aliasing.

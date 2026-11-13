@@ -6,11 +6,11 @@ namespace ReLink;
 /// A game folder: where its program is, which release built it, and whether it can be updated.
 static class Game
 {
-    /// The game's program: bin\hookshot.exe below the folder's small launcher, or hookshot.exe in a folder built from the sources
+    /// The game's program: bin\relink-game.exe below the folder's small launcher, or relink-game.exe in a folder built from the sources
     public static string Exe(string folder)
     {
-        var inBin = Path.Combine(folder, "bin", "hookshot.exe");
-        return File.Exists(inBin) ? inBin : Path.Combine(folder, "hookshot.exe");
+        var inBin = Path.Combine(folder, "bin", "relink-game.exe");
+        return File.Exists(inBin) ? inBin : Path.Combine(folder, "relink-game.exe");
     }
 
     public static bool Installed(string? folder)
@@ -27,7 +27,7 @@ static class Game
     {
         try
         {
-            foreach (var line in File.ReadAllLines(Path.Combine(folder, "hookshot_version.txt")))
+            foreach (var line in File.ReadAllLines(Path.Combine(folder, "relink_version.txt")))
                 if (line.StartsWith("version=")) return line[8..].Trim() is { Length: > 0 } v ? v : null;
         }
         catch (Exception) { }
@@ -36,10 +36,10 @@ static class Game
 
     /// The folder keeps the game files it was built from: an update needs nothing else
     public static bool KeepsGameFiles(string folder) =>
-        Directory.Exists(Path.Combine(folder, ".hookshot_exefs")) && Directory.Exists(Path.Combine(folder, "romfs"));
+        Directory.Exists(Path.Combine(folder, ".relink_exefs")) && Directory.Exists(Path.Combine(folder, "romfs"));
 }
 
-/// The options: the game's own file (hookshot_options.ini in the game folder, the rows of the in-game menu: the game reads it at
+/// The options: the game's own file (relink_options.ini in the game folder, the rows of the in-game menu: the game reads it at
 /// its start and writes it when the menu changes something), language.txt, and the launcher's own (launcher.ini in ReLink's
 /// folder).
 sealed class Settings
@@ -58,7 +58,7 @@ sealed class Settings
     readonly Dictionary<string, string> other = new();   // (keys of the game's file this launcher does not know: kept)
 
     static string LauncherIni => Path.Combine(Storage.Base, "launcher.ini");
-    string GameIni => Path.Combine(Folder, "hookshot_options.ini");
+    string GameIni => Path.Combine(Folder, "relink_options.ini");
     string LanguageFile => Path.Combine(Folder, "language.txt");
 
     static Dictionary<string, string> ReadIni(string path)

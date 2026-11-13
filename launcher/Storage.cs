@@ -19,8 +19,8 @@ static class Storage
     /// What a first install needs free on the disk the game goes to
     public const long NeededBytes = 60L << 30;
 
-    /// HOOKSHOT_KEEP_BUILD_FILES=1: the build files stay after a build (quick updates); otherwise they go when the game is ready
-    public static bool KeepBuildFiles => Environment.GetEnvironmentVariable("HOOKSHOT_KEEP_BUILD_FILES") is { Length: > 0 } v && v != "0";
+    /// RELINK_KEEP_BUILD_FILES=1: the build files stay after a build (quick updates); otherwise they go when the game is ready
+    public static bool KeepBuildFiles => Environment.GetEnvironmentVariable("RELINK_KEEP_BUILD_FILES") is { Length: > 0 } v && v != "0";
 
     /// Where builds keep their files: the folder the player chose (work.txt), else ReLink's own
     public static string Work
@@ -57,7 +57,7 @@ static class Storage
 
     /// What a build makes in its work folder (make_game.py, lift.py, build.py)
     static IEnumerable<string> WorkParts(string work) =>
-        new[] { "objcache", "sa", "exefs", "probe", "image", "system_headers.txt", "hot_funcs.txt", "hot_order.txt", "hookshot_pieces.prof", "hookshot.res" }
+        new[] { "objcache", "sa", "exefs", "probe", "image", "system_headers.txt", "hot_funcs.txt", "hot_order.txt", "relink_pieces.prof", "relink.res" }
             .Select(n => Path.Combine(work, n));
 
     /// The launcher versions that stay: the one installed last (current.txt) and the one running

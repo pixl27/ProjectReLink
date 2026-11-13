@@ -1,6 +1,6 @@
 /* Weak stand-ins for the WebGPU renderer (gpu/render, renamed wgr_* by rx_wgpu_names.h) and its debug hooks, for a build
    without wgpu-native: build.py then skips gpu/render, and host/rx_backend.c and host/nn_hid.c still reference these.
-   The Vulkan back end (RX_BACKEND=vulkan, hookshot_vk.dll) does the rendering; wgr_start fails, so a machine where the
+   The Vulkan back end (RX_BACKEND=vulkan, relink_vk.dll) does the rendering; wgr_start fails, so a machine where the
    Vulkan back end cannot start reports it instead of falling back. With wgpu-native present the real definitions win. */
 #include <stdint.h>
 

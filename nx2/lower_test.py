@@ -1,4 +1,4 @@
-"""(hookshot) Builds gpu/vk/tests/lower_test.exe and runs it over a folder of dumped native programs
+"""(relink) Builds gpu/vk/tests/lower_test.exe and runs it over a folder of dumped native programs
 (RX_VK_DUMP_FAILED=<folder> in a run): what the Ampere -> Maxwell lowering still rejects, by reason and opcode.
     python -I nx2/lower_test.py <folder> [samples]
 """

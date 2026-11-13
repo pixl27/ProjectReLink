@@ -1,5 +1,5 @@
 /* The game folder's path, for the files the game keeps there (image.bin, romfs, saves, settings, caches, logs).
-   On Windows the game is bin\hookshot.exe since the launcher came: hookshot.exe in the folder is the launcher (the builder's
+   On Windows the game is bin\relink-game.exe since the launcher came: relink-game.exe in the folder is the launcher (the builder's
    setup in launch mode), the game and its DLLs are in bin\, the game's files stay in the folder. hos_game_path_a/_w answer as
    GetModuleFileName(NULL, ...) does, but with the folder's path when the exe is in a "bin" folder beside image.bin, so code that
    strips the exe's name and adds a file's finds the folder's file. Modules (DLLs) are still loaded from beside the exe itself. */
@@ -31,7 +31,7 @@ static inline DWORD hos_game_path_a(char *buf, DWORD size) {
     memcpy(probe, buf, root);
     strcpy(probe + root, "image.bin");
     if (GetFileAttributesA(probe) == INVALID_FILE_ATTRIBUTES) return n;
-    memmove(buf + root, name, strlen(name) + 1);   /* (folder\hookshot.exe) */
+    memmove(buf + root, name, strlen(name) + 1);   /* (folder\relink-game.exe) */
     return (DWORD)strlen(buf);
 }
 
@@ -57,8 +57,8 @@ static inline DWORD hos_game_path_w(wchar_t *buf, DWORD size) {
 #else
 #include <unistd.h>
 #include <windows.h>   /* (linux: host/posix's, for DWORD and GetModuleFileNameA) */
-/* (Linux) the same bin/ layout when the folder was built by the packaged builder: hookshot in the folder is the
-   launcher script, and the game is bin/hookshot. A development build has no bin/ and this is GetModuleFileName. */
+/* (Linux) the same bin/ layout when the folder was built by the packaged builder: relink in the folder is the
+   launcher script, and the game is bin/relink. A development build has no bin/ and this is GetModuleFileName. */
 static inline DWORD hos_game_path_a(char *buf, DWORD size) {
     DWORD n = GetModuleFileNameA(NULL, buf, size);
     if (!n || n >= size) return n;

@@ -15,7 +15,7 @@
    The runtime commits what it hands out (image, system region, heap, address regions: hos_commit), because host
    APIs given guest buffers (ReadFile into a game buffer) fail on reserved pages without raising an exception. A
    guest or host access to a page nothing committed is committed on first touch, 64 KB at a time, by the handler. */
-/* (eglantine) Windows answers VirtualQuery (and the driver's import of a host pointer, vkAllocateMemory) with the run of
+/* (relink) Windows answers VirtualQuery (and the driver's import of a host pointer, vkAllocateMemory) with the run of
    pages after the address that share its state and protection, found by walking them: ~2.3 ms a GB. The heap is one
    committed run of many GB, so each import of a new GPU pool cost ~28-44 ms twice (query, then the driver's own) on the
    replay thread: the 90-120 ms hitches on the way to Saria (hs168). One page every HOS_COMMIT_MARK_MB (64) of every
@@ -49,7 +49,7 @@ void hos_commit(uint64_t addr, uint64_t size) {
             }
         }
     } else {
-        commit_marks(lo, hi);   /* (eglantine) an RWX page every 64 MB of a commit: VirtualQuery's walks stay short (pool imports 90-120 ms -> 2-7 ms) */
+        commit_marks(lo, hi);   /* (relink) an RWX page every 64 MB of a commit: VirtualQuery's walks stay short (pool imports 90-120 ms -> 2-7 ms) */
     }
 }
 
@@ -73,7 +73,7 @@ static LONG CALLBACK commit_on_touch(EXCEPTION_POINTERS *info) {
     if (guest < 0x100000) return EXCEPTION_CONTINUE_SEARCH;   /* (a null pointer: the game's own fault) */
     MEMORY_BASIC_INFORMATION mbi;
     if (!VirtualQuery(p, &mbi, sizeof mbi)) return EXCEPTION_CONTINUE_SEARCH;
-    /* (eglantine, 10/11 08:40) Committed and writable by now: another thread touched the same 64 KB first and its handler
+    /* (relink, 10/11 08:40) Committed and writable by now: another thread touched the same 64 KB first and its handler
        committed them between this thread's fault and this query. The access is tried again; it was taken for a crash
        (hs60_off: a worker's read at guest 0x7f1e31b8a0, the game closed). Rare while only FreeMemoryPages decommitted; freed
        regions are decommitted too since this night (hos_region_release_gaps), and the game's workers read them in batches */
@@ -83,7 +83,7 @@ static LONG CALLBACK commit_on_touch(EXCEPTION_POINTERS *info) {
     static volatile LONG touched;
     const LONG nth = InterlockedIncrement(&touched);
     if (nth <= 16) hos_log("mem: %#llx committed on first touch (nothing handed it out)", (unsigned long long)guest);
-    else if (!(nth & (nth - 1))) hos_log("mem: %ld first touches so far (64 KB committed at each)", (long)nth);   /* (eglantine: at each power of two) */
+    else if (!(nth & (nth - 1))) hos_log("mem: %ld first touches so far (64 KB committed at each)", (long)nth);   /* (relink: at each power of two) */
     return VirtualAlloc(GP(guest & ~0xFFFFULL), 0x10000, MEM_COMMIT, PAGE_READWRITE) ? EXCEPTION_CONTINUE_EXECUTION
                                                                                       : EXCEPTION_CONTINUE_SEARCH;
 }
@@ -133,7 +133,7 @@ static LONG WINAPI report_crash(EXCEPTION_POINTERS *info) {
         hos_log("%s", hb);
     }
 #else
-    {   /* (hookshot) Linux: the host stack as module+offset, from glibc (the frames above the signal's included): the
+    {   /* (relink) Linux: the host stack as module+offset, from glibc (the frames above the signal's included): the
            x64 unwind data is Windows' */
         void *pcs[24];
         const int got = backtrace(pcs, 24);
@@ -453,7 +453,7 @@ static DWORD WINAPI thread_times_thread(void *p) {
     return 0;
 }
 
-/* (hookshot) HOS_SAMPLE_ALL=<path> (with HOS_PROFILE): while <path>.go exists, every 2 ms every guest thread and the
+/* (relink) HOS_SAMPLE_ALL=<path> (with HOS_PROFILE): while <path>.go exists, every 2 ms every guest thread and the
    renderer's threads (descriptions starting "mkw_vk") are sampled at the same instant: one line per thread,
    "<ms> <name>|<frames>", the frames module+offset leaf first (16 at most). What each thread does while another waits:
    the frame's critical path (scripts/crit.py) */
@@ -663,7 +663,7 @@ int hos_blank_cached_icon(const char *guest, const char *host) { (void)guest, (v
 int hos_ultrawide_redirect(const char *guest, char *out, size_t cap) { (void)guest, (void)out, (void)cap; return 0; }
 uint64_t hos_title_input(uint64_t buttons) { return buttons; }   /* (totk_title.c) */
 uint64_t hos_frame_step_buttons(uint64_t buttons) { return buttons; }   /* (nn_vi.c) */
-/* (hookshot) hos_sdl_pads, hos_sdl_rumble: host/pad_sdl.c (from TOTKPort; SDL2.dll beside the exe) */
+/* (relink) hos_sdl_pads, hos_sdl_rumble: host/pad_sdl.c (from TOTKPort; SDL2.dll beside the exe) */
 
 /* TOTK's emulated GPU (gpu.c, its Maxwell command processor), which nvdrv.c and the debug commands call into: MKW
    has none (its NVN2 calls go to nvn_native.c), so a submission is only counted. */

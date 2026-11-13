@@ -69,7 +69,7 @@ int main() {
     puts("PASS: actual create initialization orders colour/depth clears before dependent commands; BC/ASTC excluded");
 }
 '''
-    with tempfile.TemporaryDirectory(prefix='hookshot-init-spy-') as temp:
+    with tempfile.TemporaryDirectory(prefix='relink-init-spy-') as temp:
         cpp = Path(temp) / 'spy.cpp'
         exe = Path(temp) / 'spy.exe'
         cpp.write_text(fixture, encoding='utf-8')

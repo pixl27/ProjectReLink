@@ -1,4 +1,4 @@
-// (hookshot) HMMA_nx2: the pseudo instruction frontend/ampere/lower_to_maxwell.h emits for a native
+// (relink) HMMA_nx2: the pseudo instruction frontend/ampere/lower_to_maxwell.h emits for a native
 // HMMA.16816.F16 when the host has cooperative matrices (Shader::Ampere::native_matrix_multiply).
 // D(16x8) = A(16x16) * B(16x8) + C over the 32 lanes, f16 throughout; each lane holds its
 // fragments in registers as on the console: A in four (a..a+3), B in two, C and D in two.

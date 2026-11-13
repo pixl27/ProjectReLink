@@ -38,8 +38,8 @@ struct Profile {
     bool support_workgroup_layout_8bit_access{};
     bool support_workgroup_layout_16bit_access{};
     bool support_shader_quad_control{};
-    bool support_maximal_reconvergence{};   // (eglantine: VK_KHR_shader_maximal_reconvergence, EDEN_NX2_MAXRECONV=1)
-    bool support_float32_atomic_add{};      // (eglantine: VK_EXT_shader_atomic_float's shaderBufferFloat32AtomicAdd)
+    bool support_maximal_reconvergence{};   // (relink: VK_KHR_shader_maximal_reconvergence, EDEN_NX2_MAXRECONV=1)
+    bool support_float32_atomic_add{};      // (relink: VK_EXT_shader_atomic_float's shaderBufferFloat32AtomicAdd)
     bool support_quad_shuffles{};
     bool support_vote{};
     bool support_shuffle_relative{};

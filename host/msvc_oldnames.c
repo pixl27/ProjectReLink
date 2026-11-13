@@ -1,4 +1,4 @@
-/* (hookshot, issue 439) oldnames.lib is the aliases from the C runtime's pre-2015 (non-underscore) names to its current ones.
+/* (relink, issue 439) oldnames.lib is the aliases from the C runtime's pre-2015 (non-underscore) names to its current ones.
    clang asks for it as a default library for the MSVC target, but recent Windows SDKs no longer ship it (an older SDK has it
    in ucrt\x64; Visual Studio has its own copy in its lib folder), so a link whose library paths reach neither failed after
    the whole game had been compiled. toolchain.native_link() no longer asks for it, and this file holds the aliases the

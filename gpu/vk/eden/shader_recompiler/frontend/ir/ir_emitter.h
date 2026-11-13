@@ -401,7 +401,7 @@ public:
     [[nodiscard]] U32 ShuffleButterfly(const IR::U32& value, const IR::U32& index,
                                        const IR::U32& clamp, const IR::U32& seg_mask);
     [[nodiscard]] U32 QuadBroadcast(const IR::U32& value, const IR::U32& lane);
-    // (hookshot) the subgroup's 16x8x16 f16 matrix multiply: a U32x4, b and c U32x2 fragments
+    // (relink) the subgroup's 16x8x16 f16 matrix multiply: a U32x4, b and c U32x2 fragments
     [[nodiscard]] Value MatrixMulAddF16(const Value& a, const Value& b, const Value& c);
     [[nodiscard]] U32 QuadSwap(const IR::U32& value, const IR::U32& direction);
     [[nodiscard]] F32 FSwizzleAdd(const F32& a, const F32& b, const U32& swizzle,

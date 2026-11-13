@@ -20,7 +20,7 @@ namespace {
 } // Anonymous namespace
 
 IR::U32 TranslatorVisitor::X(IR::Reg reg) {
-    return ir.GetReg(MapReg(reg));   // (hookshot: REGMAP_nx2's extended registers)
+    return ir.GetReg(MapReg(reg));   // (relink: REGMAP_nx2's extended registers)
 }
 
 IR::U64 TranslatorVisitor::L(IR::Reg reg) {

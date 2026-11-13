@@ -21,7 +21,7 @@
 #include "vk_state.h"
 
 namespace mkwvk {
-// (hookshot) the seed's compute programs (vk_shader.cpp seed_program) have no bound program to read their layout from. Translated
+// (relink) the seed's compute programs (vk_shader.cpp seed_program) have no bound program to read their layout from. Translated
 // with Maxwell's table instead, one kept the right key and the wrong storage buffers, and play would have used it as it was
 thread_local const uint8_t* seed_cs_control = nullptr;
 namespace {
@@ -36,11 +36,11 @@ struct SampReg {
     bool ok = false;
 };
 std::mutex reg_mu;
-std::unordered_map<uint64_t, uint64_t> first_reg_frame;   // (eglantine, diagnostic: texture_first_registered below)
+std::unordered_map<uint64_t, uint64_t> first_reg_frame;   // (relink, diagnostic: texture_first_registered below)
 std::vector<TexReg> tex_regs;
 std::vector<SampReg> samp_regs;
 std::unordered_map<uint64_t, std::vector<int>> regs_by_serial;
-// (eglantine) textures made ahead of their first draw (vk_texture.cpp texture_prefetch_some): each texture object the game
+// (relink) textures made ahead of their first draw (vk_texture.cpp texture_prefetch_some): each texture object the game
 // registers for the first time (a new serial) is queued; its image is made a few at a time between frames
 std::deque<nvn_tex> prefetch_q;
 std::unordered_set<uint64_t> prefetch_seen;
@@ -52,7 +52,7 @@ std::unique_ptr<std::atomic<uint32_t>[]> slot_versions{new std::atomic<uint32_t>
 
 // NVN2 compute's c0: the workgroup counts at 0, then the uniform buffer table, the storage buffer table, texture
 // handles and image handles, as many slots of each as the control section says (+0xb1, +0xb2, +0xb3, +0xb6)
-// (hookshot) with push constants first, right after the counts: +0xa9 is their size in words (OoT's NV12 -> RGBA
+// (relink) with push constants first, right after the counts: +0xa9 is their size in words (OoT's NV12 -> RGBA
 // shader: 15, reading 0x10..0x4b; its upscaler's last pass: 21), the area rounded to 16 bytes; +0xba is the whole
 // bank's size (0x10 + push area + the tables), which this matches for every program OoT dispatches.
 struct CsLayout {
@@ -85,7 +85,7 @@ CsLayout cs_layout(const NvnState& s) {
         host->gpu_read(s.prog.sd[i].control + 0x56, &st, 2);
         if (magic != 0x98761234 || st != 5) continue;
         l = cs_layout_of(c);
-        static const bool log_cs = getenv("RX_VK_LOG_CS") != nullptr;   // (hookshot) the control bytes 0xb0..0xbf
+        static const bool log_cs = getenv("RX_VK_LOG_CS") != nullptr;   // (relink) the control bytes 0xb0..0xbf
         if (log_cs) {
             char hex[700];
             int k = 0;
@@ -113,7 +113,7 @@ uint32_t compute_ssbo_table(const NvnState& s, uint32_t* count, uint32_t* layout
     return l.ssbo_at();
 }
 
-/// (hookshot, #940) For the seed's compute programs (vk_shader.cpp seed_compute), whether c0+offset holds a buffer's address in play:
+/// (relink, #940) For the seed's compute programs (vk_shader.cpp seed_compute), whether c0+offset holds a buffer's address in play:
 /// the address word of an entry of the uniform or storage buffer table its control section lays out. Nothing is bound before the
 /// game, so the storage buffer pass's port (EDEN_NX2_GM_LEGACY=0), which binds an access to a pointer only when that pointer is
 /// mapped (Env::IsCbufStorageBufferPointer), found none and left every access to the run-time search, under the key play then used
@@ -189,7 +189,7 @@ void register_texture_copy(int id, const nvn_tex& tex, const nvn_view* v) {
     slot_versions[id].fetch_add(1, std::memory_order_acq_rel);
     reg_gen++;
 }
-// (eglantine, diagnostic) the frame each texture storage was first registered in (by GPU address): how long before its
+// (relink, diagnostic) the frame each texture storage was first registered in (by GPU address): how long before its
 // first draw the game made a texture known, i.e. whether its image could be made ahead (vk_texture.cpp logs it at bursts)
 /// (vk_texture.cpp) the next texture queued for making ahead that the game still has registered, false when none is left
 bool texture_prefetch_pop(nvn_tex* out) {
@@ -269,7 +269,7 @@ void driver_bank(const NvnState& s, int bank, int stage, uint8_t d[0xA00]) {
     }
 }
 
-// (hookshot) What task and mesh programs read through pointers: the words of their small storage buffers that are GPU addresses
+// (relink) What task and mesh programs read through pointers: the words of their small storage buffers that are GPU addresses
 // outside every binding, gathered into up to three regions of one pool each. c0 from 0x880 (after the mesh table, which nothing else
 // uses) gives them to the programs as a table of storage buffers (translate_program.cpp AddGlobalTables). Without it those reads
 // gave 0: skinned and instanced models lost their bones and collapsed into spikes.
@@ -357,7 +357,7 @@ void driver_bank_fill(const NvnState& s, int bank, int stage, uint8_t* d, uint32
     if (stage == 5) {
         const CsLayout l = cs_layout(s);
         for (uint32_t i = 0; i < 3; i++) put(4 * i, s.grid[i]);
-        for (uint32_t o = 0; o + 4 <= l.push && 0x10 + o + 4 <= n; o += 4) {   // (hookshot) the push area
+        for (uint32_t o = 0; o + 4 <= l.push && 0x10 + o + 4 <= n; o += 4) {   // (relink) the push area
             uint32_t v = 0;
             if (o + 4 <= s.cs_push_n) std::memcpy(&v, s.cs_push + o, 4);
             put(0x10 + o, v);
@@ -391,7 +391,7 @@ void driver_bank_fill(const NvnState& s, int bank, int stage, uint8_t* d, uint32
     if (stage == 0) put(0x610, std::bit_cast<uint32_t>(2047.9375f));
 }
 
-/// (hookshot) the bound compute program's texture and image slot counts (its control section's)
+/// (relink) the bound compute program's texture and image slot counts (its control section's)
 void cs_slot_counts(const NvnState& s, uint32_t* tex, uint32_t* img) {
     const CsLayout l = cs_layout(s);
     *tex = l.tex, *img = l.img;
@@ -416,7 +416,7 @@ uint32_t driver_bank_word(const NvnState& s, int bank, int stage, uint32_t offse
         auto entry = [&](const nvn_p_bind_buf& e, uint32_t in) -> uint32_t {
             return in == 0 ? lo(e.addr) : in == 4 ? hi(e.addr) : in == 8 ? (uint32_t)e.size : 0;
         };
-        if (offset < l.ubo_at()) {   // (hookshot) the push area
+        if (offset < l.ubo_at()) {   // (relink) the push area
             uint32_t v = 0;
             if (offset - 0x10 + 4 <= s.cs_push_n) std::memcpy(&v, s.cs_push + (offset - 0x10), 4);
             return v;

@@ -9,7 +9,7 @@ namespace Shader::Optimization {
 namespace {
 IR::Opcode Replace(IR::Opcode op) {
     switch (op) {
-    case IR::Opcode::SelectF16:   // (hookshot: left as F16, it selected between values now 32 bits wide)
+    case IR::Opcode::SelectF16:   // (relink: left as F16, it selected between values now 32 bits wide)
         return IR::Opcode::SelectF32;
     case IR::Opcode::FPAbs16:
         return IR::Opcode::FPAbs32;
@@ -137,9 +137,9 @@ void LowerFp16ToFp32(IR::Program& program) {
             inst.ReplaceOpcode(Replace(inst.GetOpcode()));
         }
     }
-    // (hookshot) A half's bits and a half, now held in 32-bit floats: converted, not reinterpreted. Left as bitcasts they took a
+    // (relink) A half's bits and a half, now held in 32-bit floats: converted, not reinterpreted. Left as bitcasts they took a
     // 32-bit float's bits for a half's, and Switch 2 shaders that move halves through integers drew noise on cards without f16
-    // shaders (GTX 10xx, Hookshot issue 98). After the loop above, so every float they meet is 32 bits already
+    // shaders (GTX 10xx, upstream issue 98). After the loop above, so every float they meet is 32 bits already
     for (IR::Block* const block : program.blocks) {
         for (IR::Inst& inst : block->Instructions()) {
             if (inst.GetOpcode() == IR::Opcode::BitCastU16F16) {

@@ -1,5 +1,5 @@
 """Offline profile of a thread sampled with HOS_SAMPLE + HOS_SAMPLE_FILE (host/mkw_glue.c, mkw-recomp work/prof.py): each line is a stack of
-module+offset frames, leaf first. Frames in hookshot_vk.dll / hookshot.exe are named from the linker maps beside them.
+module+offset frames, leaf first. Frames in relink_vk.dll / relink-game.exe are named from the linker maps beside them.
 
     python -I scripts/prof.py work/runs/<run>/stacks.txt [top] [skip] [only]
     (skip: the first fraction of the samples, e.g. 0.5; only: samples with that function in their stack, e.g.
@@ -38,7 +38,7 @@ def main():
     skip = float(sys.argv[3]) if len(sys.argv) > 3 else 0.0
     only = sys.argv[4] if len(sys.argv) > 4 else None
     maps = {}
-    for mod in ("hookshot_vk.dll", "hookshot.exe"):
+    for mod in ("relink_vk.dll", "relink-game.exe"):
         mp = os.path.join(BUILD, mod[:-4] + ".map")
         if os.path.exists(mp):
             base = 0x180000000 if mod.endswith(".dll") else 0x140000000
