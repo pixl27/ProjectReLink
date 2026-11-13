@@ -57,7 +57,7 @@ static class Storage
 
     /// What a build makes in its work folder (make_game.py, lift.py, build.py)
     static IEnumerable<string> WorkParts(string work) =>
-        new[] { "objcache", "sa", "exefs", "probe", "image", "system_headers.txt", "hot_funcs.txt", "hot_order.txt", "relink_pieces.prof", "relink.res" }
+        new[] { "objcache", "sa", "exefs", "probe", "image", "system_headers.txt", "hot_funcs.txt", "hot_order.txt", "relink_pieces.prof", "relink_vk.profdata", "relink.res" }
             .Select(n => Path.Combine(work, n));
 
     /// The launcher versions that stay: the one installed last (current.txt) and the one running

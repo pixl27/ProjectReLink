@@ -833,6 +833,9 @@ def lift_key(exefs, work, env):
             with open(f, "rb") as src:
                 h.update(hashlib.sha1(src.read()).digest())
     lift_env = dict(env, **{k: v for k, v in os.environ.items() if k.startswith(("A64_", "OOT_", "RX_"))})
+    # (relink) the profiles are the compile's (build.py), not the lift's: a profile made, changed or taken away does not lift again
+    # (a profile cycle lifted three times for the same C, 8 minutes each)
+    lift_env = {k: v for k, v in lift_env.items() if k not in ("RX_PGO", "RX_VK_PGO", "RX_VK_PGO_FILE")}
     h.update(repr(sorted(lift_env.items())).encode())
     return h.hexdigest()
 
@@ -1033,7 +1036,7 @@ def main(a=None):
     check_supported_build(exefs)
 
     # (made once on the development PC: lists of addresses and counts, no game code)
-    for name in ("hot_funcs.txt", "hot_order.txt", "relink_pieces.prof", "relink.res"):
+    for name in ("hot_funcs.txt", "hot_order.txt", "relink_pieces.prof", "relink_vk.profdata", "relink.res"):
         src = os.path.join(ROOT, "work", name)
         dst = os.path.join(work, name)
         # (copied only when it differs: a compiler still ending from a cancelled build keeps the profile mapped, WinError 1224)
@@ -1079,6 +1082,12 @@ def main(a=None):
         if os.path.isfile(os.path.join(work, "sa", "gen", "code_hot.c")):
             run(PY + ["nx2/split_hot.py", os.path.join(work, "sa", "gen")], env)   # (eight files side by side: ~6 minutes, not 79)
         write_lift_key(work, key)
+
+    # (relink) the Vulkan library's own profile, made like the game code's (work/relink_vk.profdata): passed to the compile unless
+    # RX_VK_PGO is set already (gen, or another profile). Set after the lift's key: the lift does not read it
+    vk_prof = os.path.join(work, "relink_vk.profdata")
+    if not os.environ.get("RX_VK_PGO") and os.path.exists(vk_prof) and profile_readable(vk_prof):
+        env["RX_VK_PGO"] = vk_prof
 
     if LINUX:
         check_linux_compiler()
