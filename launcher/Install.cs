@@ -582,8 +582,8 @@ public partial class MainWindow
         ReadyRows.Children.Add(StorageRow);
         ReadyRows.Children.Add(new TextBlock
         {
-            Text = L("Le premier lancement prépare les shaders du jeu : il est plus long que les suivants, et le jeu peut hésiter la première fois qu'il montre un lieu.",
-                     "The first start prepares the game's shaders: it takes longer than the next ones, and the game can hitch the first time it shows a place."),
+            Text = L("Le premier lancement est long, une seule fois (environ un quart d’heure sur un PC moyen) : le jeu se prépare pour votre carte graphique, avec un écran de chargement.",
+                     "The first start is long, once (about a quarter of an hour on a mid-range PC): the game gets ready for your graphics card, with a loading screen."),
             Style = St("Body"), Margin = new Thickness(0, 16, 0, 0),
         });
     }

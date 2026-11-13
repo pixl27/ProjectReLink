@@ -736,7 +736,7 @@ bool started_up() {
             printf("@@progress %.3f\n", at / 1000.0);
             fflush(stdout);
         };
-        printf("@@stage shaders Preparing shaders\n");
+        printf("@@stage shaders Getting the game ready\n");
         fflush(stdout);
         part = 0;
         const bool prepared = prepare_run(progress, false);
@@ -793,7 +793,7 @@ bool started_up() {
             }
             if (!console) return;
             char line[80];
-            const int n = snprintf(line, sizeof line, "%cPreparing shaders: %zu of %zu (%zu%%)   ", 13, done, total, done * 100 / total);
+            const int n = snprintf(line, sizeof line, "%cGetting the game ready: %zu of %zu (%zu%%)   ", 13, done, total, done * 100 / total);
             DWORD wrote = 0;
             WriteFile(console, line, (DWORD)n, &wrote, nullptr);
         };
