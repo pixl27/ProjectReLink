@@ -74,29 +74,30 @@ and so do keyboard and mouse (the keys are listed on the Controls page).
 On our PC: **Ryzen 5 5500, GeForce RTX 3060 Ti (8 GB), 16 GB of RAM, Windows 11**.
 
 **No DLSS, no frame generation.** Every number here counts frames the game really rendered: no AI upscaler and no
-generated frames were on. The game was capped at 60 frames a second, with its 3D render resolution at 75 % and its own
-plain scaling to the window; version 0.6.1. Averages over windows of 30 to 60 seconds.
+generated frames were on. The game was capped at 60 frames a second; version 0.6.1. "Native" is the game's 3D render
+resolution at 100 %; at 75 % the game's own plain scaling fills the window. Each figure is one run of about 50 seconds
+with child Link, from his arrival in the place and through a walk, so it includes the loading stall of the arrival.
 
-| Place | Frames a second |
-|---|---|
-| Hyrule Field, walking | 59.8 |
-| Kakariko Village, walking | 59.0 |
-| Hyrule Castle, walking | 58.8 |
-| Lost Woods, walking | 59.6 |
-| Sacred Forest Meadow, walking | 60.0 |
-| Lake Hylia, walking | 59.2 |
-| Zora's Fountain, walking | 58.3 |
-| Market, walking | 54.1 |
-| Inside the Deku Tree, Dodongo's Cavern, Bottom of the Well (child) | 60 |
-| Inside Jabu-Jabu's Belly (child) | 58 to 60 |
-| Kakariko Village, Fire Temple, Gerudo's Fortress (adult, standing) | 60 |
-| Water Temple (adult, standing) | 58.0 |
+| Place | Native (100 %) | 75 % |
+|---|---|---|
+| Hyrule Field | 59.2 | 60.0 |
+| Kakariko Village | 58.3 | 59.1 |
+| Hyrule Castle | 57.5 | 59.1 |
+| Lost Woods | 59.3 | 59.7 |
+| Sacred Forest Meadow | 60.0 | 60.0 |
+| Lake Hylia | 56.0 | 58.3 |
+| Zora's Fountain | 56.3 | 55.9 |
+| Market | 49.1 | 54.7 |
+| Inside the Deku Tree | 59.0 | 59.9 |
+| Dodongo's Cavern | 60.0 | 60.0 |
+| Inside Jabu-Jabu's Belly | 59.9 | 59.9 |
+| Bottom of the Well | 60.0 | 60.0 |
 
-At native render resolution (100 %): 51 to 53 in the heaviest views of Kokiri Forest's village, 53.5 to 56.7 in the forest,
-52.8 at Zora's Fountain. At Zora's Fountain the render resolution decides: automatic 54.5, 75 % 58.3, 67 % 58.6, 50 % 60.0.
+With adult Link at 75 %, standing: 60 in Kakariko Village, the Fire Temple and Gerudo's Fortress, 58.0 in the Water Temple.
+At native resolution the heaviest views of Kokiri Forest's village run at 51 to 53.
 
-Not reached or not measured yet: a steady 60 everywhere (the Market and native resolution stay below), boss fights, sessions
-longer than half an hour, and AMD and Intel cards.
+Not reached or not measured yet: a steady 60 everywhere (the Market stays below, and so do a few places at native
+resolution), boss fights, sessions longer than half an hour, and AMD and Intel cards.
 
 ## If the game slows down with adult Link: check your dump
 
@@ -195,11 +196,12 @@ place. Les sauvegardes, les réglages et les mods sont conservés.
 ### Images par seconde mesurées
 
 Sans DLSS et sans génération d'images : chaque image comptée est réellement calculée par le jeu. Sur un Ryzen 5 5500, une
-GeForce RTX 3060 Ti (8 Go), 16 Go de RAM et Windows 11, jeu limité à 60 images par seconde et rendu 3D à 75 % : 58 à 60 dans
-la plupart des lieux (plaine d'Hyrule 59,8, village Cocorico 59,0, lac Hylia 59,2, fontaine Zora
-58,3, donjons 58 à 60) et 54,1 en traversant la place du marché. Le 60 constant partout n'est pas encore atteint, et les
-combats de boss, les longues sessions et les cartes AMD et Intel n'ont pas été mesurés. Le tableau complet est dans la partie
-anglaise.
+GeForce RTX 3060 Ti (8 Go), 16 Go de RAM et Windows 11, jeu limité à 60 images par seconde. En résolution native (rendu 3D à
+100 %) : 56 à 60 dans la plupart des lieux (plaine d'Hyrule 59,2, village Cocorico 58,3, château d'Hyrule 57,5, lac Hylia
+56,0, fontaine Zora 56,3, donjons 59 à 60) et 49,1 sur la place du marché. Avec le rendu 3D à 75 % : 58 à 60 presque
+partout, 55,9 à la fontaine Zora et 54,7 sur la place du marché. Le 60 constant partout n'est pas encore atteint, et les
+combats de boss, les longues sessions et les cartes AMD et Intel n'ont pas été mesurés. Le tableau complet, lieu par lieu
+et aux deux résolutions, est dans la partie anglaise.
 
 ### Licence
 
