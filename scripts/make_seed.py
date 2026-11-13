@@ -10,7 +10,10 @@ Writes <out>/relink-seed.txt and three parts, each a deterministic zip named by 
     ReLink-cpm-<sha>.zip       tools/cpm: the CPM cache's vulkanheaders, spirv-headers, vulkanmemoryallocator and ffmpeg
                                folders (headers, and FFmpeg's static libraries)
     ReLink-profile-<sha>.zip   tools/work: the play profile (hot_funcs.txt, relink_pieces.prof, image/chunks.txt: addresses
-                               and counts made on the development PC, no game code)
+                               and counts made on the development PC, no game code) and, when it is there,
+                               pipeline_states.bin: the pipelines a play of the game asked for (a game folder's
+                               relink_pipeline_states.bin: hashes, formats and draw state), which a player's first
+                               start builds before the title instead of at each place's first visit
 
 Upload the three zips and the list to the builder-parts release and set the repository variable SEED_LIST to the list's
 name there: the Windows workflow then starts from it instead of the latest release's list (docs/releasing.md). No game data

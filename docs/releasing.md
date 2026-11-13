@@ -32,7 +32,10 @@ somewhere too. That is the seed, made on the maintainer's PC by `scripts/make_se
   `vulkanmemoryallocator/<version>` (`include`, license) and `ffmpeg/<version>` (`include`, and `avcodec`, `avutil`,
   `swresample` and `swscale` of `lib`; the build used so far is Takoroka/ffmpeg-av1's 9.0.2-av1-1 for Windows).
 - `--work`: the play profile, `hot_funcs.txt`, `relink_pieces.prof` and `image/chunks.txt` of the build folder the profile
-  was made in. Addresses and counts; no game code.
+  was made in. Addresses and counts; no game code. And `pipeline_states.bin`, a copy of `relink_pipeline_states.bin` from a
+  game folder that was played through many places: the pipelines the game asked for there (hashes, formats and draw state).
+  A player's first start builds them before the title, from the player's own shaders; without it every place stutters on
+  its first visit while the driver compiles.
 
 It writes three zips and `relink-seed.txt`. Upload the four files to the `builder-parts` release (a prerelease, made by hand
 the first time), then set the repository variable `SEED_LIST` (Settings, Secrets and variables, Actions, Variables) to
