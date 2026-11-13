@@ -1,0 +1,166 @@
+<Window x:Class="ReLink.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Project ReLink" Width="1120" Height="700" WindowStyle="None" ResizeMode="CanMinimize"
+        WindowStartupLocation="CenterScreen" Background="#11241B" Foreground="{StaticResource Bone}"
+        FontFamily="{StaticResource Text}" FontSize="14.5" Icon="app.ico" AllowDrop="True" UseLayoutRounding="True">
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="0" ResizeBorderThickness="0" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+  </WindowChrome.WindowChrome>
+
+  <Grid x:Name="Root" ClipToBounds="True" Background="#11241B">
+    <!-- the sky and the hills (Scene.cs) -->
+    <Canvas x:Name="Sky" Width="1120" Height="700" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+
+    <!-- the left column: the name, the staff, what to do next -->
+    <Grid x:Name="LeftColumn" Width="440" HorizontalAlignment="Left" Margin="48,0,0,0">
+      <StackPanel VerticalAlignment="Top" Margin="0,38,0,0">
+        <TextBlock Text="Project ReLink" FontFamily="{StaticResource Display}" FontSize="46"/>
+        <TextBlock x:Name="Subtitle" FontSize="15.5" Foreground="{StaticResource BoneSoft}" Margin="2,0,0,0"/>
+      </StackPanel>
+
+      <Canvas x:Name="StaffCanvas" Width="424" Height="176" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,250,0,0"/>
+
+      <StackPanel VerticalAlignment="Bottom" Margin="0,0,0,30">
+        <StackPanel x:Name="ProgressBlock" Visibility="Collapsed">
+          <TextBlock x:Name="PercentText" Text="0 %" FontFamily="{StaticResource Display}" FontSize="58"/>
+          <TextBlock x:Name="BuildNote" Style="{StaticResource Body}" Margin="2,0,0,0"/>
+        </StackPanel>
+        <Button x:Name="MainButton" Style="{StaticResource Play}" Width="280" Height="60" HorizontalAlignment="Left" Click="MainClick">
+          <TextBlock x:Name="MainButtonText" FontFamily="{StaticResource Display}" FontSize="23" Foreground="#F6F1DF"/>
+        </Button>
+        <TextBlock x:Name="MainNote" FontSize="13.5" Foreground="{StaticResource BoneSoft}" TextWrapping="Wrap" Margin="2,10,0,0" MaxWidth="430" HorizontalAlignment="Left"/>
+        <StackPanel x:Name="StatusRow" Orientation="Horizontal" Margin="2,12,0,0">
+          <TextBlock x:Name="StatusText" FontSize="13.5" Foreground="{StaticResource BoneSoft}" VerticalAlignment="Center"/>
+          <Button x:Name="UpdateLink" Style="{StaticResource Link}" Foreground="{StaticResource Gold}" Margin="14,0,0,0" Visibility="Collapsed" Click="UpdateClick"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="2,14,0,0">
+          <Button x:Name="FolderLink" Style="{StaticResource Link}" Margin="0,0,22,0" Click="OpenGameFolder"/>
+          <Button x:Name="HelpLink" Style="{StaticResource Link}" Margin="0,0,22,0" Click="OpenHelp"/>
+        </StackPanel>
+      </StackPanel>
+    </Grid>
+
+    <!-- the tablet: one page at a time -->
+    <Border x:Name="Tablet" Margin="516,54,28,28" CornerRadius="6" Background="#F413231C" BorderBrush="#4DC9A24B" BorderThickness="1">
+      <Grid Margin="30,24,30,22">
+
+        <!-- install: the player's copy, and where the game goes -->
+        <Grid x:Name="InstallView" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <TextBlock x:Name="InstallTitle" Style="{StaticResource ViewTitle}"/>
+          <TextBlock x:Name="InstallSub" Grid.Row="1" Style="{StaticResource Body}" Margin="0,6,0,0"/>
+          <TextBlock x:Name="CopyHead" Grid.Row="2" Style="{StaticResource Section}"/>
+          <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="DumpList"/>
+          </ScrollViewer>
+          <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,10,0,0">
+            <Button x:Name="BrowseNupLink" Style="{StaticResource Link}" Margin="0,0,22,0" Click="BrowseNup"/>
+            <Button x:Name="BrowseFoldersLink" Style="{StaticResource Link}" Click="BrowseFolders"/>
+          </StackPanel>
+          <TextBlock x:Name="OutHead" Grid.Row="5" Style="{StaticResource Section}"/>
+          <Grid Grid.Row="6">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="OutPathText" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+            <Button x:Name="OutChange" Grid.Column="1" Style="{StaticResource Link}" Margin="16,0,0,0" Click="BrowseOut"/>
+          </Grid>
+          <TextBlock x:Name="SpaceText" Grid.Row="7" Style="{StaticResource RowHint}" Margin="0,6,0,0"/>
+          <TextBlock x:Name="ToolsNote" Grid.Row="8" Style="{StaticResource RowHint}" Foreground="{StaticResource Warn}" Margin="0,8,0,0" Visibility="Collapsed"/>
+        </Grid>
+
+        <!-- the install at work -->
+        <Grid x:Name="BuildView" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <TextBlock x:Name="BuildTitle" Style="{StaticResource ViewTitle}"/>
+          <TextBlock x:Name="BuildSub" Grid.Row="1" Style="{StaticResource Body}" Margin="0,6,0,14"/>
+          <StackPanel x:Name="StageList" Grid.Row="2"/>
+          <TextBox x:Name="Log" Grid.Row="2" Visibility="Collapsed" IsReadOnly="True" FontFamily="{StaticResource Mono}" FontSize="11.5"
+                   Background="#66000000" Foreground="{StaticResource BoneSoft}" BorderThickness="0" Padding="10" TextWrapping="Wrap"
+                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
+          <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,14,0,0">
+            <Button x:Name="LogLink" Style="{StaticResource Link}" Margin="0,0,22,0" Click="LogToggled"/>
+            <Button x:Name="CancelLink" Style="{StaticResource Link}" Click="CancelBuild"/>
+          </StackPanel>
+        </Grid>
+
+        <!-- the game is ready -->
+        <Grid x:Name="ReadyView" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <TextBlock x:Name="ReadyTitle" Style="{StaticResource ViewTitle}"/>
+          <TextBlock x:Name="ReadyNote" Grid.Row="1" Style="{StaticResource Body}" Margin="0,6,0,10"/>
+          <StackPanel x:Name="ReadyRows" Grid.Row="2"/>
+          <Button x:Name="ReadySettings" Grid.Row="3" Style="{StaticResource Link}" HorizontalAlignment="Left" Margin="0,18,0,0" Click="ReadyToHome"/>
+        </Grid>
+
+        <!-- something went wrong -->
+        <Grid x:Name="ProblemView" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <TextBlock x:Name="ProblemTitle" Style="{StaticResource ViewTitle}"/>
+          <TextBlock x:Name="ProblemSub" Grid.Row="1" Style="{StaticResource Body}" Margin="0,6,0,0"/>
+          <TextBlock x:Name="ProblemHead" Grid.Row="2" Style="{StaticResource Section}"/>
+          <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+              <TextBlock x:Name="ProblemText" Style="{StaticResource Body}" Foreground="{StaticResource Bone}"/>
+              <StackPanel x:Name="ProblemSteps" Margin="0,10,0,0"/>
+            </StackPanel>
+          </ScrollViewer>
+          <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,14,0,0">
+            <Button x:Name="BackLink" Style="{StaticResource Link}" Margin="0,0,22,0" Click="Back"/>
+            <Button x:Name="RepairLink" Style="{StaticResource Link}" Foreground="{StaticResource Gold}" Margin="0,0,22,0" Click="Repair"/>
+            <Button x:Name="DetailsLink" Style="{StaticResource Link}" Margin="0,0,22,0" Click="ProblemShowDetails"/>
+            <Button x:Name="CopyLink" Style="{StaticResource Link}" Click="CopyForReport"/>
+          </StackPanel>
+        </Grid>
+
+        <!-- home: the settings, a page a tab -->
+        <Grid x:Name="HomeView" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <StackPanel Orientation="Horizontal">
+            <RadioButton x:Name="TabDisplay" Style="{StaticResource Tab}" GroupName="Tabs" IsChecked="True" Checked="TabChanged"/>
+            <RadioButton x:Name="TabSmooth" Style="{StaticResource Tab}" GroupName="Tabs" Checked="TabChanged"/>
+            <RadioButton x:Name="TabGame" Style="{StaticResource Tab}" GroupName="Tabs" Checked="TabChanged"/>
+            <RadioButton x:Name="TabControls" Style="{StaticResource Tab}" GroupName="Tabs" Checked="TabChanged"/>
+          </StackPanel>
+          <Rectangle Grid.Row="1" Height="1" Fill="{StaticResource Rule}" Margin="0,-1,0,0"/>
+          <Grid Grid.Row="2" Margin="0,4,0,0">
+            <ScrollViewer x:Name="PageDisplay" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="RowsDisplay" Margin="0,0,12,0"/></ScrollViewer>
+            <ScrollViewer x:Name="PageSmooth" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed"><StackPanel x:Name="RowsSmooth" Margin="0,0,12,0"/></ScrollViewer>
+            <ScrollViewer x:Name="PageGame" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed"><StackPanel x:Name="RowsGame" Margin="0,0,12,0"/></ScrollViewer>
+            <ScrollViewer x:Name="PageControls" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed"><StackPanel x:Name="RowsControls" Margin="0,0,12,0"/></ScrollViewer>
+          </Grid>
+          <TextBlock x:Name="HomeFoot" Grid.Row="3" Style="{StaticResource RowHint}" Margin="0,12,0,0"/>
+        </Grid>
+      </Grid>
+    </Border>
+
+    <!-- while the game runs -->
+    <Grid x:Name="PlayingOverlay" Visibility="Collapsed">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,372,0,0" MaxWidth="620">
+        <TextBlock x:Name="PlayingTitle" FontFamily="{StaticResource Display}" FontSize="38" HorizontalAlignment="Center"/>
+        <TextBlock x:Name="PlayingHint" Style="{StaticResource Body}" TextAlignment="Center" Margin="0,10,0,0"/>
+        <Button x:Name="RestoreNow" Style="{StaticResource Link}" HorizontalAlignment="Center" Margin="0,18,0,0" Visibility="Collapsed" Click="RestoreNowClick"/>
+      </StackPanel>
+    </Grid>
+    <!-- the window's own buttons -->
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,24,0">
+      <Button x:Name="MinButton" Style="{StaticResource Chrome}" Click="Minimize">
+        <Path Data="M0,0 L11,0" Stroke="{StaticResource BoneSoft}" StrokeThickness="1.4" Margin="0,7,0,0"/>
+      </Button>
+      <Button x:Name="CloseButton" Style="{StaticResource Chrome}" Click="CloseWindow">
+        <Path Data="M0,0 L10,10 M10,0 L0,10" Stroke="{StaticResource BoneSoft}" StrokeThickness="1.4"/>
+      </Button>
+    </StackPanel>
+
+  </Grid>
+</Window>

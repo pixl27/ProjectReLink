@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ReLink</AssemblyName>
+    <RootNamespace>ReLink</RootNamespace>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Version>0.6.1</Version>
+    <Product>Project ReLink</Product>
+    <Description>Project ReLink: installs, updates and starts the game</Description>
+  </PropertyGroup>
+
+  <!-- Needs nothing installed on the player's PC: dotnet publish -c Release. A folder (the app and .NET's own signed files), not
+       one compressed exe: antivirus programs take a self-extracting single file for a trojan and remove it -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="app.ico" />
+    <Compile Remove="setup\**" />
+    <None Remove="setup\**" />
+  </ItemGroup>
+
+</Project>
