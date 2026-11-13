@@ -89,6 +89,14 @@ sealed class Settings
     {
         var s = new Settings();
         var l = ReadIni(LauncherIni);
+        // (an earlier launcher kept the same three choices in lanceur.ini beside the game: taken once, while this one has none yet)
+        if (l.Count == 0)
+            foreach (var beside in new[] { folder, AppContext.BaseDirectory })
+            {
+                if (string.IsNullOrEmpty(beside)) continue;
+                l = ReadIni(Path.Combine(beside, "lanceur.ini"));
+                if (l.Count > 0) break;
+            }
         s.Display60 = Bool(l, "display_60hz", true);
         s.Audio = Bool(l, "audio", true);
         s.InvertY = Bool(l, "invert_y", false);
