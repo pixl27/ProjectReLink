@@ -41,7 +41,8 @@ version as above), build the game in the same way and start it. Its settings pag
 
 The first start is long, once (about 16 minutes on our PC): the game prepares its shaders and builds its graphics pipelines
 for your driver's cache, with a progress screen. It does that part again after a graphics driver update, so that the first
-visit of a place does not stutter while the driver compiles.
+visit of a place does not stutter while the driver compiles, and after an update of ReLink that changes the renderer's
+shader code or state (0.6.3 is one).
 
 ![Installing](docs/install.png)
 
@@ -116,6 +117,17 @@ came from 10, child only). The table above was not measured again with it. With 
 ten of these places whose walk has no loading screen, it gave about 3 % more frames while Link walks (four runs against
 six of 0.6.1, the two versions run in turn: 69.0 to 71.1 against 66.1 to 69.1 as a geometric mean), most of it in the
 dungeons (Inside the Deku Tree +11 %, Jabu-Jabu +5 to +8 %), and no difference we could establish with Link standing.
+
+Version 0.6.3 gives the game's occlusion test its real answers. The game draws a box for each object in a depth-only
+pass, asks the graphics card how many of its pixels passed, and leaves out of its next frames the objects that got none.
+Until now every question was answered "visible", so nothing was ever left out. With the frame rate unlocked, at 75 %,
+Link standing where he arrives, the same build run with the answers off and then on: Market 54.6 to 61.4 (+12.5 %), Lost
+Woods 61.9 to 67.0 (+8.2 %), Kokiri Forest 76.1 to 79.4 (+4.4 %), and the most draws in a frame went from 2,931 to 2,494.
+Two earlier pairs of runs gave the Market +12.3 % and +28.8 %, Lost Woods +7.0 %, Kokiri Forest +3.3 % and Hyrule Castle
+no change. Kakariko Village gave +2.6 % and +13.8 %: that place varies by several frames from one run to the next, so
+neither figure says much. The table above was not measured again. The pictures were compared standing in four places, and
+turning and walking in the Market and inside the Deku Tree: nothing was missing. An object that appears one frame late
+was not looked for frame by frame; `RX_VK_OCC_QUERIES=0` in `relink_env.txt` beside the game turns the real answers off.
 
 Not reached or not measured yet: a steady 60 everywhere (the Market stays below, and so do a few places at native
 resolution), boss fights, sessions longer than half an hour, and AMD and Intel cards.
@@ -221,6 +233,11 @@ GeForce RTX 3060 Ti (8 Go), 16 Go de RAM et Windows 11, jeu limité à 60 images
 la place du marché (55,6). Ces chiffres sont ceux du jeu construit par les outils de la version, comme chez un joueur. Le
 60 constant partout n'est pas encore atteint, et les combats de boss, les longues sessions et les cartes AMD et Intel
 n'ont pas été mesurés. Le tableau complet, lieu par lieu et aux deux résolutions, est dans la partie anglaise.
+
+La version 0.6.3 rend au jeu son test d'occlusion : il ne dessine plus les objets que la carte graphique dit cachés. À
+cadence libre, rendu 3D à 75 %, Link immobile, le même build avec et sans : place du marché 54,6 → 61,4 (+12,5 %), Bois
+perdus +8,2 %, forêt Kokiri +4,4 %. Le tableau ci-dessus n'a pas été mesuré de nouveau. Le premier démarrage après cette
+mise à jour prépare les shaders une nouvelle fois.
 
 ### Licence
 
