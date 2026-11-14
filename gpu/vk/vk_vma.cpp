@@ -9,9 +9,12 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace mkwvk {
 
@@ -176,8 +179,10 @@ bool image_defrag_pass(std::vector<ImageMove>& moves) {
     moves.clear();
     if (!defrag_ctx || defrag_open) return false;
     defrag_info = {};
-    if (vmaBeginDefragmentationPass(vma, defrag_ctx, &defrag_info) != VK_INCOMPLETE) return false;   // (VK_SUCCESS: none left)
+    // (defrag_mu over the pass's start too: the reaper below destroys under it, so an image it destroys is either gone before
+    // VMA picks the pass's sources or seen as a source and deferred)
     std::lock_guard lk(defrag_mu);
+    if (vmaBeginDefragmentationPass(vma, defrag_ctx, &defrag_info) != VK_INCOMPLETE) return false;   // (VK_SUCCESS: none left)
     defrag_busy.clear();
     for (uint32_t i = 0; i < defrag_info.moveCount; i++) {
         moves.push_back({defrag_info.pMoves[i].srcAllocation, defrag_info.pMoves[i].dstTmpAllocation, 0});
@@ -217,7 +222,7 @@ bool image_defrag_end_pass(const std::vector<ImageMove>& moves) {
         defrag_busy.clear();
         later.swap(defrag_deferred);
     }
-    for (auto& [img, a] : later) destroy_image_now(img, a);   // (what went while the pass was open: their allocations moved)
+    for (auto& [img, a] : later) destroy_image(img, a);   // (what went while the pass was open: their allocations moved)
     const auto t2 = std::chrono::steady_clock::now();
     const double vma_ms = std::chrono::duration<double, std::milli>(t1 - t0).count(), later_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
     if (vma_ms + later_ms > 4.0) {   // (a slow end: VMA's (blocks given back to the driver) or the deferred destructions)
@@ -238,15 +243,56 @@ void image_defrag_end(uint64_t* bytes_moved, uint64_t* bytes_freed, uint32_t* mo
     *bytes_freed = st.bytesFreed, *blocks_freed = st.deviceMemoryBlocksFreed;
     defrag_moved_bytes = 0, defrag_moved = 0;
 }
-void destroy_image(VkImage image, VmaAllocation allocation) {
-    if (allocation) {
-        std::lock_guard lk(defrag_mu);
-        if (defrag_open && std::binary_search(defrag_busy.begin(), defrag_busy.end(), allocation)) {
-            defrag_deferred.push_back({image, allocation});   // (a source of the open pass: once it ends)
-            return;
-        }
+// (relink) The images are destroyed on a thread of their own (the reaper). On NVIDIA's Windows driver a vmaDestroyImage is a
+// kernel call that takes a millisecond or more, and the render thread destroyed the dead textures one after the other as it
+// presented: while the camera turned in the Market (hs2591), 2.4 ms of each frame over 25 ms against 0.1 ms of a normal
+// one, the largest thing those frames did more of. Every caller destroys an image the GPU is done with, so a later
+// destruction changes nothing but when its memory goes back. RX_VK_REAP=0: on the caller's thread, as before
+std::mutex reap_mu;
+std::condition_variable reap_cv;
+std::vector<std::pair<VkImage, VmaAllocation>> reap_queue;
+std::atomic<int64_t> reap_pending{0};
+void destroy_or_defer(VkImage image, VmaAllocation allocation) {
+    std::lock_guard lk(defrag_mu);   // (held through the destruction: no defragmentation pass starts meanwhile)
+    if (allocation && defrag_open && std::binary_search(defrag_busy.begin(), defrag_busy.end(), allocation)) {
+        defrag_deferred.push_back({image, allocation});   // (a source of the open pass: once it ends)
+        return;
     }
     destroy_image_now(image, allocation);
+}
+bool reap_on() {
+    static const bool on = [] {
+        const char* e = getenv("RX_VK_REAP");
+        if (e && atoi(e) == 0) return false;
+        std::thread([] {
+            std::vector<std::pair<VkImage, VmaAllocation>> batch;
+            for (;;) {
+                {
+                    std::unique_lock lk(reap_mu);
+                    reap_cv.wait(lk, [] { return !reap_queue.empty(); });
+                    batch.swap(reap_queue);
+                }
+                for (auto& [img, a] : batch) destroy_or_defer(img, a), reap_pending--;
+                batch.clear();
+            }
+        }).detach();
+        logf("vk: images destroyed on a thread of their own (RX_VK_REAP=0: on the caller's)");
+        return true;
+    }();
+    return on;
+}
+void destroy_image(VkImage image, VmaAllocation allocation) {
+    if (!image && !allocation) return;
+    if (reap_on()) {
+        {
+            std::lock_guard lk(reap_mu);
+            reap_queue.push_back({image, allocation});
+        }
+        reap_pending++;
+        reap_cv.notify_one();
+        return;
+    }
+    destroy_or_defer(image, allocation);
 }
 void destroy_image_now(VkImage image, VmaAllocation allocation) {
     if (allocation) {
