@@ -129,6 +129,15 @@ neither figure says much. The table above was not measured again. The pictures w
 turning and walking in the Market and inside the Deku Tree: nothing was missing. An object that appears one frame late
 was not looked for frame by frame; `RX_VK_OCC_QUERIES=0` in `relink_env.txt` beside the game turns the real answers off.
 
+Version 0.6.5 targets the stutter while the camera turns. Turning brings new things into view and lets others go, and the
+renderer let go of each texture's image on its render thread, as it presented: on NVIDIA's Windows driver that is a call
+into the system of a millisecond or more, and it was the largest thing the long frames did more of than the others. It is
+now done on a thread of its own. Camera turned left, right and left for 20 s in the Market, 60 fps cap, 75 %: frames
+over 25 ms went from 71 and 81 (two runs of 0.6.4) to 67, 50 and 66 (three runs of 0.6.5), the 99th percentile from
+36-39 ms to 34-35 ms, the longest frame from 63-70 ms to 53-66 ms. Hyrule Field and Kokiri Forest had few long frames
+before and still do. It does not remove the longer stalls of a first visit, while the game loads an area and its
+shaders are read from disk.
+
 Not reached or not measured yet: a steady 60 everywhere (the Market stays below, and so do a few places at native
 resolution), boss fights, sessions longer than half an hour, and AMD and Intel cards.
 
@@ -238,6 +247,11 @@ La version 0.6.3 rend au jeu son test d'occlusion : il ne dessine plus les objet
 cadence libre, rendu 3D à 75 %, Link immobile, le même build avec et sans : place du marché 54,6 → 61,4 (+12,5 %), Bois
 perdus +8,2 %, forêt Kokiri +4,4 %. Le tableau ci-dessus n'a pas été mesuré de nouveau. Le premier démarrage après cette
 mise à jour prépare les shaders une nouvelle fois.
+
+La version 0.6.5 réduit les saccades quand la caméra tourne : les images des textures qui ne servent plus sont libérées sur
+un fil à part, et non plus sur celui qui dessine. Caméra qui tourne 20 s sur la place du marché, 60 images par seconde,
+75 % : de 71 et 81 images de plus de 25 ms (0.6.4) à 67, 50 et 66 (0.6.5). Les arrêts plus longs d'une première visite,
+pendant que le jeu charge un lieu, restent.
 
 ### Licence
 
