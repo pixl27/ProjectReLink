@@ -1,5 +1,5 @@
 """The lift driver: image (we are rtld) -> function discovery -> C, on the vendored a64-kit plus the Switch 2
-additions (nso2: DT_RELR, insn: ARMv8.1-8.5 forms, lift_fixes: jump tables).
+additions (nso2: DT_RELR, insn: ARMv8.1-8.5 forms, lift_fixes: jump tables, suyu_rt_fixes: FPX1's binary32 FMA).
 
 Usage:  python -I nx2/lift.py [--exefs <dir>] [--work <dir>] [--write] [--max-func N] [--layout eden|a64] [--aslr 0]
   --layout eden (default): Eglantine's addresses, rtld included, from 0x80000000 + --aslr (image.py; an emulator
@@ -15,6 +15,7 @@ Usage:  python -I nx2/lift.py [--exefs <dir>] [--work <dir>] [--write] [--max-fu
 """
 import argparse
 import collections
+import glob
 import json
 import os
 import struct
@@ -28,6 +29,7 @@ import kit
 import nso2  # noqa: F401  (DT_RELR)
 import insn
 import lift_fixes
+import suyu_rt_fixes
 import chunks
 import standalone
 import adr_entries  # noqa: E402
@@ -41,6 +43,7 @@ import a64_rtgen
 
 insn.install()
 lift_fixes.install()
+suyu_rt_fixes.install()
 
 
 def module_of(img, pc):
@@ -108,6 +111,15 @@ def coverage(L, img, out_dir):
         f.write("\n".join(lines) + "\n\nuntranslated words by site count\n")
         f.write("".join("%08x %d\n" % (w, n) for w, n in sites.most_common()))
     return total
+
+
+def edit_c(gen, stats, supported, whole=True):
+    """The edits of the written C, in this order: the game's patches (nx2/oot_patches.py, which find the lift's exact text; the
+    supported build's whole standalone lift fails when an output-size edit finds no place), then, last, the page marks of each
+    group of stores shared (a64_lift.group_marks), which changes that text. stats: the lift's, for its report"""
+    import oot_patches
+    oot_patches.apply(gen, protect_hearts=supported, required=supported and whole)
+    a64_lift.group_marks(sorted(glob.glob(os.path.join(gen, "code_*.c"))), stats)
 
 
 def main():
@@ -183,7 +195,7 @@ def main():
                              counters=[] if a.no_polls else [poll.stats])
         import oot_patches
         main_build = next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), "")
-        oot_patches.apply(gen, protect_hearts=a.standalone and main_build == oot_patches.LIFE_BUILD_ID)
+        edit_c(gen, L.stats, a.standalone and main_build == oot_patches.LIFE_BUILD_ID, whole=not a.max_func)
         a64_rtgen.write(gen)
         if a.standalone:
             start, exit_ = standalone.write_image_c(gen, img, meta, a.exefs)

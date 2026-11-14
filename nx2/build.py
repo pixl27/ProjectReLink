@@ -660,7 +660,7 @@ def main():
         os.makedirs(gen, exist_ok=True)
     rt64 = rtgen.write(os.path.join(out, "rt64"))
     cc = toolchain.need(toolchain.find("clang"))
-    fl = flags(gen, rt64, a.opt, not a.no_polls)
+    fl = flags(gen, rt64, a.opt, not a.no_polls) + (["-DA64_POLL_CTX"] if a.dll else [])   # (the shim's poll takes the context: rtgen.py)
     # (which ReLink this is, for the log's first line and the Insert menu: given to those two files only, so a new
     # release name rebuilds them and nothing else)
     stamp_def = version.define()
@@ -701,6 +701,16 @@ def main():
     # (relink) code_hot.c, the lift's hot functions together (A64_HOT_FUNCS + A64_HOT_CHUNK=1): at RX_HOT_OPT
     # (default O2), so the hot callees inline into their hot callers
     hot_fl = [("-" + os.environ.get("RX_HOT_OPT", "O2")) if f == "-" + a.opt else f for f in fl]
+    # (relink) the hot code has three functions of about 2 MB of C each (vector float code; 1.4 to 2.7 million instructions once
+    # the guest model's helpers are inlined). For a function with no profile, the machine code's loop-invariant motion hoisted
+    # every invariant instruction out of their function-wide loop; each one was then live through the whole function, and the
+    # liveness tables of the passes after it (Live Variable Analysis, the PHI elimination) took one compiler past 15 GB
+    # (measured, clang 23, one hot piece alone; three of them at once on a 16 GB PC). "all": no hoisting to a block the static
+    # estimate calls hotter either, which is what a profile already did for the functions it knows ("pgo", the default): that
+    # function alone then takes 1.9 GB, and with a matching profile the object is the same byte for byte. It is what lets the
+    # instrumented build (RX_PGO=gen: no profile by definition) compile, and what keeps a function the profile does not match
+    # from taking the PC down
+    hot_fl = hot_fl + ["-mllvm", "-disable-hoisting-to-hotter-blocks=all"]
     # (relink) RX_PGO=gen: code_hot.c counts its branches (host/pgo_rt.c writes them; -O1 builds much sooner, and the counters are
     # placed before the optimiser, so a profile from it fits the -O2 build). RX_PGO=<merged .prof>: built with that profile
     if PGO == "gen":
