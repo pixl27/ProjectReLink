@@ -67,7 +67,13 @@ you play, so that every frame lasts the same time on a 100 or 144 Hz display, an
 afterwards. In the game, **Insert** or **F1** opens the same menu, and **F11** switches full screen.
 
 The launcher is in English; French is one click away on its Game page. An Xbox controller or any XInput controller works,
-and so do keyboard and mouse (the keys are listed on the Controls page).
+and so do keyboard and mouse (the keys are listed on the Controls page). Since 0.6.2 the install also brings SDL, which the
+game uses for the other controllers (Switch Pro, DualSense, DualShock 4): 0.6.1 shipped without it and they did nothing in
+the game. We have none of them here, so that part is not tested by us.
+
+The mouse turns the camera after a click in the game's window (Escape frees it). The Insert menu's **Mouse camera** row
+chooses how: as the right stick, or "Native", one to one as in a PC game. If the game has no sound, the same menu's
+**Audio output** row (Gameplay) can be set to Stereo; it applies after a restart.
 
 ## Measured frame rates
 
@@ -97,6 +103,12 @@ it includes the loading stall of the arrival.
 At native resolution the heaviest views of Kokiri Forest's village run at 55 to 56. With adult Link at 75 %, standing, an
 earlier development build of this version gave 60 in Kakariko Village, the Fire Temple and Gerudo's Fortress and 58.0 in
 the Water Temple; those four were not measured again on the release's build.
+
+Version 0.6.2 translates the game with a play profile made in 30 places, child and adult Link, temples included (0.6.1's
+came from 10, child only). The table above was not measured again with it. With the frame rate unlocked, at 75 %, in the
+ten of these places whose walk has no loading screen, it gave about 3 % more frames while Link walks (four runs against
+six of 0.6.1, the two versions run in turn: 69.0 to 71.1 against 66.1 to 69.1 as a geometric mean), most of it in the
+dungeons (Inside the Deku Tree +11 %, Jabu-Jabu +5 to +8 %), and no difference we could establish with Link standing.
 
 Not reached or not measured yet: a steady 60 everywhere (the Market stays below, and so do a few places at native
 resolution), boss fights, sessions longer than half an hour, and AMD and Intel cards.

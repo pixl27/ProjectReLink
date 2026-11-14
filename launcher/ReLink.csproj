@@ -11,7 +11,7 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <Version>0.6.1</Version>
+    <Version>0.6.2</Version>
     <Product>Project ReLink</Product>
     <Description>Project ReLink: installs, updates and starts the game</Description>
   </PropertyGroup>
