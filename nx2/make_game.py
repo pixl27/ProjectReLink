@@ -4,6 +4,8 @@
     python -I nx2/make_game.py --romfs <dir> --exefs <dir> --out <folder> [--work <folder>] [--jobs <n>]
     python -I nx2/make_game.py --check --nup <file.nup>       (or --exefs <dir>: is this the right game and version?)
     python -I nx2/make_game.py --update <folder>             (a folder built before, again with these tools: the game files it keeps)
+    python -I nx2/make_game.py --game <file.nup or folder> --out <folder> [--progress-lines]
+                                                            (one path for the copy; RecompLauncher's setup step, recomplauncher.json)
 
 The folder holds the executable and all it needs, started with a double click: nothing goes back into the repository, and no game
 data ever comes with the tools. Lines the app reads, each on its own line of stdout:
@@ -69,8 +71,29 @@ def no_throttle(handle=None):
         pass
 
 
+# (--progress-lines, RecompLauncher's setup step: recomplauncher.json) each step is also said as "progress <0..1> <text>", its share
+# of the whole build, the line RecompLauncher shows under the step. The @@ lines stay as they are. The compile is most of a build
+STAGE_SHARE = {"read": (0.0, 0.1), "lift": (0.1, 0.25), "compile": (0.25, 0.95), "finish": (0.95, 1.0)}
+progress_lines = {"on": False, "lo": 0.0, "hi": 0.0, "text": ""}
+
+
 def say(*words):
     print("@@" + " ".join(str(w) for w in words), flush=True)
+    p = progress_lines
+    if not p["on"] or not words:
+        return
+    if words[0] == "stage" and len(words) >= 3:
+        p["lo"], p["hi"] = STAGE_SHARE.get(words[1], (p["hi"], p["hi"]))
+        p["text"] = " ".join(str(w) for w in words[2:])
+        print("progress %.3f %s" % (p["lo"], p["text"]), flush=True)
+    elif words[0] == "progress" and len(words) == 2:
+        try:
+            f = min(1.0, max(0.0, float(words[1])))
+        except ValueError:
+            return
+        print("progress %.3f %s" % (p["lo"] + f * (p["hi"] - p["lo"]), p["text"]), flush=True)
+    elif words[0] == "done":
+        print("progress 1 The game is ready", flush=True)
 
 
 def fail(text):
@@ -925,9 +948,34 @@ def place_ngx_runtime(out):
     return dst
 
 
+def game_path(a):
+    """--game: a .nup file is --nup, a folder with exefs and romfs is --exefs and --romfs. And the launcher beside these tools
+    (ReLink.exe, when they are a ReLink package) is the builder the game folder names, so the game's update offer builds it
+    again with them"""
+    if a.nup or a.romfs or a.exefs:
+        fail("--game is your copy of the game on its own: leave out --nup, --romfs and --exefs.")
+    path = os.path.abspath(a.game)
+    if os.path.isfile(path):
+        a.nup = path
+    elif os.path.isdir(path):
+        exefs, romfs = os.path.join(path, "exefs"), os.path.join(path, "romfs")
+        if not (os.path.isfile(os.path.join(exefs, "main")) and os.path.isdir(romfs)):
+            fail("The folder %s does not hold the game's exefs (with its main file) and romfs folders. Choose your .nup file, or "
+                 "the folder that holds those two." % path)
+        a.exefs, a.romfs = exefs, romfs
+    else:
+        fail("Your copy of the game was not found at %s." % path)
+    builder = os.path.join(os.path.dirname(ROOT), "ReLink.exe")
+    if os.name == "nt" and not os.environ.get("RELINK_BUILDER_EXE") and os.path.isfile(builder):
+        os.environ["RELINK_BUILDER_EXE"] = builder
+
+
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--nup")
+    # (a launcher's one path, RecompLauncher's {game}: a .nup file, or a folder with the game's exefs and romfs folders)
+    p.add_argument("--game", help="your copy of the game: a .nup file, or a folder holding its exefs and romfs folders")
+    p.add_argument("--progress-lines", action="store_true", help="also print 'progress <0..1> <text>' lines (RecompLauncher)")
     p.add_argument("--romfs")
     p.add_argument("--exefs")
     p.add_argument("--out")
@@ -951,6 +999,9 @@ def parse_args():
 def main(a=None):
     if a is None:
         a = parse_args()
+    progress_lines["on"] = getattr(a, "progress_lines", False)
+    if getattr(a, "game", None):
+        game_path(a)
     if a.jobs is not None and a.jobs < 0:
         fail("--jobs must be 1 or more, or 0 for automatic.")
     a.jobs = chosen_jobs(a.jobs)
