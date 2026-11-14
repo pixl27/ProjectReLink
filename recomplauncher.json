@@ -1,0 +1,142 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Project ReLink",
+  "repo": "pixl27/ProjectReLink",
+  "game": {
+    "kind": "iso_or_folder",
+    "label": "Your copy of The Legend of Zelda: Ocarina of Time for Nintendo Switch 2, with its update installed (program 0400486024DEC000, update v131072, build e0f3ccfa): its .nup file, or a folder holding its exefs and romfs folders. Other versions do not work.",
+    "check": { "nup_build_id": "e0f3ccfa" }
+  },
+  "prepare": {
+    "program": ["tools/python/python.exe"],
+    "args": ["-I", "{install}/tools/nx2/make_game.py", "--game", "{game}", "--out", "{install}/game", "--progress-lines"],
+    "label": "Building the game on your PC from your copy: 10 to 45 minutes, and about 60 GB free while it runs",
+    "timeout": 14400
+  },
+  "start": {
+    "program": ["game/bin/relink-game.exe", "game/relink-game.exe"]
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{install}/game/relink_options.ini" }],
+      "new": { "fullscreen": "1" }
+    },
+    {
+      "id": "env",
+      "format": "ini",
+      "file": [{ "path": "{install}/game/relink_env.txt" }]
+    }
+  ],
+  "saves": ["{install}/game/user/save", "{install}/game/relink_options.ini"],
+  "folders": {
+    "saves": [{ "path": "{install}/game/user/save" }],
+    "logs": [{ "path": "{install}/game" }],
+    "mods": [{ "path": "{install}/game/mods" }]
+  },
+  "looks": { "graphics": "vulkan" },
+  "settings": [
+    {
+      "id": "fullscreen", "label": "Full screen", "group": "Display",
+      "help": "Fills the whole screen with the game, without the window's border. F11 switches it in the game.",
+      "choices": [
+        { "label": "On", "set": { "fullscreen": "1" } },
+        { "label": "Off", "set": { "fullscreen": "0" } }
+      ],
+      "defaults": { "fullscreen": "0" }
+    },
+    {
+      "id": "resolution", "label": "Render resolution", "group": "Display",
+      "help": "The share of the picture the 3D is drawn at. Lower runs faster on a slower graphics card; the HUD stays sharp.",
+      "choices": [
+        { "label": "100 % (native)", "set": { "resolution": "1" } },
+        { "label": "75 %", "set": { "resolution": "2" } },
+        { "label": "67 %", "set": { "resolution": "3" } },
+        { "label": "50 %", "set": { "resolution": "4" } },
+        { "label": "Auto (dynamic)", "set": { "resolution": "0" } }
+      ],
+      "defaults": { "resolution": "1" }
+    },
+    {
+      "id": "filter", "label": "Window scaling filter", "group": "Display",
+      "help": "How the finished picture is scaled to the window when their sizes differ.",
+      "choices": [
+        { "label": "Off", "set": { "upscaling": "0" } },
+        { "label": "Catmull-Rom", "set": { "upscaling": "1" } },
+        { "label": "Lanczos", "set": { "upscaling": "2" } }
+      ],
+      "defaults": { "upscaling": "0" }
+    },
+    {
+      "id": "sharpness", "label": "Sharpness", "group": "Display",
+      "help": "Sharpens the picture as it goes to the window. Too much shows halos around edges.",
+      "slider": { "key": "sharpness", "min": 0, "max": 100, "step": 10, "format": "%d" },
+      "defaults": { "sharpness": "0" }
+    },
+    {
+      "id": "ultrawide", "label": "Ultrawide", "group": "Display",
+      "help": "The camera's shape on a screen wider than 16:9.",
+      "choices": [
+        { "label": "16:9", "set": { "ultrawide": "0" } },
+        { "label": "Monitor's shape", "set": { "ultrawide": "1" } }
+      ],
+      "defaults": { "ultrawide": "0" }
+    },
+    {
+      "id": "frame_rate", "label": "Frame rate", "group": "Smoothness", "in": "env",
+      "help": "60 is the game's own rate. Unlocked goes up to your display's refresh; the game keeps time by the clock, so it plays at the same speed.",
+      "choices": [
+        { "label": "60", "set": { "HOS_FPS_UNLOCKED": "0" } },
+        { "label": "Unlocked", "set": { "HOS_FPS_UNLOCKED": "1" } }
+      ],
+      "defaults": { "HOS_FPS_UNLOCKED": "0" }
+    },
+    {
+      "id": "frame_generation", "label": "Frame generation", "group": "Smoothness",
+      "help": "Makes frames between the game's own, for smoother motion, at a little input delay. Fast motion or camera cuts can show artifacts.",
+      "choices": [
+        { "label": "Off", "set": { "frame_generation": "0" } },
+        { "label": "2x", "set": { "frame_generation": "2" } },
+        { "label": "3x", "set": { "frame_generation": "3" } },
+        { "label": "4x", "set": { "frame_generation": "4" } }
+      ],
+      "defaults": { "frame_generation": "0" }
+    },
+    {
+      "id": "fps_counter", "label": "FPS counter", "group": "Smoothness",
+      "help": "Frames per second in the top right corner of the game.",
+      "choices": [
+        { "label": "Off", "set": { "fps_counter": "0" } },
+        { "label": "On", "set": { "fps_counter": "1" } }
+      ],
+      "defaults": { "fps_counter": "0" }
+    },
+    {
+      "id": "text_speed", "label": "Text speed", "group": "Gameplay",
+      "help": "How fast the letters of dialogue and other messages appear.",
+      "choices": [
+        { "label": "Normal", "set": { "text_speed": "0" } },
+        { "label": "2x", "set": { "text_speed": "1" } },
+        { "label": "4x", "set": { "text_speed": "2" } },
+        { "label": "Instant", "set": { "text_speed": "3" } }
+      ],
+      "defaults": { "text_speed": "0" }
+    },
+    {
+      "id": "audio_output", "label": "Audio output", "group": "Gameplay",
+      "help": "The speakers the game mixes its sound for. If the game has no sound, try Stereo.",
+      "choices": [
+        { "label": "Auto", "set": { "audio_output": "0" } },
+        { "label": "Stereo", "set": { "audio_output": "1" } },
+        { "label": "5.1", "set": { "audio_output": "2" } }
+      ],
+      "defaults": { "audio_output": "0" }
+    }
+  ],
+  "actions": [
+    { "id": "saves", "label": "Saves", "help": "Your save files.", "open": "saves" },
+    { "id": "mods", "label": "Mods", "help": "RomFS mods go here, each in its own folder: mods\\<name>\\romfs\\...", "open": "mods" }
+  ]
+}

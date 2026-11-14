@@ -14,6 +14,12 @@ release of their own, `builder-parts`. No game data is involved at any step.
 
 Players' launchers then offer the update: they compare the game folder's version with the latest release's tag.
 
+The release also gets `ProjectReLink-vX.Y.Z-Windows-x64.zip`: every part of `relink-setup.txt` in one zip, laid out as the
+setup installs them, with `recomplauncher.json` beside `ReLink.exe` (`scripts/release_parts.py zip`). RecompLauncher installs
+from it, runs `nx2/make_game.py --game <your copy> --out <its folder>\game --progress-lines` as its setup step and starts
+`game\bin\relink-game.exe`. Keep `recomplauncher.json` in step when a key of `relink_options.ini` changes; check it against
+https://recomplauncher.com/schema/recomplauncher.json.
+
 ## The seed: the first release, new tools, a new play profile
 
 The setup installs six parts. Three are made from this repository at every release: the launcher with the sources and the

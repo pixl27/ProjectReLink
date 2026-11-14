@@ -1,5 +1,7 @@
 # Project ReLink
 
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 **Zelda OOT Remake Recomp.** An unofficial static recompilation of *The Legend of Zelda: Ocarina of Time* (the Switch 2
 remake) into a native Windows game: the game's code is translated to PC code and compiled on your machine, with no emulator.
 
@@ -31,6 +33,11 @@ Other versions do not work: the launcher checks your copy and says so before it 
    one, drop it on the window, or give the `romfs` and `exefs` folders.
 4. Press **Install**. It takes 10 to 45 minutes depending on your CPU; you can keep using the PC.
 5. Press **Play**. The desktop and Start menu shortcuts open the launcher from then on.
+
+**With RecompLauncher.** Each release also has `ProjectReLink-<version>-Windows-x64.zip`, the same tools in one file, with a
+`recomplauncher.json` that lets [RecompLauncher](https://recomplauncher.com) install ReLink, ask for your copy (the same
+version as above), build the game in the same way and start it. Its settings page writes the game's own
+`relink_options.ini`; the frame rate goes in `relink_env.txt` beside it.
 
 The first start is long, once (about 16 minutes on our PC): the game prepares its shaders and builds its graphics pipelines
 for your driver's cache, with a progress screen. It does that part again after a graphics driver update, so that the first
@@ -143,6 +150,7 @@ python -I nx2/make_game.py --nup "C:\path\your-game.nup" --out "C:\Games\ReLink"
 python -I nx2/make_game.py --romfs "C:\path\romfs" --exefs "C:\path\exefs" --out "C:\Games\ReLink" --language en-US
 ```
 
+`--game <path>` takes either one (a `.nup`, or a folder holding `exefs` and `romfs`) in place of those options.
 `--check` with your `.nup` only checks the game's version. `--log file` keeps the output. `RELINK_JOBS=<n>` limits how many
 files compile at once.
 
