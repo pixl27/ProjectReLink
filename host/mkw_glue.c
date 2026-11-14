@@ -552,14 +552,64 @@ static DWORD WINAPI watch_thread(void *p) {
         hos_log("watch: done");
     }
 }
+/* (relink) The walk of a suspended thread's stack reads where its registers say the frames are. Caught between two
+   instructions, or in code whose unwind data does not describe what it does, they say nonsense and the read faulted under
+   RtlVirtualUnwind, on the sampler's own thread: the game closed in the middle of a measure (llvm-mingw builds: 5 sampling
+   tours of 6 ended so, hs2310 / hs2330, 90 to 210 s in; the log's "CRASH ... sample_all_thread"). The walk is tried now: an
+   access violation on this thread while it walks ends that sample's stack where it was (the frames found so far are kept)
+   and the sampling goes on; the log says how many when the sampling stops. */
+__attribute__((returns_twice)) int recomp_sj_setjmp(void **buf);          /* hos_setjmp.c */
+__attribute__((noreturn)) void hos_sj_longjmp(void **buf, int value);
+static HMODULE sa_mods[64];
+static char sa_modname[64][64];
+static int sa_nmods;
+static DWORD walk_tid;
+static volatile LONG walk_on, walk_faults;
+static volatile int walk_len;   /* the sample line's length after the last frame written whole */
+static void *walk_buf[32] __attribute__((aligned(16)));
+static LONG CALLBACK walk_guard(EXCEPTION_POINTERS *e) {
+    const DWORD code = e->ExceptionRecord->ExceptionCode;
+    if (!walk_on || GetCurrentThreadId() != walk_tid ||
+        (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_IN_PAGE_ERROR && code != EXCEPTION_GUARD_PAGE))
+        return EXCEPTION_CONTINUE_SEARCH;
+    walk_on = 0;
+    InterlockedIncrement(&walk_faults);
+    hos_sj_longjmp(walk_buf, 1);
+}
+__attribute__((noinline)) static void sample_walk(CONTEXT *ctx, char *line, int cap) {
+    int len = walk_len;
+    for (int depth = 0; depth < 16 && ctx->Rip && len < cap - 96; depth++) {
+        HMODULE m = NULL;
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)ctx->Rip, &m);
+        int mi = -1;
+        for (int k = 0; k < sa_nmods; k++) if (sa_mods[k] == m) mi = k;
+        if (mi < 0 && sa_nmods < 64) {
+            mi = sa_nmods++;
+            sa_mods[mi] = m;
+            char mp[MAX_PATH] = "?";
+            if (m) GetModuleFileNameA(m, mp, MAX_PATH);
+            const char *b = strrchr(mp, '\\');
+            snprintf(sa_modname[mi], sizeof sa_modname[mi], "%s", b ? b + 1 : mp);
+        }
+        len += snprintf(line + len, cap - len, "%s%s+%llx", depth ? ";" : "", mi < 0 ? "?" : sa_modname[mi],
+                        (unsigned long long)(ctx->Rip - (uint64_t)m));
+        walk_len = len;
+        DWORD64 image = 0;
+        PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx->Rip, &image, NULL);
+        if (!f) break;
+        void *hd;
+        DWORD64 frame;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx->Rip, f, ctx, &hd, &frame, NULL);
+    }
+}
 static DWORD WINAPI sample_all_thread(void *p) {
     const char *path = (const char *)p;
     char go[MAX_PATH];
     snprintf(go, sizeof go, "%s.go", path);
     FILE *out = NULL;
-    static HMODULE mods[64];
-    static char modname[64][64];
-    int nmods = 0;
+    walk_tid = GetCurrentThreadId();
+    AddVectoredExceptionHandler(1, walk_guard);
     enum { MAXT = 128 };
     static HANDLE th[MAXT];
     static char tn[MAXT][64];
@@ -567,7 +617,11 @@ static DWORD WINAPI sample_all_thread(void *p) {
     int64_t t0 = 0;
     for (;;) {
         if (GetFileAttributesA(go) == INVALID_FILE_ATTRIBUTES) {
-            if (out) { fclose(out); out = NULL; hos_log("prof: all-thread sampling stopped"); }
+            if (out) {
+                fclose(out);
+                out = NULL;
+                hos_log("prof: all-thread sampling stopped (%ld stack walks cut short by a fault so far)", (long)walk_faults);
+            }
             Sleep(200);
             continue;
         }
@@ -609,34 +663,19 @@ static DWORD WINAPI sample_all_thread(void *p) {
         const long ms = (long)((hos_now_ns() - t0) / 1000000);
         for (int i = 0; i < nt; i++) {
             if (SuspendThread(th[i]) == (DWORD)-1) continue;
-            CONTEXT ctx = {0};
+            /* (static: not in a register across the walk's second return) */
+            static CONTEXT ctx;
+            static char line[1024];
+            memset(&ctx, 0, sizeof ctx);
             ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
             const BOOL got = GetThreadContext(th[i], &ctx);
-            char line[1024];
-            int len = snprintf(line, sizeof line, "%ld %s|", ms, tn[i]);
-            for (int depth = 0; got && depth < 16 && ctx.Rip && len < (int)sizeof line - 96; depth++) {
-                HMODULE m = NULL;
-                GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                   (LPCSTR)ctx.Rip, &m);
-                int mi = -1;
-                for (int k = 0; k < nmods; k++) if (mods[k] == m) mi = k;
-                if (mi < 0 && nmods < 64) {
-                    mi = nmods++;
-                    mods[mi] = m;
-                    char mp[MAX_PATH] = "?";
-                    if (m) GetModuleFileNameA(m, mp, MAX_PATH);
-                    const char *b = strrchr(mp, '\\');
-                    snprintf(modname[mi], sizeof modname[mi], "%s", b ? b + 1 : mp);
-                }
-                len += snprintf(line + len, sizeof line - len, "%s%s+%llx", depth ? ";" : "", mi < 0 ? "?" : modname[mi],
-                                (unsigned long long)(ctx.Rip - (uint64_t)m));
-                DWORD64 image = 0;
-                PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx.Rip, &image, NULL);
-                if (!f) break;
-                void *hd;
-                DWORD64 frame;
-                RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, f, &ctx, &hd, &frame, NULL);
+            walk_len = snprintf(line, sizeof line, "%ld %s|", ms, tn[i]);
+            if (got && recomp_sj_setjmp(walk_buf) == 0) {
+                walk_on = 1;
+                sample_walk(&ctx, line, (int)sizeof line);
             }
+            walk_on = 0;
+            line[walk_len] = 0;   /* (a faulted walk: the line ends after its last whole frame) */
             ResumeThread(th[i]);
             fprintf(out, "%s\n", line);
         }
@@ -681,10 +720,17 @@ void hos_gpu_queue_submit(int channel_fd, const uint64_t *entries, uint32_t n, i
 /* The loop-header interrupt polls (nx2/poll.py): the virtual cores (HOS_VCORES) ask a thread holding a core a
    waiter should have to give it up there, so guest code with no nn::os call or SVC in it (a long job) is preempted
    as Horizon would preempt it. */
-void a64_poll(Ctx *c) {
-    c->poll = 0;
+/* (nx2/rtgen.py) the loop-header poll: the lifted code has cleared c->poll and calls this with no argument, so that the
+   compiler keeps guest registers in host registers across the loop header (a call handed the context could change any
+   of it). The thread's context is the running one's (hos_ctx: a fiber's while it runs one), which is where the kick
+   (hos_thread.c) set the flag; nothing here reads it */
+void a64_poll_cur(void) {
     void hos_vcore_checkpoint(void);
     hos_vcore_checkpoint();
+}
+void a64_poll(Ctx *c) {   /* (the old form, A64_POLL_CTX builds) */
+    c->poll = 0;
+    a64_poll_cur();
 }
 
 /* CNTPCT_EL0 at the Switch 2's 31.25 MHz (rt/a64_rt.c's default counts the Switch 1's 19.2 MHz). The SDK checks

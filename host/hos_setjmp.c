@@ -184,3 +184,7 @@ void hos_setjmp_return(Ctx *c, uint64_t target) {
    the owner's code inside longjmp's own frame, which returned into longjmp's caller (0x8168215c, the UDF after OoT's
    BL longjmp: the text box thread's "branch to a non-function") */
 void a64_ijump_hook(Ctx *c, uint64_t target) { hos_setjmp_return(c, target); }
+
+/* (relink) the same pair for the host's own use: recomp_sj_setjmp(buf) with a buf of 32 pointers, then this from anywhere
+   below it on the same thread (the sampler's guarded stack walk, mkw_glue.c sample_walk) */
+__attribute__((noreturn)) void hos_sj_longjmp(void **buf, int value) { recomp_sj_longjmp(buf, value); }
