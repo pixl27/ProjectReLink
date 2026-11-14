@@ -29,6 +29,8 @@
 #include "vk_texture.h"   // (upload_command_buffer)
 #include "vk_gprof.h"      // (RX_VK_PASS_TIMING)
 #include "import_hold.h"
+#include "mirror_inherit.h"
+#include "mirror_trim.h"
 #ifdef __linux__
 #include <cerrno>
 #include <dlfcn.h>
@@ -67,6 +69,10 @@ struct Pool {
     uint64_t retired_epoch = 0;
     bool prefetched = false;     // (amd-fix) imported ahead by the background thread, not bound yet
     uint64_t dead_since = 0;     // (relink) the submission at which no pool of the game was found over it any more (0: one is)
+    // (relink, mirror_trim.h) mostly outside every game pool since this submission (0: not); and, retired by a trim, its
+    // mirror's contents wanted by each of the pools made from its live parts
+    uint64_t trim_since = 0;
+    bool trimmed = false;
     // (relink) the write-back's diff: what guest memory holds of the pool, in VRAM, and the pages of it known to be so
     VkBuffer shadow = VK_NULL_HANDLE;
     VmaAllocation shadow_alloc = nullptr;
@@ -1037,13 +1043,19 @@ void shadow_drop_range(uint64_t lo, uint64_t hi) {   // (shadow_mu held)
 /// (the spans unused for 1800 presents dropped with their shadow pages; the rest published for the capture)
 void publish_tex_spans(uint64_t frame) {
     std::lock_guard lk(shadow_mu);
-    for (auto it = tex_spans.begin(); it != tex_spans.end();) {
-        if (frame > it->second.second + 1800) {
-            shadow_drop_range(it->first, it->second.first);
-            it = tex_spans.erase(it);
-            tex_spans_changed = true;
-        } else {
-            ++it;
+    // (relink, from upstream PR 2420) a span ages by the present: looked over once a present, not at each of its ~20 submissions,
+    // which walked the ~300 spans every time. A span noted between two submissions of one present is still merged below
+    static uint64_t swept = ~0ull;
+    if (frame != swept) {
+        swept = frame;
+        for (auto it = tex_spans.begin(); it != tex_spans.end();) {
+            if (frame > it->second.second + 1800) {
+                shadow_drop_range(it->first, it->second.first);
+                it = tex_spans.erase(it);
+                tex_spans_changed = true;
+            } else {
+                ++it;
+            }
         }
     }
     if (!tex_spans_changed) return;
@@ -2113,6 +2125,13 @@ void prefetch_chunks(uint64_t lo, uint64_t hi, uint64_t chunk) {
         st_prefetch_sent++;
     }
     bg_cv.notify_one();
+}
+
+/// (the imports' chunk, for the code outside pool_lookup: the same value as pool_lookup's own. That function is left as it
+/// was written: it is on the replay's path, and a changed one loses its place in the back end's profile, vk_village.profdata)
+uint64_t import_chunk() {
+    static const uint64_t chunk = (uint64_t)(getenv("RX_VK_IMPORT_CHUNK_MB") ? std::max(0, atoi(getenv("RX_VK_IMPORT_CHUNK_MB"))) : 16) << 20;
+    return chunk;
 }
 
 Pool* pool_lookup(uint64_t guest, uint64_t size) {
@@ -3545,6 +3564,140 @@ void imports_give_back() {   // (pools_mu held)
              (long long)st_imports_evicted, (unsigned long long)(st_import_bytes_evicted >> 20));
 }
 
+// ---- (relink, after upstream's pull request 2825) an import trimmed back to the game's live pools (mirror_trim.h) ----
+// Every 64 submissions, while VRAM is short: the mirrored import that has been mostly outside every game pool the longest
+// (mirror_trim::wait) is retired, and each of its live parts imported again on its own, with a mirror wanted at once: made in
+// this same submission's uploads (memory_begin_submission, right after), each takes what the GPU wrote from the old mirror
+// (mirror_make's inherit, as for a pool made again larger), and the page table points at the new mirrors before anything is
+// recorded. One import a call: each new part is an import in the driver, on the replay thread. Nothing is done unless the new
+// mirrors fit the budget beside the old one and the mirrors already wanted, which come first; nor for a pool with pages of
+// the deferred write-back (RX_VK_WB_LAZY) in its mirror alone. The old one goes once every part has its own mirror and the
+// GPU is done with it (trims_settle).
+// MEASURED HERE (13/11, hs2110, Hyrule Field then the Market at 75 % on an RTX 3060 Ti, two pairs): the same two trims
+// upstream reports (0x108c000000 224 -> 48 MB, 0x1178000000 160 -> 112 MB), and no gain: Market 53.2 / 53.5 without, 51.7
+// and 45.9 with (the 45.9 is the run whose trims fell in the arrival). The Market alone, with nothing left from the Field,
+// runs the same (52.8 to 55.0, hs2111 / hs2112): what bounds it is the game's own threads, not VRAM. OPT-IN:
+// RX_VK_MIRROR_TRIM=1
+int64_t st_trims = 0;
+uint64_t st_trim_bytes = 0;
+int trims_waiting = 0;   // (retired by a trim, their mirror still wanted by a part without its own: trims_settle)
+// (the ranges trimmed lately, how often and in which submission last: a range the game binds across right after a trim is made
+// larger again by pool_lookup, and waits 4x then 16x longer before its next trim, then is left alone: mirror_trim::wait. Kept
+// here by range, not in the pools: pool_lookup, which makes the larger pool, is left as it was written)
+struct TrimNote {
+    uint64_t lo, hi;
+    unsigned trims;
+    uint64_t epoch;
+};
+std::vector<TrimNote> trim_notes;
+unsigned trims_of(uint64_t lo, uint64_t hi) {
+    unsigned n = 0;
+    for (const TrimNote& t : trim_notes)
+        if (t.lo < hi && t.hi > lo) n = std::max(n, mirror_trim::counted(t.trims, mirror_epoch - t.epoch));
+    return n;
+}
+bool mirrors_trim() {   // (pools_mu held; true when one was trimmed: its parts are in mirror_wanted)
+    static const bool on = getenv("RX_VK_MIRROR_TRIM") && atoi(getenv("RX_VK_MIRROR_TRIM")) != 0;
+    const uint64_t chunk = import_chunk();
+    if (!on || !chunk || mirror_epoch % 64 || par_active.load(std::memory_order_relaxed) || !wb_orphans.empty()) return false;
+    uint64_t used = 0, allowed = 0;
+    const bool pressed = vram_usage(&used, &allowed) && mirror_trim::pressed(used, allowed);
+    Pool* pick = nullptr;
+    std::vector<mirror_trim::Range> parts, pick_parts;
+    for (auto& [lo, p] : imported) {
+        const unsigned trims = trims_of(p.lo, p.hi);
+        if (!pressed || p.mstate != Pool::MIRROR_ON || p.wb_pending_n || !mirror_trim::wait(trims)) {
+            p.trim_since = 0;
+            continue;
+        }
+        parts = mirror_trim::live(p.lo, p.hi, chunk, mirror_trim::kJoin, guest_pools);
+        if (!mirror_trim::worth(p.hi - p.lo, parts)) {
+            p.trim_since = 0;
+            continue;
+        }
+        if (!p.trim_since) p.trim_since = mirror_epoch;
+        if (mirror_epoch - p.trim_since < mirror_trim::wait(trims)) continue;
+        if (!pick || p.trim_since < pick->trim_since) pick = &p, pick_parts = parts;
+    }
+    if (!pick) return false;
+    const uint64_t kept = mirror_trim::bytes(pick_parts), size = pick->hi - pick->lo;
+    // (no room for both yet, beside the mirrors already wanted, which mirror_make takes first: looked at again in 64 submissions.
+    // Nor while RX_VK_MIRROR_TIGHT's rule refuses every mirror: the parts would get none)
+    uint64_t wanted = 0;
+    for (const Pool* w : mirror_wanted) wanted += w->hi - w->lo;
+    static const bool tight_rule = getenv("RX_VK_MIRROR_TIGHT") != nullptr;
+    if (mirror_bytes + wanted + kept > mirror_budget() || (tight_rule && used > allowed / 100 * 90)) return false;
+    std::vector<Pool> made;
+    for (const mirror_trim::Range& r : pick_parts) {   // (all of them first: one that fails leaves everything as it was)
+        Pool np;
+        if (!import_pool(r.lo, r.hi, np)) {
+            for (Pool& m : made) {
+                vkDestroyBuffer(dev.device, m.buffer, nullptr);
+                vkFreeMemory(dev.device, m.memory, nullptr);
+                for (VkDeviceMemory piece : m.pieces) vkFreeMemory(dev.device, piece, nullptr);
+            }
+            pick->trim_since = mirror_epoch;   // (not again for a while)
+            return false;
+        }
+        made.push_back(std::move(np));
+    }
+    const uint64_t olo = pick->lo, ohi = pick->hi, waited = mirror_epoch - pick->trim_since;
+    const unsigned trims = trims_of(olo, ohi) + 1;
+    std::erase_if(trim_notes, [&](const TrimNote& t) { return (t.lo < ohi && t.hi > olo) || mirror_epoch - t.epoch > mirror_trim::kForget; });
+    trim_notes.push_back({olo, ohi, trims, mirror_epoch});
+    retire_pool(imported.find(olo));   // (the page table's entries of its range 0, its shadow freed, its mirror kept to inherit)
+    retired_pools.back().mapped().trimmed = true;
+    trims_waiting++;
+    for (Pool& m : made) {
+        auto it = imported.emplace(m.lo, m).first;
+        guest_pages_set(it->second.lo, it->second.hi, it->second.address);
+        it->second.mstate = Pool::MIRROR_WANTED;
+        mirror_wanted.push_back(&it->second);
+    }
+    st_trims++, st_trim_bytes += size - kept;
+    static int logged;
+    if (logged++ < 40 || st_trims % 64 == 0)
+        logf("vk: pool %#llx..%#llx (%llu MB) trimmed to its %zu live part(s), %llu MB: the rest outside every game pool for %llu "
+             "submissions (%lld trims, %llu MB in all; RX_VK_MIRROR_TRIM=1)", (unsigned long long)olo, (unsigned long long)ohi,
+             (unsigned long long)(size >> 20), made.size(), (unsigned long long)(kept >> 20), (unsigned long long)waited,
+             (long long)st_trims, (unsigned long long)(st_trim_bytes >> 20));
+    return true;
+}
+
+// (pools_mu held, after the submission's mirrors are made) A trimmed import's old mirror waits to be inherited until every pool
+// over its range has a mirror of its own. A part refused one (the budget, RX_VK_MIRROR_TIGHT, an allocation that failed) points
+// at its import meanwhile; when its mirror is made later, mirror_make still copies in what the GPU wrote there from the old
+// mirror, as for a pool made again larger. Let go at once, what the GPU wrote in that part and nowhere else was lost. A part
+// refused for a failed allocation is tried again at its next binding while the old mirror waits. kIdleEpochs still bounds the
+// wait (mirrors_give_back)
+void trims_settle() {
+    if (!trims_waiting) return;
+    for (auto& nh : retired_pools) {
+        Pool& r = nh.mapped();
+        if (!r.trimmed) continue;
+        bool all = true;
+        if (r.inherit_pending && r.mstate == Pool::MIRROR_ON) {
+            auto it = imported.lower_bound(r.lo);
+            if (it != imported.begin() && std::prev(it)->second.hi > r.lo) --it;
+            for (; it != imported.end() && it->first < r.hi; ++it) {
+                Pool& q = it->second;
+                if (q.hi <= r.lo || q.mstate == Pool::MIRROR_ON) continue;
+                all = false;
+                if (q.mstate == Pool::MIRROR_REFUSED && q.hi - q.lo <= (1ull << 30)) q.mstate = Pool::MIRROR_NONE;
+            }
+        }
+        if (!all) {
+            static int logged;
+            if (logged++ < 16)
+                logf("vk: trimmed pool %#llx..%#llx: its mirror kept, a live part has none of its own yet", (unsigned long long)r.lo,
+                     (unsigned long long)r.hi);
+            continue;
+        }
+        r.trimmed = false, r.inherit_pending = false;   // (every part has its share, or the wait is over: it goes as any retired one)
+        trims_waiting--;
+    }
+}
+
 void memory_begin_submission() {
     std::lock_guard lk(pools_mu);
     reap_mirrors();
@@ -3557,13 +3710,18 @@ void memory_begin_submission() {
     released_drain();
     if (tex_capture_on()) publish_tex_spans(texture_frame_no());
     if (!mirror_on()) return;
+    mirrors_trim();
     {
         uint64_t want = 0;
         for (Pool* p : mirror_wanted) want += p->hi - p->lo;
         if (mirror_epoch % 64 == 0 || mirror_bytes + want > mirror_budget()) mirrors_give_back(want);
     }
-    if (mirror_wanted.empty()) return;
+    if (mirror_wanted.empty()) {
+        trims_settle();   // (a part's mirror made at its binding since)
+        return;
+    }
     for (Pool* p : mirror_wanted) mirror_make(*p);
+    trims_settle();   // (the old mirror waits for no more only once every part has its own)
     mirror_wanted.clear();
     publish_cap_ranges();
     static uint64_t logged_at;
@@ -3649,9 +3807,38 @@ bool mirror_make(Pool& pool) {
                     barrier_done = true;
                 }
                 const uint64_t a = std::max(r.lo, p->lo), b = std::min(r.hi, p->hi);
-                const VkBufferCopy part{a - r.lo, a - p->lo, b - a};
-                vkCmdCopyBuffer(upload_command_buffer(), r.mirror, p->mirror, 1, &part);
-                r.inherit_pending = false;
+                // (relink, upstream's pull request 1127) only the pages not stamped since its last sync: one the CPU wrote
+                // after it has the game's newer data in the copy of guest memory above, and the old mirror's over it counted
+                // as synced, stale for good (mirror_inherit.h: OoT's light probes, written when an area comes in; after their
+                // pool was remade the fog read the area before's). As mirror_sync, a page a shader wrote through a bare entry
+                // keeps the mirror's copy (RX_VK_PROTECT_BARE=1). Synced in this submission: the whole part. Its synced_gen
+                // is raised only at the submission's end, so what the GPU wrote in this submission's earlier segments (the
+                // parallel replay) is stamped above it, and guest memory has that only after the write-back; the CPU's
+                // writes were collected before the sync. RX_VK_INHERIT_ALL=1: the whole part always, as before
+                static const bool inherit_all = getenv("RX_VK_INHERIT_ALL") != nullptr;
+                std::vector<VkBufferCopy> parts;
+                uint64_t from_guest = 0;
+                const uint32_t synced = r.synced_gen;
+                if (inherit_all || r.synced_epoch == mirror_epoch)
+                    parts.push_back({a - r.lo, a - p->lo, b - a});
+                else
+                    from_guest = mirror_inherit::runs(a, b, r.lo, p->lo, kPageShift, kRegionPages,
+                                                      [&](uint64_t region) { return region_gen[region] <= synced; },
+                                                      [&](uint64_t page) {
+                                                          return page_gen(page) <= synced ||
+                                                                 (protect_bare_on() && prot_page_since(page, synced));
+                                                      },
+                                                      [&](uint64_t src, uint64_t dst, uint64_t size) { parts.push_back({src, dst, size}); });
+                if (!parts.empty())
+                    vkCmdCopyBuffer(upload_command_buffer(), r.mirror, p->mirror, (uint32_t)parts.size(), parts.data());
+                if (from_guest) {
+                    static int told;
+                    if (told++ < 40)
+                        logf("vk: pool %#llx..%#llx: %llu KB the CPU wrote since retired pool %#llx's last sync kept from guest memory, "
+                             "not its mirror", (unsigned long long)p->lo, (unsigned long long)p->hi, (unsigned long long)(from_guest >> 10),
+                             (unsigned long long)r.lo);
+                }
+                if (!r.trimmed) r.inherit_pending = false;   // (a trimmed one: each of its live parts' pools takes its own, mirrors_trim)
                 r.retired_value = std::max(r.retired_value, mem_rec_value);   // (in use by this upload until it is done)
                 inherited++;
             }

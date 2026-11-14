@@ -176,6 +176,15 @@ bool batch_on() {
     }();
     return on && batch_tl != VK_NULL_HANDLE;
 }
+// (relink) whether a submit was ever held (batched submits, RADV): without one, pend.cbs is always empty and a flush has nothing to
+// send, so it does not take dev.present_mu, which the replay's submits and the present's blit hold in turn. The game's threads come
+// here at every progress poll, fence wait and timeline wait; they waited behind those for a flush that sent nothing. Set under
+// dev.present_mu before the first held submit; RX_VK_FLUSH_LOCK=1: the lock taken every time, as before
+std::atomic<bool> batch_seen{false};
+static bool flush_nothing() {
+    static const bool always = getenv("RX_VK_FLUSH_LOCK") && atoi(getenv("RX_VK_FLUSH_LOCK")) != 0;
+    return !always && !batch_seen.load(std::memory_order_acquire);
+}
 } // namespace
 void queue_flush_locked() {   // (dev.present_mu held)
     if (pend.cbs.empty()) return;
@@ -209,6 +218,7 @@ void queue_flush_locked() {   // (dev.present_mu held)
     pend.cbs.clear(), pend.any_signal = false, pend.signal = 0, pend.rec = 0;
 }
 void queue_flush() {
+    if (flush_nothing()) return;
     std::lock_guard lk(dev.present_mu);
     queue_flush_locked();
 }
@@ -219,6 +229,7 @@ void device_wait_idle_locked() {   // (dev.present_mu held)
 }
 namespace {
 void queue_flush_for(int why) {
+    if (flush_nothing()) return;
     std::lock_guard lk(dev.present_mu);
     if (pend.cbs.empty()) return;
     flush_reason = why;
@@ -230,6 +241,7 @@ void queue_flush_for(int why) {
 // 413, 528)
 void queue_flush_poll() {
     static const int64_t us = getenv("RX_VK_BATCH_POLL_US") ? atoll(getenv("RX_VK_BATCH_POLL_US")) : 2000;
+    if (flush_nothing()) return;
     std::lock_guard lk(dev.present_mu);
     if (pend.cbs.empty()) return;
     if (us > 0 && std::chrono::steady_clock::now() - pend_since < std::chrono::microseconds(us)) return;
@@ -431,6 +443,7 @@ void submit_recording(Recording& r, bool signal_value = true, uint64_t signal_at
     si.pSignalSemaphoreInfos = nsig ? signals : nullptr;
     std::lock_guard lk(dev.present_mu);   // (one queue: submits and presents take turns)
     if (batch_on()) {
+        batch_seen.store(true, std::memory_order_release);
         if (pend.cbs.empty()) batch_next++, pend_since = std::chrono::steady_clock::now();
         for (uint32_t i = 0; i < n; i++) pend.cbs.push_back(cb[i]);
         if (signal_value) pend.signal = std::max(pend.signal, signal.value), pend.any_signal = true;
