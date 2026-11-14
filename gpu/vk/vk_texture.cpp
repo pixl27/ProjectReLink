@@ -247,6 +247,30 @@ uint64_t spare_bytes = 0;
 int64_t st_recycled = 0, st_fresh = 0;
 // (RX_VK_SPARE_MB=<MB>: how much of them is kept at most, 192 by default)
 const uint64_t kSpareBytes = (uint64_t)(getenv("RX_VK_SPARE_MB") ? std::max(16, atoi(getenv("RX_VK_SPARE_MB"))) : 192) << 20;
+// (relink, issues 6 and 7) What the system can still commit, and how far that is under the headroom the textures leave it
+// (RX_VK_COMMIT_FREE_MB, 2048 by default; 0: not looked at). Windows backs each VRAM allocation with commit, so a card with
+// a lot of VRAM can take the whole PC to its commit limit while the driver still allows more: the limit is RAM plus the
+// page file, which Windows grows slowly and refuses meanwhile. Asked every 30 frames. 0: enough left, or not known.
+// (Simulated here with RX_VK_COMMIT_FREE_MB=9000, hs2578: no spares, the textures held at 3 GB, the picture whole, 50-54 fps
+// for 54-57 on the same route)
+uint64_t commit_left_bytes = UINT64_MAX, commit_total_bytes = 0, ram_total_bytes = 0;
+uint64_t commit_short(uint64_t frame) {
+#ifdef _WIN32
+    static const uint64_t headroom = (uint64_t)(getenv("RX_VK_COMMIT_FREE_MB") ? std::max(0, atoi(getenv("RX_VK_COMMIT_FREE_MB"))) : 2048) << 20;
+    static uint64_t asked = UINT64_MAX;
+    if (asked == UINT64_MAX || frame - asked >= 30) {
+        asked = frame;
+        MEMORYSTATUSEX ms{};
+        ms.dwLength = sizeof ms;
+        if (GlobalMemoryStatusEx(&ms))
+            commit_left_bytes = ms.ullAvailPageFile, commit_total_bytes = ms.ullTotalPageFile, ram_total_bytes = ms.ullTotalPhys;
+    }
+    return headroom && commit_left_bytes < headroom ? headroom - commit_left_bytes : 0;
+#else
+    (void)frame;
+    return 0;
+#endif
+}
 bool same_image(const VkImageCreateInfo& a, const VkImageCreateInfo& b) {
     return a.flags == b.flags && a.imageType == b.imageType && a.format == b.format && a.extent.width == b.extent.width &&
            a.extent.height == b.extent.height && a.extent.depth == b.extent.depth && a.mipLevels == b.mipLevels &&
@@ -3501,6 +3525,11 @@ void texture_frame(uint64_t completed) {
                 logf("vk: memory: working set %llu MB (peak %llu), private %llu MB, staging %llu MB in %zu arenas",
                      (unsigned long long)(pm.WorkingSetSize >> 20), (unsigned long long)(pm.PeakWorkingSetSize >> 20),
                      (unsigned long long)(pm.PrivateUsage >> 20), (unsigned long long)(kept >> 20), arenas.size());
+            // (relink, issues 6 and 7: what the PC has left, beside what the process holds)
+            if (const uint64_t s = commit_short(frame_no); commit_left_bytes != UINT64_MAX)
+                logf("vk: system memory: %llu MB of RAM, %llu MB left to commit of %llu MB%s", (unsigned long long)(ram_total_bytes >> 20),
+                     (unsigned long long)(commit_left_bytes >> 20), (unsigned long long)(commit_total_bytes >> 20),
+                     s ? " (short: textures and spare images are let go sooner)" : "");
 #if defined(__linux__) && defined(__GLIBC__)
             // (glibc's heap: what its arenas hold free. The shader translation and the loads' decoding leave their garbage spread through
             // the threads' arenas (26 of them, 1.2 GB resident in Kokiri Forest, the heap's growth in a scene change never going back),
@@ -3544,27 +3573,43 @@ void texture_frame(uint64_t completed) {
     // RX_VK_TIGHT_FREE=0: the cap always, as before
     static const bool tight_free = !getenv("RX_VK_TIGHT_FREE") || atoi(getenv("RX_VK_TIGHT_FREE")) != 0;
     uint64_t vu = 0, va = 0;
-    const bool tight = tight_free && (!dead.empty() || !spares.empty()) && vram_usage(&vu, &va, nullptr) && vu > va / 100 * 95;
-    const int per_frame = tight ? std::max(per_frame_cfg, 1024) : per_frame_cfg;
+    // (relink, issues 6 and 7) and when the system has little left to commit: Windows backs VRAM with commit (in a player's
+    // log the process's private bytes were 31.6 GB with 12.5 GB of a 16 GB card used, 20 GB here with 6 GB of VRAM), and the
+    // GPU there stopped finishing its work until Windows reset it
+    const bool tight = tight_free && (!dead.empty() || !spares.empty()) &&
+                       ((vram_usage(&vu, &va, nullptr) && vu > va / 100 * 95) || commit_short(frame_no) != 0);
+    // (relink, issues 6 and 7) the cap counts the images destroyed, not the ones kept as spares, and a spare is kept only while
+    // the spares are under kSpareBytes. Counted together, 24 dead textures a frame all became spares and left nothing of the cap
+    // for the spares' own trim, so with more than 24 a frame (the game's render targets move every frame when its step is not
+    // whole: Game speed at its default below 60 fps) the spares were never trimmed until VRAM reached 95% of what the driver
+    // allows: 1,794 spares of 3,010 MB against 192 in that log, with 12.5 GB of the 16 GB card used. And a backlog the cap
+    // cannot keep up with goes in about half a second, not never. RX_VK_SPARE_STRICT=0: as before
+    static const bool strict = !getenv("RX_VK_SPARE_STRICT") || atoi(getenv("RX_VK_SPARE_STRICT")) != 0;
+    int per_frame = tight ? std::max(per_frame_cfg, 1024) : per_frame_cfg;
+    if (strict && !tight && dead.size() > (size_t)per_frame * 8) per_frame = std::max(per_frame, (int)(dead.size() / 30));
     int destroyed = 0;
     for (auto it = dead.begin(); it != dead.end() && destroyed < per_frame;) {
         if (it->value > completed) {
             ++it;
             continue;
         }
-        destroyed++;
         for (VkImageView v : it->views) vkDestroyImageView(dev.device, v, nullptr);
-        if (!tight && recycle_on() && it->ci.sType == VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO && it->image && it->memory.empty() && it->bytes <= kSpareBytes / 4) {
+        const bool spare = !tight && recycle_on() && it->ci.sType == VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO && it->image && it->memory.empty() &&
+                           it->bytes <= kSpareBytes / 4 && (!strict || spare_bytes + it->bytes <= kSpareBytes);
+        if (spare) {
             spares.push_back({it->ci, it->image, it->allocation, frame_no, it->bytes});   // (relink: kept for the next of its kind)
             spare_bytes += it->bytes;
+            destroyed += strict ? 0 : 1;
         } else {
             destroy_image(it->image, it->allocation);
+            destroyed++;
         }
         if (it->buffer) destroy_buffer(it->buffer, it->buffer_alloc);
         for (VkDeviceMemory m : it->memory) vkFreeMemory(dev.device, m, nullptr);
         it = dead.erase(it);
     }
     // (relink) spare images: none kept over 300 frames, nor past kSpareBytes (the oldest go first)
+    if (strict) destroyed = 0;   // (their trim has the cap to itself)
     for (size_t i = 0; i < spares.size();) {
         if ((frame_no - spares[i].frame > 300 || spare_bytes > kSpareBytes || tight) && destroyed < per_frame) {
             destroyed++;
@@ -3638,6 +3683,12 @@ void texture_frame(uint64_t completed) {
         squeezed = true;
         const uint64_t over = used - allowed / 100 * 97;
         budget = std::min(budget, total_bytes > over ? total_bytes - over : 0);
+    }
+    // (relink, issues 6 and 7) and by what the system has left to commit (commit_short above): the textures give back what
+    // its headroom is short of, but keep 3 GB: a PC whose page file is always short still has a cache to play with
+    if (const uint64_t s = commit_short(frame_no)) {
+        constexpr uint64_t kFloor = 3072ull << 20;
+        budget = std::min(budget, std::max(total_bytes > s ? total_bytes - s : 0, std::min(kFloor, budget)));
     }
     if (frame_no % 600 == 0) {
         vma_log_heaps();
