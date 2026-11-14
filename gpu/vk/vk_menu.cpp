@@ -332,6 +332,12 @@ const char* hn_mic(int v, int variant) {
     return missing ? "Not plugged in: Default stands in until it is back." : "This microphone, by its name. A change applies at once.";
 }
 const char* tx_rumble(int v) { return v ? tx_percent(v) : "Off"; }
+// (relink, upstream 48562589) Audio output: the speakers the game mixes for, read once at its start (host/nn_audio.c
+// au_menu_output). A player with no sound, or with sound from the wrong speakers, can say Stereo here (issue 1)
+const char* tx_audio_output(int v) {
+    static const char* t[] = {"Auto", "Stereo", "5.1"};
+    return (unsigned)v < 3 ? t[v] : t[0];
+}
 const char* tx_robust(int v) {
     static const char* t[] = {"Auto", "Off", "On"};
     return (unsigned)v < 3 ? t[v] : t[0];
@@ -424,6 +430,8 @@ MENU_HINTS(hn_speed, 0, "A step each frame: the game slows down whenever it runs
            "Normal speed down to 15 fps, by taking longer steps.")
 MENU_HINTS(hn_text_speed, 0, "The game's own pace, with its pauses.", "Twice as fast.", "Four times as fast.",
            "Each page at once, as pressing A does.")
+MENU_HINTS(hn_audio_output, 0, "5.1 when the default output device has 5.1 or more speakers, else stereo.",
+           "Stereo, whatever the device has.", "5.1, whatever the device has. Mixed down on stereo speakers.")
 MENU_HINTS(hn_background, 0, "Only while the game's window has the focus.",
            "Also behind other windows, for streaming or other apps. The keyboard and mouse still need the game's window.")
 MENU_HINTS(hn_mousecam, 0, "The mouse stands in for the right stick, with its curve and top speed.",
@@ -474,13 +482,15 @@ Row rows[] = {
      "Bounds-checked buffer reads: a read past a buffer's end is dropped instead of stopping the GPU. Applies after a "
      "restart.", hn_robust, true},
 
-    // Gameplay (3 rows)
+    // Gameplay (5 rows)
     {TAB_GAMEPLAY, "FPS counter", &opts.show_fps, 0, 1, 1, tx_onoff, "Frames per second in the top right corner.", hn_fps,
      false, true},
     {TAB_GAMEPLAY, "Game speed", &opts.realtime, 0, 1, 1, tx_speed, "How the game keeps time when it runs below 60 fps.",
      hn_speed},
     {TAB_GAMEPLAY, "Text speed", &opts.text_speed, 0, 3, 1, tx_text_speed,
      "How fast the letters of dialogue and other messages appear.", hn_text_speed},
+    {TAB_GAMEPLAY, "Audio output", &opts.audio_output, 0, 2, 1, tx_audio_output,
+     "The speakers the game mixes its sound for. Applies after a restart.", hn_audio_output, true, true},
     {TAB_GAMEPLAY, "Microphone", &opts.mic, 0, 2 + kMaxMics, 1, tx_mic,
      "What the ocarina hears when the game's microphone option is on (playing an instrument, or humming).", hn_mic, false,
      true},
@@ -738,6 +748,12 @@ const char* const bind_names[HOS_KEY_N] = {"a", "b", "x", "y", "ls", "rs", "l", 
                                            "left", "up", "right", "down", "move_up", "move_down", "move_left",
                                            "move_right", "cam_up", "cam_down", "cam_left", "cam_right"};
 bool can_bind() { return host && host->binding && host->bind && host->pad_raw; }
+// (relink, issue 3) a key is down: the host's answer (Windows' state of the keyboard or, on a PC where that says nothing, the
+// window's own key messages: host/display.c). A player there could open this menu and not give a control a new key. Asked
+// through take_key_press with 0x10000 added to the key code (host/rx_backend.c MKWVK_KEY_HELD says why not a call of its own)
+bool key_is_down(int vk) {
+    return host && host->take_key_press ? host->take_key_press(0x10000 | (vk & 0xFF)) != 0 : (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
 const char* tx_pad_layout(int v) {
     static const char* t[] = {"Nintendo (Def)", "Xbox / PC", "Swap Face", "Custom"};
     return t[std::min(std::max(v, 0), 3)];
@@ -1822,7 +1838,7 @@ void menu_tick() {
     const bool mine = pid == GetCurrentProcessId();
     bool press[K_N] = {};
     for (int i = 0; i < K_N; i++) {
-        const bool down = mine && (GetAsyncKeyState(keys[i]) & 0x8000) != 0;
+        const bool down = mine && key_is_down(keys[i]);
         const bool queued = host && host->take_key_press && host->take_key_press(keys[i]);
         press[i] = host && host->take_key_press ? mine && queued : down && !held[i];
         held[i] = down;
@@ -1868,7 +1884,7 @@ void menu_tick() {
     }
     bool tab_left = press[10] || pad(HOS_PAD_LSHOULDER) || pad(HOS_PAD_LTRIGGER);
     bool tab_right = press[11] || press[12] || pad(HOS_PAD_RSHOULDER) || pad(HOS_PAD_RTRIGGER);
-    if (press[12] && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) tab_left = true, tab_right = false;
+    if (press[12] && key_is_down(VK_SHIFT)) tab_left = true, tab_right = false;
     const int scale = scale_of(dev.swap_extent.height);
     bool changed = scale != cur_scale || menu_refresh;
     menu_refresh = false;
@@ -1950,7 +1966,7 @@ void menu_tick() {
             } else {
                 int down = 0;
                 for (int k : bindable_keys())
-                    if (mine && (GetAsyncKeyState(k) & 0x8000)) {
+                    if (mine && key_is_down(k)) {
                         down = k;
                         break;
                     }

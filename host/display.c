@@ -33,9 +33,38 @@ static volatile LONG mouse_dx, mouse_dy;
 static volatile LONG mouse_captured;
 static int cursor_hidden;
 
+/* (relink) HOS_MOUSE_TEST=<counts a second>: a test run has no mouse and its window is behind the others. With this the mouse
+   counts as captured and moves to the right at that rate, so a run can see whether the camera goes on turning (the mouse look
+   that stopped after a scene change, issue 2). 0 or unset: the real mouse alone. */
+static int mouse_test_rate(void) {
+    static int rate = -1;
+    if (rate < 0) {
+        const char *e = getenv("HOS_MOUSE_TEST");
+        rate = e ? atoi(e) : 0;
+        if (rate < 0) rate = 0;
+        if (rate) hos_log("mouse: a test's mouse, captured, %d counts a second to the right (HOS_MOUSE_TEST)", rate);
+    }
+    return rate;
+}
+int hos_mouse_test_on(void) { return mouse_test_rate() > 0; }   /* (nn_hid.c: read even while a script is the only input) */
+static int mouse_test(int32_t *dx) {
+    static int64_t last;
+    const int rate = mouse_test_rate();
+    if (rate <= 0) return 0;
+    const int64_t now = hos_now_ns();
+    if (!last) last = now;
+    const int64_t n = (now - last) * rate / 1000000000;
+    if (n > 0) {
+        last += n * 1000000000 / rate;
+        *dx += (int32_t)n;
+    }
+    return 1;
+}
+
 int hos_mouse_take(int32_t *dx, int32_t *dy) {
     *dx = InterlockedExchange(&mouse_dx, 0);
     *dy = InterlockedExchange(&mouse_dy, 0);
+    if (mouse_test(dx)) return 1;
     return mouse_captured;
 }
 
@@ -49,13 +78,13 @@ void hos_mouse_give_back(int32_t dx, int32_t dy) {
 static volatile LONG ptr_x, ptr_y, ptr_w, ptr_h, ptr_in, ptr_pressed, ptr_wheel;   /* (client pixels; wheel in WHEEL_DELTA units) */
 static int menu_open, captured_before_menu;
 
+int hos_key_down(int vk);
 int hos_mouse_pointer(MkwVkPointer *out) {
     memset(out, 0, sizeof *out);
     if (!hwnd || mouse_captured) return 0;
     out->x = ptr_x, out->y = ptr_y, out->width = ptr_w, out->height = ptr_h;
-    out->held = ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? HOS_MOUSE_LEFT : 0) |
-                ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? HOS_MOUSE_RIGHT : 0) |
-                ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? HOS_MOUSE_MIDDLE : 0);
+    out->held = (hos_key_down(VK_LBUTTON) ? HOS_MOUSE_LEFT : 0) | (hos_key_down(VK_RBUTTON) ? HOS_MOUSE_RIGHT : 0) |
+                (hos_key_down(VK_MBUTTON) ? HOS_MOUSE_MIDDLE : 0);
     out->pressed = (uint32_t)InterlockedExchange(&ptr_pressed, 0);
     const LONG wheel = InterlockedExchange(&ptr_wheel, 0);
     out->wheel = wheel / WHEEL_DELTA;
@@ -141,7 +170,56 @@ static void menu_press(HWND w, LPARAM lp, LONG bit) {   /* (a click while the me
     SetCapture(w);   /* (a drag past the window's edge still reaches it) */
 }
 
+/* (relink, issue 3: "not even the keyboard is recognized in the game ... I can press F1 to bring up the settings ... I can
+   press ESC to cancel changing a control, but I can't press any keyboard key")
+   The game's keys and the menu's key bindings were read by asking Windows for the keyboard's state (GetAsyncKeyState);
+   F1, Esc and the menu's own keys come as the window's messages. On that player's PC the messages arrived and the state
+   answered nothing (what a program that hides the keyboard's state from the others does, a key-logger guard for one; which
+   it was there is not known), and the game could not be played at all. The window now keeps the keys its own messages say are down, mouse buttons too, cleared when
+   it loses the focus; hos_key_down answers from them once Windows' state has been seen to answer nothing: three keys
+   pressed in the window that it called up, and none it called down. Where it answers, nothing changes. */
+static volatile unsigned char key_msg[256];
+static volatile LONG key_state_said, key_state_missed;
+static int key_state_deaf(void) { return key_state_missed >= 3 && !key_state_said; }
+static void key_note(unsigned vk, int down, int first) {
+    if (vk >= 256) return;
+    key_msg[vk] = (unsigned char)down;
+    if (!down || !first || vk < 8) return;   /* (the mouse's buttons are not asked about: a click is over by now more often) */
+    const int was_deaf = key_state_deaf();
+    if (GetAsyncKeyState((int)vk) & 0x8000) InterlockedIncrement(&key_state_said);
+    else InterlockedIncrement(&key_state_missed);
+    if (!was_deaf && key_state_deaf())
+        hos_log("hid: Windows says no key is down while keys reach the window (something hides the keyboard's state from "
+                "the game): the window's own key messages are used for the game's keys");
+}
+static void key_messages(UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN: key_note((unsigned)wp, 1, !(lp & (1 << 30))); break;
+    case WM_KEYUP:
+    case WM_SYSKEYUP: key_note((unsigned)wp, 0, 0); break;
+    case WM_LBUTTONDOWN: key_note(VK_LBUTTON, 1, 0); break;
+    case WM_LBUTTONUP: key_note(VK_LBUTTON, 0, 0); break;
+    case WM_RBUTTONDOWN: key_note(VK_RBUTTON, 1, 0); break;
+    case WM_RBUTTONUP: key_note(VK_RBUTTON, 0, 0); break;
+    case WM_MBUTTONDOWN: key_note(VK_MBUTTON, 1, 0); break;
+    case WM_MBUTTONUP: key_note(VK_MBUTTON, 0, 0); break;
+    case WM_XBUTTONDOWN: key_note(HIWORD(wp) == 1 ? VK_XBUTTON1 : VK_XBUTTON2, 1, 0); break;
+    case WM_XBUTTONUP: key_note(HIWORD(wp) == 1 ? VK_XBUTTON1 : VK_XBUTTON2, 0, 0); break;
+    case WM_KILLFOCUS: memset((void *)key_msg, 0, sizeof key_msg); break;
+    }
+}
+/* (nn_hid.c, the Insert menu through rx_backend.c) whether a key or a mouse button is down. HOS_KEY_MESSAGES=1: as on a PC
+   whose keyboard state answers nothing, from the window's messages alone (a test) */
+int hos_key_down(int vk) {
+    static int only = -1;
+    if (only < 0) only = getenv("HOS_KEY_MESSAGES") != NULL;
+    if (!only && (GetAsyncKeyState(vk) & 0x8000)) return 1;
+    return (only || key_state_deaf()) && key_msg[vk & 255];
+}
+
 static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+    key_messages(msg, wp, lp);
     switch (msg) {
     case WM_MOUSEMOVE:
         ptr_x = (short)LOWORD(lp), ptr_y = (short)HIWORD(lp);

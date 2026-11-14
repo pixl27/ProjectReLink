@@ -47,8 +47,10 @@ static XInputGetStateFn xinput_get;
 static int64_t sampling;
 
 int rx_option(int id, int otherwise);
-/* (the Insert menu takes the keyboard while it is open) */
-static int key(int vk) { return !rx_option(1, 0) && (GetAsyncKeyState(vk) & 0x8000) != 0; }
+/* (the Insert menu takes the keyboard while it is open. hos_key_down: Windows' state of the keyboard, or the window's own
+   key messages on a PC where that state answers nothing, display.c) */
+int hos_key_down(int vk);
+static int key(int vk) { return !rx_option(1, 0) && hos_key_down(vk); }
 /* (relink) Letter and digit keys by their place on the keyboard, not their label: the bindings are a US keyboard's
    (WASD, Q, E, Z...), and on a French AZERTY one 'W' 'A' 'S' 'D' by label put the left stick on W A S D, a scattered
    cross. A US key's scan code is looked up in the layout of the window in front: Z Q S D on AZERTY, W A S D on QWERTY. */
@@ -679,6 +681,98 @@ static int flight_jump_shortcut(uint64_t *buttons, int mode, int menu_open, int 
     return mode > 0;
 }
 
+/* the mouse's motion: the camera itself (mouse_native.c) with the menu's Mouse camera on Native, else the right stick;
+   also the stick while no camera has been found (mouse_native.c gives the motion back). Whether the mouse is captured */
+static int mouse_input(const uint64_t *buttons, int32_t stick[4]) {
+    int32_t mouse[4] = {0};
+    /* (relink) HOS_STICK_SWEEP=1, a diagnostic: the right stick held to the right at a fixed deflection, the next one every
+       3 s, with HOS_MOUSE_PROBE=1 printing the camera's yaw twice a second: where the game's dead zone ends and how fast it
+       turns the camera for each deflection (what the mouse's stick has to stay above, mouse_stick) */
+    static int sweep = -1;
+    if (sweep < 0) sweep = getenv("HOS_STICK_SWEEP") ? atoi(getenv("HOS_STICK_SWEEP")) : 0;
+    if (sweep >= 2) {
+        /* (HOS_STICK_SWEEP=<pulse in ms, 2 or more>: every 12 s, 3 s at 15 % (too little to start the camera from its
+           automatic state), 3 s at rest, a pulse at 42 % then 15 % until 3 s, 3 s at rest: does the pulse start it?) */
+        static int64_t t0;
+        static int last = -1;
+        const int64_t now = hos_now_ns();
+        if (!t0) t0 = now;
+        const int at = (int)((now - t0) / 1000000 % 12000);
+        const int k = at < 3000 ? 0 : at < 6000 ? 1 : at < 6000 + sweep ? 2 : at < 9000 ? 3 : 4;
+        static const int pct[5] = {15, 0, 42, 15, 0};
+        static const char *const what[5] = {"15% alone", "rest", "pulse 42%", "15% after the pulse", "rest"};
+        if (k != last) {
+            last = k;
+            hos_log("stick sweep: %s", what[k]);
+        }
+        mouse[2] = 32767 * pct[k] / 100;
+        stick_max(stick, mouse);
+        void hos_mouse_probe_tick(void);
+        hos_mouse_probe_tick();
+        return 1;
+    }
+    if (sweep) {
+        /* (deflection in percent, milliseconds) from rest: where the camera starts to turn; after a full deflection: down to
+           where it goes on turning; then the speed at each deflection */
+        static const int step[][2] = {
+            {0, 1500}, {20, 3000}, {0, 1500}, {24, 3000}, {0, 1500}, {28, 3000}, {0, 1500}, {32, 3000}, {0, 1500}, {34, 3000},
+            {0, 1500}, {36, 3000}, {0, 1500}, {38, 3000}, {0, 1500}, {40, 3000},
+            {100, 1500}, {24, 3000}, {100, 1500}, {18, 3000}, {100, 1500}, {12, 3000}, {100, 1500}, {6, 3000},
+            {45, 3000}, {50, 3000}, {60, 3000}, {80, 3000}, {100, 3000}};
+        enum { NSTEP = sizeof step / sizeof step[0] };
+        static int64_t t0;
+        static int last = -1, total;
+        const int64_t now = hos_now_ns();
+        if (!t0) {
+            t0 = now;
+            for (int i = 0; i < NSTEP; i++) total += step[i][1];
+        }
+        int at = (int)((now - t0) / 1000000 % total), k = 0;
+        while (at >= step[k][1]) at -= step[k][1], k++;
+        if (k != last) {
+            last = k;
+            hos_log("stick sweep: %d%% (%s)", step[k][0], k < 16 ? "from rest" : k < 24 ? "after a full deflection" : "held");
+        }
+        mouse[2] = 32767 * step[k][0] / 100;
+        stick_max(stick, mouse);
+        void hos_mouse_probe_tick(void);
+        hos_mouse_probe_tick();
+        return 1;
+    }
+    static const char *native_env;
+    static int native_looked;
+    if (!native_looked) native_looked = 1, native_env = getenv("HOS_MOUSE_NATIVE");
+    const int native = native_env ? atoi(native_env) != 0 : rx_option(6, 0);
+    int hos_mouse_native(void);
+    int captured = 0, as_stick = !native;
+    if (native) {
+        mouse_setup();
+        mouse_sens_keys();
+        captured = hos_mouse_native();
+        if (captured < 0) captured = 0, as_stick = 1;
+        /* (the stick just off its centre while the mouse moves: the game takes the camera's angles only then, mouse_native.c) */
+        int hos_mouse_native_nudge(int32_t *rx, int32_t *ry);
+        if (captured > 0 && hos_mouse_native_nudge(&mouse[2], &mouse[3])) stick_max(stick, mouse);
+    }
+    if (as_stick) {
+        const int pointing = (int)(*buttons >> B_L & 1);
+        captured = mouse_stick(&mouse[2], &mouse[3], pointing);
+        if (captured) {
+            stick_max(stick, mouse);
+            /* (the camera takes nothing from a gentle stick until a firm push has started its manual turn, and every arrival,
+               door or dialogue ends it: a short pulse when the game does not answer the mouse's stick, mouse_native.c) */
+            int hos_mouse_stick_pulse(int32_t rx, int32_t ry, int32_t *px, int32_t *py);
+            int32_t pulse[4] = {0};
+            if (!pointing && hos_mouse_stick_pulse(mouse[2], mouse[3], &pulse[2], &pulse[3])) stick_max(stick, pulse);
+        }
+        if (!native) {
+            void hos_mouse_probe_tick(void);   /* (HOS_MOUSE_PROBE, a diagnostic: mouse_native.c) */
+            hos_mouse_probe_tick();
+        }
+    }
+    return captured;
+}
+
 static void read_input(uint64_t *buttons, int32_t stick[4]) {
     *buttons = 0;
     memset(stick, 0, 4 * sizeof *stick);
@@ -691,8 +785,13 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
        the presses add to theirs. HOS_INPUT_EXCLUSIVE=1: the script alone until 5 s after its last press, as before */
     static int exclusive = -1, script_only = -1;
     if (exclusive < 0) exclusive = getenv("HOS_INPUT_EXCLUSIVE") != NULL;
-    if (exclusive && npresses > 0 && script_elapsed_ms(hos_now_ns()) < script_end_ms + 5000)
+    if (exclusive && npresses > 0 && script_elapsed_ms(hos_now_ns()) < script_end_ms + 5000) {
+        /* (relink) a test's own mouse (HOS_MOUSE_TEST, display.c) is the test's, as the script is: it turns the camera in a
+           run where the player's devices do not count */
+        int hos_mouse_test_on(void);
+        if (hos_mouse_test_on()) (void)mouse_input(buttons, stick);
         return;
+    }
     /* (relink, issue 389) A scripted press (HOS_INPUT_SCRIPT, HOS_INPUT_LIVE) is the test's own, not the
        player's: it counts with the game's window behind another one, so a test run can drive the game on one
        monitor while the player works in the front window. HOS_INPUT_BACKGROUND still decides the pads. */
@@ -724,25 +823,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
     binds_load();   /* (the keys: key_default's, or relink_options.ini's; the mouse's buttons once its capture is known) */
     for (int i = 0; i < HOS_SW_N; i++)
         if (bound_down(i, 0)) *buttons |= 1ULL << i;
-    int32_t mouse[4] = {0};
-    /* the mouse's motion: the camera itself (mouse_native.c) with the menu's Mouse camera on Native, else the right
-       stick; also the stick while no camera has been found (mouse_native.c gives the motion back) */
-    static const char *native_env;
-    static int native_looked;
-    if (!native_looked) native_looked = 1, native_env = getenv("HOS_MOUSE_NATIVE");
-    const int native = native_env ? atoi(native_env) != 0 : rx_option(6, 0);
-    int hos_mouse_native(void);
-    int captured = 0, as_stick = !native;
-    if (native) {
-        mouse_setup();
-        mouse_sens_keys();
-        captured = hos_mouse_native();
-        if (captured < 0) captured = 0, as_stick = 1;
-    }
-    if (as_stick) {
-        captured = mouse_stick(&mouse[2], &mouse[3], (int)(*buttons >> B_L & 1));
-        if (captured) stick_max(stick, mouse);
-    }
+    const int captured = mouse_input(buttons, stick);
     mouse_buttons_arm(captured);
     if (captured)
         for (int i = 0; i < HOS_SW_N; i++)

@@ -139,6 +139,7 @@ void hos_watch_guest_writes(const uint8_t *data, uint64_t size);   /* nvn_native
 static void host_watch_guest_writes(uint64_t guest, uint64_t size) { hos_watch_guest_writes(hos_guest_base() + guest, size); }
 static float host_aspect_ratio(void) { return hos_aspect_ratio; }
 int hos_mouse_pointer(MkwVkPointer *out);   /* display.c, posix/display_sdl.c */
+int hos_key_down(int vk);                   /* display.c, posix/display_sdl.c */
 int hos_sdl_gyro_status(void);   /* pad_sdl.c */
 
 #ifdef _WIN32
@@ -146,7 +147,13 @@ static unsigned char menu_key_press[256];
 void hos_vk_note_key_press(unsigned key) {
     if (key < sizeof menu_key_press) __atomic_store_n(&menu_key_press[key], 1, __ATOMIC_RELAXED);
 }
+/* (relink, issue 3) With MKWVK_KEY_HELD added to the key code, the same call answers another question: whether that key is
+   down now (hos_key_down: Windows' state of the keyboard or, on a PC where it says nothing, the window's own key messages).
+   The Insert menu asks it for the key a control is given. A question of its own in the host's table would change vk_api.h,
+   which is part of the program cache's stamp: every player's 7 GB of prepared shaders made again for one more function. */
+#define MKWVK_KEY_HELD 0x10000
 int hos_vk_take_key_press(int key) {
+    if (key & MKWVK_KEY_HELD) return hos_key_down(key & 0xFF);
     return (unsigned)key < sizeof menu_key_press &&
            __atomic_exchange_n(&menu_key_press[key], 0, __ATOMIC_RELAXED);
 }

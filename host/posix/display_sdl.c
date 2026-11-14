@@ -37,6 +37,8 @@ int hos_mouse_take(int32_t *dx, int32_t *dy) {
     *dy = InterlockedExchange(&mouse_dy, 0);
     return mouse_captured;
 }
+int hos_mouse_test_on(void) { return 0; }   /* (relink: a test's own mouse, HOS_MOUSE_TEST, is display.c's on Windows) */
+int hos_key_down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }   /* (relink: this window's own table of keys, win32_posix.c) */
 
 /* (mouse_native.c) motion taken and not used, put back for the next taker (the stick's, while no camera is found) */
 void hos_mouse_give_back(int32_t dx, int32_t dy) {
