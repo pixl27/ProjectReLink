@@ -241,6 +241,41 @@ def llvm_mingw(a):
     return 0
 
 
+# SDL, for the controllers that are not Xbox pads (host/pad_sdl.c: Switch Pro, DualSense, DualShock 4 ...) and the
+# microphones: SDL2.dll (sdl2-compat, the SDL2 calls on SDL3) and the SDL3.dll it loads, beside the game (nx2/build.py copies
+# them from third_party/sdl2). The repository carries no binaries and the parts took them from the release before; the seed
+# this project's releases started from had none, so v0.6.1 shipped without them and a Switch Pro Controller did nothing in
+# the game (issue 3; the game's log said "no SDL beside the exe or on the system: only XInput controllers (Xbox pads) work").
+# Taken here from SDL's own releases, the versions third_party/sdl2/VERSION.txt names, by the size and SHA-256 GitHub
+# publishes for each archive: (file in the archive, SHA-256 of the archive, its size, its address)
+SDL = (
+    ("SDL3.dll", "368bed8b24e44ad9ea372990814f2343fcfb9e468abb7f8f4a3bc146c7304752", 1166032,
+     "https://github.com/libsdl-org/SDL/releases/download/release-3.4.20/SDL3-3.4.20-win32-x64.zip"),
+    ("SDL2.dll", "94a0184bc2d0670151a023656fb58e8f722fc001bda3a6a424234c88c5501cc0", 1273703,
+     "https://github.com/libsdl-org/sdl2-compat/releases/download/release-2.32.74/sdl2-compat-2.32.74-win32-x64.zip"),
+)
+
+
+def sdl_libraries(dest):
+    """SDL2.dll and SDL3.dll into dest (tools/third_party/sdl2) where they are not there already; how many were added"""
+    n = 0
+    for name, sha, size, url in SDL:
+        out = os.path.join(dest, name)
+        if os.path.isfile(out):   # (the release before had it: the third_party part's prebuilt files)
+            continue
+        with zipfile.ZipFile(fetch_part(sha, size, url)) as z:
+            member = next((m for m in z.namelist() if m.rsplit("/", 1)[-1] == name), None)
+            if not member:
+                sys.exit("%s: no %s in it" % (url, name))
+            data = z.read(member)
+        os.makedirs(dest, exist_ok=True)
+        with open(out, "wb") as f:
+            f.write(data)
+        print("%s (%d KB) from %s" % (name, len(data) >> 10, url.rsplit("/", 1)[-1]))
+        n += 1
+    return n
+
+
 def tracked(*paths):
     r = subprocess.run(["git", "ls-files", "-z", "--"] + list(paths), cwd=ROOT, check=True, stdout=subprocess.PIPE)
     return [f for f in r.stdout.decode("utf-8").split("\0") if f]
@@ -272,6 +307,7 @@ def package(a):
             print("%d prebuilt third_party files from %s" % (n, os.path.basename(tp)))
     else:
         print("no setup list: the package has no play profile and no prebuilt third_party files")
+    sdl_libraries(os.path.join(tools, "third_party", "sdl2"))
     print("package folder: %s" % out)
     return 0
 

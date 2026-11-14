@@ -22,6 +22,11 @@ release. The other two are tools that change rarely and are not rebuilt in CI: P
 and the Vulkan headers with FFmpeg's libraries (`cpm`). Each release takes those two, and the play profile, from the
 release before it.
 
+SDL's two libraries (`SDL2.dll` and `SDL3.dll`, beside the game: the controllers that are not Xbox pads, the microphones)
+are not in the repository either. `scripts/release_parts.py package` puts them in the `third_party` part: from the release
+before when it had them, else from SDL's own releases (the versions `third_party/sdl2/VERSION.txt` names), checked by
+size and SHA-256. Version 0.6.1 was made before that and has none.
+
 A repository with no release yet has nothing to take them from, and a new play profile or a new Python has to come from
 somewhere too. That is the seed, made on the maintainer's PC by `scripts/make_seed.py` from three folders:
 
