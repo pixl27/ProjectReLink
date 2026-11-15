@@ -12,6 +12,8 @@
 #include "hos_paths.h"
 #include "../gpu/vk/vk_api.h"
 #include "../gpu/vk/oot_cheat_items.h"
+#include "../gpu/vk/oot_teleport_capture.h"
+#include "../gpu/vk/oot_tp_places_data.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -500,6 +502,7 @@ static const unsigned char oot_item_kinds[] = {OOT_CHEAT_ITEMS(OOT_NO_SECTION, O
 #define OOT_ITEM_COUNT (sizeof oot_item_names / sizeof oot_item_names[0])
 
 static int oot_item_count(Ctx *c, const char *name);
+static int oot_gamedata_bool(Ctx *c, uint32_t hash, int *value);
 
 static void oot_inventory_refresh(Ctx *c, int64_t now) {
     void rx_option_set(int id, int value);
@@ -507,7 +510,16 @@ static void oot_inventory_refresh(Ctx *c, int64_t now) {
     static int probed;
     if (now < next) return;
     next = now + 500000000LL;
-    for (unsigned i = 0; i < OOT_ITEM_COUNT; i++) rx_option_set(OOT_CHEAT_ITEM_BASE + (int)i, oot_item_count(c, oot_item_names[i]));
+    int loaded = 0;   /* (a save's counts read: the first item's is not -1) */
+    for (unsigned i = 0; i < OOT_ITEM_COUNT; i++) {
+        const int count = oot_item_count(c, oot_item_names[i]);
+        if (!i) loaded = count >= 0;
+        rx_option_set(OOT_CHEAT_ITEM_BASE + (int)i, count);
+    }
+    {   /* (relink) Link's age for the item wheel's pages (host/oot_wheel.c): 0 child, 1 adult, -1 no save loaded */
+        int child = 1;
+        rx_option_set(OOT_CHEAT_AGE_ID, loaded && oot_gamedata_bool(c, 0xcea220d3u, &child) ? (child ? 0 : 1) : -1);
+    }
     if (!probed && oot_pouch_count(c, "Item_DekuSeed") >= 0) {
         probed = 1;   /* (one line naming every count, both spellings: which names the pouch knows) */
         static const char *const probes[] = {OOT_CHEAT_ITEM_PROBES};
@@ -738,6 +750,8 @@ static struct {
     unsigned destination;
 } teleport;
 
+static struct { const char *banc, *start, *boot; int carrier; } place_target;   /* (set: oot_teleport goes there instead;
+   carrier: by the empty DefaultParentEvent and the reserved next map, as the Fast Travel mod warps) */
 static int oot_teleport(Ctx *c, uint64_t actor, unsigned index) {
     if (index >= sizeof oot_destinations / sizeof oot_destinations[0]) return 0;
     const int64_t now = hos_now_ns();
@@ -766,6 +780,7 @@ static int oot_teleport(Ctx *c, uint64_t actor, unsigned index) {
     const char *banc = child ? d->child_banc : d->adult_banc;
     const char *start = child ? d->child_start : d->adult_start;
     const char *boot = child ? d->child_boot : d->adult_boot;
+    if (place_target.banc) banc = place_target.banc, start = place_target.start, boot = place_target.boot;
     if (!banc) {
         hos_log("cheats: teleport %u has no %s map", index, child ? "child" : "adult");
         return 0;
@@ -781,9 +796,18 @@ static int oot_teleport(Ctx *c, uint64_t actor, unsigned index) {
     memcpy(A64_PTR(strings + 256), boot, strlen(boot) + 1);
 
     const char *event_env = getenv("HOS_OOT_TELEPORT_EVENT");
-    const char *event = event_env && *event_env ? event_env : "Dm_SY_BancChangeGo";
+    const int carrier = place_target.banc && place_target.carrier;
+    const char *event = carrier ? "DefaultParentEvent" : event_env && *event_env ? event_env : "Dm_SY_BancChangeGo";
     const char *starter_env = getenv("HOS_OOT_TELEPORT_STARTER");
-    const int with_starter = !(starter_env && !strcmp(starter_env, "0"));
+    const int with_starter = !carrier && !(starter_env && !strcmp(starter_env, "0"));
+    if (carrier) {   /* (the reserved strings are written once the request is taken: room for them in the game data's queue) */
+        const uint64_t mgr = oot_singleton(c, OOT_GAMEDATA_SLOT);
+        const int32_t cap = mgr ? (int32_t)recomp_load32(c, mgr + 1584) : 0;
+        if (!mgr || cap <= 0 || (int32_t)(recomp_load32(c, mgr + 1600) & 0xFFFFF) + 2 > cap) {
+            hos_log("cheats: teleport waits: the game data's text queue is full");
+            return 0;
+        }
+    }
 
     const Ctx saved = *c;
     const uint64_t arg = (c->x[31] - OOT_EVENT_ARG_SIZE - 0x100) & ~0xfULL;
@@ -797,10 +821,10 @@ static int oot_teleport(Ctx *c, uint64_t actor, unsigned index) {
         if (!buf || strlen(event) + 1 > cap) ok = 0;
         else memcpy(A64_PTR(buf), event, strlen(event) + 1);
     }
-    ok = ok && oot_event_arg(c, arg, "NextBanc", 1, strings);
-    ok = ok && oot_event_arg(c, arg, "NextStartPos", 1, strings + 128);
-    ok = ok && oot_event_arg(c, arg, "BootEventName", 1, strings + 256);
-    ok = ok && oot_event_arg(c, arg, "IsCheckAir", 4, 0);
+    ok = ok && (carrier || oot_event_arg(c, arg, "NextBanc", 1, strings));
+    ok = ok && (carrier || oot_event_arg(c, arg, "NextStartPos", 1, strings + 128));
+    ok = ok && (carrier || oot_event_arg(c, arg, "BootEventName", 1, strings + 256));
+    ok = ok && (carrier || oot_event_arg(c, arg, "IsCheckAir", 4, 0));
     if (ok && with_starter) {   /* the starter actor (arg+0x1950), as OneShotEventMemberRequestEventByEventName sets it */
         c->x[31] = arg;
         c->x[0] = arg + 0x1950, c->x[1] = actor, c->x[2] = 0;
@@ -822,6 +846,23 @@ static int oot_teleport(Ctx *c, uint64_t actor, unsigned index) {
         release_link(c);
     }
     *c = saved;
+    if (carrier && ok && (result & 1)) {   /* (Sequence_ReservedNextBanc and _StartPosName: the game's String64 setter,
+                                              (mgr, const char **value, hash), queued; the texts and their pointers stay) */
+        A64Fn set_string = a64_lookup(0x80d44e50ULL);
+        const uint64_t mgr = oot_singleton(c, OOT_GAMEDATA_SLOT);
+        if (set_string && mgr) {
+            recomp_store64(c, strings + 384, strings), recomp_store64(c, strings + 392, strings + 128);
+            const uint32_t hashes[2] = {0xee27bf71u, 0x0b570ab2u};
+            for (unsigned i = 0; i < 2; i++) {
+                c->x[31] = (saved.x[31] - 0x200) & ~0xfULL;
+                c->x[0] = mgr, c->x[1] = strings + 384 + 8 * i, c->x[2] = hashes[i], c->x[30] = 0;
+                set_string(c);
+                *c = saved;
+            }
+        } else {
+            hos_log("cheats: teleport: the game's String64 setter is not in this build: the warp stays where it is");
+        }
+    }
     teleport.requested_at = now;
     teleport.check_at = now + 1500000000LL;
     teleport.destination = index;
@@ -882,6 +923,54 @@ static void oot_toggle_age(Ctx *c, uint64_t actor) {
     }
 }
 
+/* The Teleport places' data from the player's dump (teleport_places.bin, nx2/teleport_places.py), read once: by main before
+   the game's thread starts, so the game's thread only finds it read */
+static const OotTpPlaceData *oot_places_data(void) {
+    static OotTpPlaceData data[OOT_TP_PLACES];
+    static int read;
+    if (!read) {
+        read = 1;
+        char path[MAX_PATH + 32];
+        const DWORD n = hos_game_path_a(path, MAX_PATH);
+        char *slash = n ? strrchr(path, SEP) : NULL;
+        if (slash) snprintf(slash + 1, (size_t)(path + sizeof path - slash - 1), "teleport_places.bin");
+        const int found = slash ? oot_tp_places_read(path, data) : 0;
+        hos_log("cheats: Teleport places: %d of %d from teleport_places.bin%s", found, OOT_TP_PLACES,
+                found ? "" : " (none: the places arrive with the plain event, no screenshots taken)");
+    }
+    return data;
+}
+
+/* A Teleport place (gpu/vk/oot_tp_places.h) in the age asked for: Sequence_IsChildhood set first when it differs (as the age
+   toggle does), then the map change to the place's arrival point with its arrival event (a destination's own where it is that
+   very point, else the dump's; another point's event left the screen black) */
+static int oot_travel_place(Ctx *c, uint64_t actor, unsigned index, int adult) {
+    if (index >= (unsigned)OOT_TP_PLACES) return 0;
+    const OotTpPlace *p = &oot_tp_places[index];
+    const char *boot = oot_places_data()[index].event;   /* ("": no ordinary arrival: the carrier warp) */
+    for (unsigned i = 0; i < sizeof oot_destinations / sizeof oot_destinations[0]; i++) {
+        const OotDestination *d = &oot_destinations[i];
+        if (d->child_banc && !strcmp(d->child_banc, p->banc) && !strcmp(d->child_start, p->spawn)) boot = d->child_boot;
+        else if (d->adult_banc && !strcmp(d->adult_banc, p->banc) && !strcmp(d->adult_start, p->spawn)) boot = d->adult_boot;
+    }
+    int child = 1;
+    const int known = oot_gamedata_bool(c, 0xcea220d3u, &child);
+    const int switch_age = known && child == adult;
+    if (switch_age && !oot_gamedata_set_bool(c, 0xcea220d3u, !adult)) {
+        hos_log("cheats: place %s: could not write Sequence_IsChildhood", p->label);
+        return 0;
+    }
+    hos_log("cheats: place '%s' (%s), %s%s: map %s at %s, arriving with %s", p->label, p->key, adult ? "adult" : "child",
+            switch_age ? " (age switched)" : "", p->banc, p->spawn, boot);
+    place_target.banc = p->banc, place_target.start = p->spawn, place_target.boot = boot;
+    place_target.carrier = !boot[0];   /* (a warp's or a scene's point: arrived at as the Fast Travel mod does) */
+    if (place_target.carrier) boot = "", place_target.boot = "DefaultParentEvent";
+    const int sent = oot_teleport(c, actor, 0);
+    place_target.banc = NULL;
+    if (!sent && switch_age) oot_gamedata_set_bool(c, 0xcea220d3u, child);
+    return sent;
+}
+
 static void oot_teleport_followup(Ctx *c) {
     if (!teleport.check_at || hos_now_ns() < teleport.check_at) return;
     teleport.check_at = 0;
@@ -913,6 +1002,65 @@ static _Thread_local uint64_t flight_pose_actor;
 static _Thread_local float flight_transform_yaw;
 static int64_t flight_player_seen;
 
+/* The Teleport places' screenshots (gpu/vk/vk_menu.cpp): the place of this map nearest Link is the one a retake takes
+   (OOT_TP_MAP_ID); once Link has stayed 3 s within OOT_PLACE_NEAR of the same place, with no map loading and no event
+   playing, the menu is told (OOT_TP_CAPTURE_ID) and takes the picture if it has none of that place yet. Told again only
+   after another place. Runs with the player's update, which stops while the game is paused; and only while the menu takes
+   screenshots (HOS_OPT_TELEPORT_PICTURES: once the Travel page has been opened), so no one else's game folder gets pictures
+   for a page they never open. */
+#define OOT_PLACE_NEAR 40.0f   /* (an entrance's arrival leaves Link walked in ~26 from its point) */
+static void oot_capture_tick(Ctx *c, uint64_t actor, int64_t now) {
+    int rx_option(int id, int otherwise);
+    void rx_option_set(int id, int value);
+    static char banc[64];
+    static int64_t since;
+    static int told = 1, place = -1, retake = -2;
+    char now_banc[64];
+    if (!rx_option(HOS_OPT_TELEPORT_PICTURES, 0)) {
+        if (banc[0]) banc[0] = 0, rx_option_set(OOT_TP_MAP_ID, -1);   /* (switched on again: the map Link is in starts over) */
+        return;
+    }
+    if (!oot_gamedata_string(c, 0x1d6189dau, now_banc, sizeof now_banc) || !now_banc[0]) return;   /* Sequence_CurrentBanc */
+    int loading = 0;
+    const uint64_t events = oot_singleton(c, OOT_EVENTMGR_SLOT);
+    const int busy = !events || recomp_load64(c, events + 104) ||
+                     (oot_gamedata_bool(c, 0xef2b60c2u, &loading) && loading);   /* an event, Sequence_IsLoadingBanc */
+    if (strcmp(now_banc, banc)) {
+        snprintf(banc, sizeof banc, "%s", now_banc);
+        since = now, told = 0, place = -1;
+        if (retake != -1) retake = -1, rx_option_set(OOT_TP_MAP_ID, -1);   /* (no retake until settled here) */
+        return;
+    }
+    if (busy) {
+        since = now;
+        return;
+    }
+    float at[3];
+    for (unsigned i = 0; i < 3; i++) at[i] = oot_load_float(c, actor + 796 + i * 4);
+    int nearest = -1;
+    float best = 0;
+    for (int i = 0; i < OOT_TP_PLACES; i++) {
+        if (strcmp(oot_tp_places[i].banc, banc)) continue;
+        const OotTpPlaceData *pd = &oot_places_data()[i];
+        if (!pd->found) continue;   /* (not in teleport_places.bin: no position. A place warped to has no event, but has one) */
+        const float dx = at[0] - pd->pos[0], dy = at[1] - pd->pos[1], dz = at[2] - pd->pos[2];
+        const float d = dx * dx + dy * dy + dz * dz;
+        if (nearest < 0 || d < best) nearest = i, best = d;
+    }
+    if (nearest != retake && now - since >= 1000000000LL) {
+        retake = nearest;
+        rx_option_set(OOT_TP_MAP_ID, nearest);   /* (the place a retake takes: the Retake picture button) */
+        if (nearest >= 0)
+            hos_log("cheats: nearest place '%s' (%s), %.1f away; Link at %.2f %.2f %.2f", oot_tp_places[nearest].label,
+                    oot_tp_places[nearest].key, sqrtf(best), at[0], at[1], at[2]);
+    }
+    const int near_place = nearest >= 0 && best <= OOT_PLACE_NEAR * OOT_PLACE_NEAR ? nearest : -1;
+    if (near_place != place) place = near_place, since = now, told = 0;
+    if (place < 0 || told || now - since < 3000000000LL) return;
+    told = 1;
+    rx_option_set(OOT_TP_CAPTURE_ID, place);
+}
+
 static void oot_update_player_cheats(Ctx *c, uint64_t actor, uint64_t components) {
     int rx_option(int id, int otherwise);
     static uint64_t flying_actor, marked_actor, marked_controller;
@@ -928,10 +1076,13 @@ static void oot_update_player_cheats(Ctx *c, uint64_t actor, uint64_t components
     if (!action) action = __atomic_exchange_n(&hos_oot_live_action, 0, __ATOMIC_RELAXED);
     oot_teleport_followup(c);
     oot_inventory_refresh(c, now);
+    oot_capture_tick(c, actor, now);   /* (relink: the Travel page's pictures) */
     if (action >= OOT_CHEAT_ITEM_ACTION && action < OOT_CHEAT_ITEM_ACTION + 256 * (int)OOT_ITEM_COUNT) {
         oot_inventory_edit(c, action);
     } else if (action == OOT_AGE_ACTION) {
         oot_toggle_age(c, actor);
+    } else if (action >= OOT_PLACE_ACTION && action < OOT_PLACE_ACTION + 2 * OOT_TP_PLACES) {   /* (relink: the Travel page) */
+        oot_travel_place(c, actor, (unsigned)(action - OOT_PLACE_ACTION) / 2, (action - OOT_PLACE_ACTION) & 1);
     } else if (action >= OOT_TELEPORT_ACTION) {
         oot_teleport(c, actor, (unsigned)(action - OOT_TELEPORT_ACTION));
     } else if (action >= 200) {
@@ -1482,6 +1633,7 @@ int main(int argc, char **argv) {
     int hos_display_init(void);
     void hos_display_loop(void);
     load_relink_env();
+    oot_places_data();   /* (relink: the Travel places' file read here, before the game's thread: it reads no file) */
     game_argc = argc, game_argv = argv;
     const int window = hos_display_init();
     HANDLE t = CreateThread(NULL, 64u << 20, game_thread, NULL, 0, NULL);

@@ -65,6 +65,10 @@ int menu_heart_protection();
 int menu_player_flight();
 int menu_free_camera();
 int menu_take_cheat_action();
+int menu_link_age();          // (relink) Link's age as the game side said it: 0 child, 1 adult, -1 unknown
+int menu_take_capture_request();   // (relink, vk_replay.cpp: a place whose picture the Travel page wants now, -1 none)
+void menu_store_capture(int place, const uint8_t* rgba, uint32_t w, uint32_t h);   // (that picture, RGBA: to the picture worker)
+bool menu_teleport_captures_on();   // (relink: whether the Travel page's pictures are taken: the game side watches only then)
 void menu_note_frame(bool game_frame);   // (the frame rates the FPS counter shows)
 /// The game's picture's size (the Output resolution, its crop) and the window's, at each present: the Window scaling filter
 /// row says when it is not needed

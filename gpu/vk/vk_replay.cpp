@@ -3184,6 +3184,73 @@ void status_tick() {
 }
 
 uint64_t present_value = 0;   // (the present job's value, handed out as it came; 0: the next one)
+// (relink, from Longshot) the Travel page's own pictures, vk_menu.cpp: when the game side says Link has stayed at a place, the
+// middle 60% of the picture shown, away from the HUD's corners, at 480x270; recorded with one present and read at the next,
+// handed to the menu's picture worker
+struct TeleportShot {
+    VkImage image = VK_NULL_HANDLE;
+    VmaAllocation image_alloc = nullptr;
+    VkBuffer buf = VK_NULL_HANDLE;
+    VmaAllocation buf_alloc = nullptr;
+    void* map = nullptr;
+    bool tried = false;
+    int pending = -1;
+    uint64_t value = 0;
+};
+TeleportShot tp_shot;
+constexpr uint32_t kTpShotW = 480, kTpShotH = 270;
+void teleport_capture(VkCommandBuffer cmd, VkImage src, uint32_t sw, uint32_t sh, const int crop[4], uint64_t value) {
+    if (tp_shot.pending >= 0) {   // (the last one's pixels: its present is behind this one)
+        wait_value(tp_shot.value);
+        invalidate_mapped(tp_shot.buf_alloc, (uint64_t)kTpShotW * kTpShotH * 4);
+        menu_store_capture(tp_shot.pending, (const uint8_t*)tp_shot.map, kTpShotW, kTpShotH);
+        tp_shot.pending = -1;
+    }
+    if (!src) return;
+    const int want = menu_take_capture_request();
+    if (want < 0) return;
+    if (!tp_shot.image) {
+        if (tp_shot.tried) return;
+        tp_shot.tried = true;
+        VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ci.imageType = VK_IMAGE_TYPE_2D;
+        ci.format = VK_FORMAT_R8G8B8A8_UNORM;
+        ci.extent = {kTpShotW, kTpShotH, 1};
+        ci.mipLevels = ci.arrayLayers = 1;
+        ci.samples = VK_SAMPLE_COUNT_1_BIT;
+        ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        VkImage image = VK_NULL_HANDLE;
+        VmaAllocation image_alloc = nullptr;
+        if (!create_image(ci, image, image_alloc)) {
+            logf("vk: Travel pictures: no image could be made");
+            return;
+        }
+        if (!create_buffer((uint64_t)kTpShotW * kTpShotH * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, tp_shot.buf, tp_shot.buf_alloc,
+                           &tp_shot.map)) {
+            destroy_image(image, image_alloc);
+            logf("vk: Travel pictures: no buffer could be made");
+            return;
+        }
+        tp_shot.image = image, tp_shot.image_alloc = image_alloc;
+    }
+    int x0 = 0, y0 = 0, w = (int)sw, h = (int)sh;
+    if (crop && crop[2] > 0 && crop[3] > 0) x0 = crop[0], y0 = crop[1], w = crop[2], h = crop[3];
+    const int middle[4] = {x0 + w / 5, y0 + h / 5, w - 2 * (w / 5), h - 2 * (h / 5)};
+    if (middle[2] <= 0 || middle[3] <= 0) return;
+    image_barrier(cmd, tp_shot.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    blit_crop(cmd, src, sw, sh, middle, tp_shot.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kTpShotW, kTpShotH);
+    image_barrier(cmd, tp_shot.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    const VkBufferImageCopy c{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {kTpShotW, kTpShotH, 1}};
+    vkCmdCopyImageToBuffer(cmd, tp_shot.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tp_shot.buf, 1, &c);
+    VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};   // (the copy seen by the host's read at the next present)
+    mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    mb.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT, mb.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+    VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    di.memoryBarrierCount = 1, di.pMemoryBarriers = &mb;
+    vkCmdPipelineBarrier2(cmd, &di);
+    tp_shot.pending = want, tp_shot.value = value;
+}
+
 void do_present(const nvn_tex* t, const int crop[4]) {
     // (relink) NVIDIA Reflex (vk_reflex.cpp): this frame's simulation ended, its submission starts; on the way out (after the
     // present) the driver's sleep until the next frame should begin
@@ -3351,6 +3418,7 @@ void do_present(const nvn_tex* t, const int crop[4]) {
         }
         // (relink, RX_VK_WB_LAZY) this frame's share of the write-backs that were put off: with this recording's own
         // (a thirtieth of the pages, ~3 MB), or RX_VK_WB_LAZY_OWN=1: in a recording of its own after it, below
+        teleport_capture(r.cmd, src, sw, sh, crop, value);   // (relink: the Travel page's own pictures)
         const bool wb_flush = memory_wb_pending();
         if (wb_flush && !memory_wb_flush_own()) memory_wb_flush_queue();
         memory_end_submission(r.cmd);
@@ -4438,6 +4506,7 @@ void fill_replay_table(MkwVkRenderer& t) {
         if (id == HOS_OPT_CHEAT_FLIGHT) return menu_player_flight();
         if (id == HOS_OPT_CHEAT_ACTION) return menu_take_cheat_action();
         if (id == HOS_OPT_CHEAT_CAMERA) return menu_free_camera();
+        if (id == HOS_OPT_TELEPORT_PICTURES) return menu_teleport_captures_on();   // (relink: host/hos_main.c oot_capture_tick)
         return id == 0 ? opts.realtime : id == 1 ? menu_is_open() : id == 2 ? resolution_auto() && !dlss_full_scale() : id == 3 ? (dlss_full_scale() ? 10000 : resolution_scale()) : id == 4 ? opts.pad_background : id == 5 ? opts.text_speed : id == 6 ? opts.mouse_native :
                id == 7 ? opts.mouse_sens : id == 8 ? opts.mouse_invert : id == 9 ? opts.rumble : id == 16 ? opts.invert_cam_x : id == 17 ? opts.invert_cam_y : id == HOS_OPT_GYRO ? opts.gyro : id == HOS_OPT_GYRO_SENS_X ? opts.gyro_sens_x : id == HOS_OPT_GYRO_SENS_Y ? opts.gyro_sens_y : id == HOS_OPT_GYRO_INV_X ? opts.gyro_inv_x : id == HOS_OPT_GYRO_INV_Y ? opts.gyro_inv_y :
                id == HOS_OPT_DLSS_JITTER_W || id == HOS_OPT_DLSS_JITTER_H ? (int)dlss_jitter_size(id - HOS_OPT_DLSS_JITTER_W) :

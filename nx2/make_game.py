@@ -1294,6 +1294,10 @@ def main(a=None):
     icon = os.path.join(ROOT, "assets", "relink.png")
     if LINUX and os.path.exists(icon):   # (the window's icon: host/posix/display_sdl.c)
         shutil.copy2(icon, os.path.join(out, "relink.png"))
+    # (relink, from Longshot) the Travel places' positions, arrival events and story flags (gpu/vk/oot_tp_places_data.h), from the
+    # player's own maps (nx2/teleport_places.py, zstandard alone). Without them the places arrive with the plain event, no pictures
+    if run(PY + [os.path.join(HERE, "teleport_places.py"), "--romfs", romfs, "--out", out], check=False, output=sys.stderr):
+        print("the Travel places' data was not made: they arrive with the plain event and take no pictures", flush=True)
     seed_pipelines(out)
     ship_state_list(out)
     language = os.path.join(out, "language.txt")   # (the same text as host/nn_applet.c writes)

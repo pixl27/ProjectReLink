@@ -23,6 +23,9 @@ enum { HOS_OPT_GYRO = 18, HOS_OPT_GYRO_SENS_X, HOS_OPT_GYRO_INV_X, HOS_OPT_GYRO_
 /* (relink) NVIDIA DLSS's camera jitter (host/rx_backend.c, gpu/vk/vk_dlss.cpp): the scene's width and height while DLSS
    draws, 0 when there is to be no jitter, and the jitter sequence's length. 24 on: 18 to 22 are the motion rows' */
 enum { HOS_OPT_DLSS_JITTER_W = 24, HOS_OPT_DLSS_JITTER_H, HOS_OPT_DLSS_JITTER_PHASES };
+/* (relink) whether the Travel page's pictures are taken (gpu/vk/vk_menu.cpp): host/hos_main.c oot_capture_tick watches for Link
+   settling at a place only then */
+enum { HOS_OPT_TELEPORT_PICTURES = 43 };
 
 /* (relink) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of relink_options.ini):
    the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position, SDL's order (the bottom face

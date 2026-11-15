@@ -88,6 +88,12 @@ The mouse turns the camera after a click in the game's window (Escape frees it).
 chooses how: as the right stick, or "Native", one to one as in a PC game. If the game has no sound, the same menu's
 **Audio output** row (Gameplay) can be set to Stereo; it applies after a restart.
 
+**Travel** (Gameplay): a page of 190 places to go to, villages, dungeons' entrances, shops, warp points and story spots,
+grouped by area, for Link's age (Tab or X shows the other age's: going there makes Link that age). Each place has a picture taken from your own game the first time Link stays there a few
+seconds with the menu closed (in `teleport_pictures` in the game folder); Y or Backspace on the page takes a place's picture
+again at the next stay there. Link arrives through the game's own map change, as when he walks in. The places' positions
+and arrival events come from your game files at every build (`teleport_places.bin`, `nx2/teleport_places.py`).
+
 ## Measured frame rates
 
 On our PC: **Ryzen 5 5500, GeForce RTX 3060 Ti (8 GB), 16 GB of RAM, Windows 11**.
