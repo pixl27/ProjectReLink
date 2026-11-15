@@ -32,6 +32,7 @@
 
 #include "vk_paths.h"
 #include "vk_draw.h"
+#include "vk_framegen.h"   // (relink: the gameplay upscale's output, for the item wheel's backdrop)
 #include "dlss_actor.h"
 #include "vk_dlss.h"
 #include "vk_dump.h"
@@ -7013,6 +7014,27 @@ bool dlss_stand_in(VkCommandBuffer cmd, const NvnState& s, const Program& p) {
     vertex_set.on = false, last_ib.on = false;
     return done;
 }
+/// (relink, from Longshot) After the gameplay upscale wrote its output (the game's network, or DLSS in its place: stood_in),
+/// with the Item wheel row on: that picture before the game draws its HUD on it, the wheel's backdrop
+/// (vk_framegen.h framegen_wheel_scene). With the row off (the default) it returns at once
+void wheel_scene_note(VkCommandBuffer cmd, const NvnState& s, const Program& p, bool stood_in) {
+    if (!framegen_wheel_on() || p.stages.empty()) return;
+    const Stage& st = p.stages[0];
+    // (the game's gameplay upscales: the 4/3 network and the full-size pass by their keys, the Render resolution row's fixed
+    // shares by their shape, a network sampling one texture into one image, as dlss_stand_in takes them)
+    if (!stood_in && !gameplay_network(p.key) &&
+        !(st.info.uses_cooperative_matrix && st.info.texture_descriptors.size() == 1 && st.info.image_descriptors.size() == 1))
+        return;
+    if (st.info.image_descriptors.empty()) return;
+    const auto& od = st.info.image_descriptors[0];
+    Texture* out = nullptr;
+    uint32_t level = 0;
+    const uint32_t handle = handle_of(s, st, od, 0);
+    if (handle) texture_view_of(handle, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Storage, image_format(od.format), &out, &level);
+    if (!out || !out->image || !(out->aspect & VK_IMAGE_ASPECT_COLOR_BIT) || out->samples != VK_SAMPLE_COUNT_1_BIT) return;
+    level = std::min(level, out->levels - 1);
+    framegen_wheel_scene(cmd, out->image, out->format, std::max(1u, out->width >> level), std::max(1u, out->height >> level), level);
+}
 bool taau_stand_in(VkCommandBuffer cmd, const NvnState& s, const Program& p) {
     if (!taau_key(p.key) || !dev.push_descriptor || !vkCmdPushDescriptorSetKHR || p.stages.empty()) return false;
     const Stage& st = p.stages[0];
@@ -7933,8 +7955,8 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
             logf("%s", line);
         }
     }
-    if (dlss_stand_in(cmd, s, p)) return void(st_dispatches++);
-    if (taau_stand_in(cmd, s, p)) return void(st_dispatches++);
+    if (dlss_stand_in(cmd, s, p)) return wheel_scene_note(cmd, s, p, true), void(st_dispatches++);   // (relink: the item wheel's scene)
+    if (taau_stand_in(cmd, s, p)) return wheel_scene_note(cmd, s, p, true), void(st_dispatches++);
     if (!p.compute_pipeline) SKIP_HERE();
     dump_ssbos(cmd, p, "before");
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p.compute_pipeline);
@@ -8012,6 +8034,7 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
             vkCmdDispatch(cmd, x, y, z);
         }
     }
+    wheel_scene_note(cmd, s, p, false);   // (relink: the game's own gameplay upscale, for the item wheel)
     if (dump_on() && dump_ssbo_wanted(p.key)) dump_ssbos(cmd, p, "after");
     if (peek_prog(p.key)) peek_draw(cmd, p.key, false);   // (relink: RX_VK_PEEK_PROG, what the dispatch left)
     if (gprof_on()) {

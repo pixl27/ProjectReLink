@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 10   /* (relink 10: region_release_gaps, guest_release) */
+#define MKWVK_API_VERSION 11   /* (relink 10: region_release_gaps, guest_release; 11: the item wheel, MkwVkHost wheel) */
 enum { HOS_OPT_CHEAT_HEARTS = 32, HOS_OPT_CHEAT_FLIGHT, HOS_OPT_CHEAT_ACTION, HOS_OPT_CHEAT_CAMERA };
 /* (relink) the Controls tab's motion rows (host/pad_sdl.c reads them, vk_replay.cpp's option answers them): Motion
    controls on or off, the horizontal's and the vertical's sensitivity in percent, and each turned around */
@@ -23,6 +23,10 @@ enum { HOS_OPT_GYRO = 18, HOS_OPT_GYRO_SENS_X, HOS_OPT_GYRO_INV_X, HOS_OPT_GYRO_
 /* (relink) NVIDIA DLSS's camera jitter (host/rx_backend.c, gpu/vk/vk_dlss.cpp): the scene's width and height while DLSS
    draws, 0 when there is to be no jitter, and the jitter sequence's length. 24 on: 18 to 22 are the motion rows' */
 enum { HOS_OPT_DLSS_JITTER_W = 24, HOS_OPT_DLSS_JITTER_H, HOS_OPT_DLSS_JITTER_PHASES };
+/* (relink) the Gameplay tab's Item wheel row (host/oot_wheel.c): 1 the wheel, 0 the game's own item row; and its Cycle items
+   row: 0 off, 1 Last used (a tap of R or L puts back the item on ZR before this one), 2 the arrows, bottles and spells, 3 and
+   the bombs, 4 and the hookshot and hammer (a tap changes the ZR item within its group) */
+enum { HOS_OPT_ITEM_WHEEL = 40, HOS_OPT_CYCLE_ITEMS };
 
 /* (relink) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of relink_options.ini):
    the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position, SDL's order (the bottom face
@@ -49,6 +53,27 @@ typedef struct MkwVkPointer {
 } MkwVkPointer;
 
 /* what the executable gives the back end */
+/* (relink, from Longshot) The R button's item row shown as a wheel (host/oot_wheel.c fills it, gpu/vk/vk_wheel.cpp draws
+   it): one page of MKWVK_WHEEL_SLOTS fixed slots (slot 0 at the top, the rest clockwise, 45 degrees apart; an empty name
+   is an empty slot), the equipped item's slot and the stick's pick. seq changes whenever anything else does; the back end
+   copies the whole and checks seq again (a copy made while the game side wrote is taken the next frame) */
+#define MKWVK_WHEEL_MAX 32
+#define MKWVK_WHEEL_SLOTS 8
+typedef struct MkwVkWheel {
+    volatile uint32_t seq;
+    int32_t open;     /* 1 while the item row is open */
+    int32_t count;    /* slots on this page (MKWVK_WHEEL_SLOTS), 0 with no item known yet */
+    int32_t cursor;   /* the equipped item's slot on this page, -1 when it is on another page */
+    int32_t pick;     /* the slot picked (the stick's, else the item chosen this opening), -1 none on this page */
+    int32_t page, pages;    /* this page, of pages */
+    uint8_t page_kind[16];  /* each page's kind: 0 the player's, 1 the items no page names, 2 a new page (while one is moved) */
+    int32_t held;           /* the slot on this page of the item being moved (Y), -1 none or on another page */
+    char held_name[48];     /* the item being moved, "" none */
+    int32_t amount[MKWVK_WHEEL_MAX];   /* the item's count, -1 for an item without one */
+    char name[MKWVK_WHEEL_MAX][48];    /* the game's name (Item_DekuNut) */
+    char label[MKWVK_WHEEL_MAX][32];   /* what the player reads (Deku Nuts) */
+} MkwVkWheel;
+
 typedef struct MkwVkHost {
     uint32_t version;   /* MKWVK_API_VERSION */
     void (*log)(const char *line);
@@ -117,6 +142,8 @@ typedef struct MkwVkHost {
     /* (relink) the parts of guest [lo, hi) that the game's address regions do not hold now, decommitted (host/hos_mem.c):
        asked under the pool lock for ranges no import holds. The bytes given back */
     uint64_t (*region_release_gaps)(uint64_t lo, uint64_t hi);
+    /* (relink 11) the item wheel's state (host/oot_wheel.c); never null once the back end runs */
+    const struct MkwVkWheel *(*wheel)(void);
 } MkwVkHost;
 
 /* what the back end gives the executable: the rx_* functions (gpu/render/rx_nvn.h, rx_core) */

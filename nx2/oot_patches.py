@@ -220,12 +220,28 @@ def patch_names(s):
     return s[:at] + body + s[end:]
 
 
+MENU_TICK_HEAD = "void f_802f1380(Ctx *__restrict A64_NOESC c) {\n"
+
+
+def patch_menu_tick(source):
+    """(relink, from Longshot) f_802f1380, a menu screen's update (each frame, before the screen's UI controller: +56, its
+    vtable's +16), calls hos_wheel_menu_tick first with the screen: the item row shown as the item wheel (host/oot_wheel.c),
+    which does nothing with the Gameplay tab's Item wheel row off. None without the function, or patched before"""
+    start = source.find(MENU_TICK_HEAD)
+    if start < 0 or "hos_wheel_menu_tick(c," in source:
+        return None
+    at = start + len(MENU_TICK_HEAD)
+    hook = "    hos_wheel_menu_tick(c, c->x[0]);   /* (nx2/oot_patches.py: the item wheel) */\n"
+    return (source[:at] + hook + source[at:]).replace(
+        '#include "a64.h"\n', '#include "a64.h"\nextern int hos_wheel_menu_tick(Ctx *c, uint64_t screen);\n', 1)
+
+
 def apply(gen, *, protect_hearts=False, required=False):
     """required: the lift of the supported build (LIFE_BUILD_ID), whole: a missing output-size edit stops it (apply_output_size).
     The other patches only warn when their place is not found once."""
     import oot_native_resolution   # (HOS_SCENE_NATIVE=1: the scene's base scale 1.0; off by default since #849's output resolution)
     oot_native_resolution.apply(gen)
-    done = {"dynamic resolution branch": 0, "text speed block": 0, "fixed path's scale": 0}
+    done = {"dynamic resolution branch": 0, "text speed block": 0, "fixed path's scale": 0, "menu screens' update": 0}
     if protect_hearts:
         done["player heart protection"] = 0
         done["player flight"] = 0
@@ -247,6 +263,11 @@ def apply(gen, *, protect_hearts=False, required=False):
             out = t
             done["text speed block"] += 1
             print("oot_patches: text speed scale in", os.path.basename(path))
+        tick = patch_menu_tick(out)
+        if tick is not None:
+            out = tick
+            done["menu screens' update"] += 1
+            print("oot_patches: the item wheel's menu hook in", os.path.basename(path))
         out, n = fixed_scale(out)
         if n:
             done["fixed path's scale"] += 1

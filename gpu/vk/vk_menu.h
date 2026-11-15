@@ -47,6 +47,9 @@ struct Options {
     int audio_output = 0; // (relink) the speakers the game mixes for: 0 Auto (the default output's), 1 Stereo, 2 5.1; read once, at the start (host/nn_audio.c; HOS_AUDIO_CHANNELS)
     int mic = 1;          // (relink) the ocarina's microphone: 0 Off, 1 the system's default, 2.. a device as host->mic_name lists it (host/nn_audio_in.c)
     int framerate = 0;    // 0: the game's 60 fps; 1: unlocked, up to the display's refresh, game time following the clock (host/nn_vi.c)
+    int item_wheel = 0;   // (relink) R or L held shows the item row as a wheel (host/oot_wheel.c, vk_wheel.cpp); HOS_ITEM_WHEEL over it
+    int cycle_items = 2;  // (relink) a tap of R or L changes the ZR item: 0 off, 1 Last used (the item on ZR before this one),
+                          // 2 Basic, 3 +Bombs, 4 +Tools (within the ZR item's group; host/oot_wheel.c cycle_level)
 };
 extern Options opts;
 /// (vk_memory.cpp) true when the quality preset's memory budgets (vram_mb, mirror_mb) are to be used: the card has no more
@@ -65,6 +68,8 @@ int menu_heart_protection();
 int menu_player_flight();
 int menu_free_camera();
 int menu_take_cheat_action();
+int menu_item_count(int i);   // (relink) the game side's count of oot_cheat_items.h's item i, -1 unknown: the item wheel's numbers
+int menu_link_age();          // (relink) Link's age as the game side said it: 0 child, 1 adult, -1 unknown
 void menu_note_frame(bool game_frame);   // (the frame rates the FPS counter shows)
 /// The game's picture's size (the Output resolution, its crop) and the window's, at each present: the Window scaling filter
 /// row says when it is not needed

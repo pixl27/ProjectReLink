@@ -54,6 +54,24 @@ void hos_mem_init(uint64_t image_end) {
 
 uint64_t hos_region_floor(void) { return region_floor; }
 
+/* (relink, from Longshot) Whether [addr, addr + size) is wholly inside memory the runtime has mapped for the game: the image,
+   the system region in use (our own objects), the heap, or an address region (the item wheel's pouch walk, host/oot_wheel.c:
+   the pouch lives in an address region, above the heap). A read outside it is not made. 0 none, else its class */
+int hos_mem_region(uint64_t addr, uint64_t size) {
+    uint64_t end;
+    if (!size || __builtin_add_overflow(addr, size, &end) || end > HOS_SPACE_END) return 0;
+    if (addr >= hos_image_base && end <= hos_image_end) return 1;
+    int cls = 0;
+    LOCK();
+    if (addr >= HOS_SYSTEM_BASE && end <= sys_next) cls = 2;
+    else if (addr >= HOS_HEAP_BASE && end <= HOS_HEAP_BASE + hos_heap_size) cls = 3;
+    else
+        for (int i = 0; i < nregions && !cls; i++)
+            if (addr >= regions[i].addr && end <= regions[i].addr + regions[i].size) cls = 4;
+    UNLOCK();
+    return cls;
+}
+
 uint64_t hos_sys_alloc(uint64_t size, uint64_t align) {
     LOCK();
     uint64_t a = (sys_next + align - 1) & ~(align - 1);

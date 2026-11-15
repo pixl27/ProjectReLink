@@ -312,6 +312,10 @@ const char* tx_text_speed(int v) {
     return t[v];
 }
 const char* tx_ultrawide(int v) { return v ? "Monitor's shape" : "16:9"; }
+const char* tx_cycle_items(int v) {   // (relink) the Cycle items row
+    static const char* t[] = {"Off", "Last used", "Basic", "+Bombs", "+Tools"};
+    return t[(unsigned)v < 5 ? v : 0];
+}
 const char* tx_gpu(int v) {
     static char buf[300];
     const int idx = v - 1;
@@ -467,6 +471,12 @@ MENU_HINTS(hn_speed, 0, "A step each frame: the game slows down whenever it runs
            "Normal speed down to 15 fps, by taking longer steps.")
 MENU_HINTS(hn_text_speed, 0, "The game's own pace, with its pauses.", "Twice as fast.", "Four times as fast.",
            "Each page at once, as pressing A does.")
+MENU_HINTS(hn_item_wheel, 0, "R and L scroll the game's own item row.",
+           "Pages of 8 items, the same for the child and the adult. Y moves an item; Left/Right or the mouse wheel turn the page.")
+MENU_HINTS(hn_cycle_items, 0, "R and L open the item row (or the wheel) only.",
+           "A tap of R or L: the item that was on ZR before this one, whatever it is. Two taps: back again.",
+           "A tap of R or L: the next or previous arrow, bottle or spell on ZR.", "Basic, and the bombs and bombchus too.",
+           "+Bombs, and the hookshot, hammer, slingshot and boomerang too.")
 MENU_HINTS(hn_audio_output, 0, "5.1 when the default output device has 5.1 or more speakers, else stereo.",
            "Stereo, whatever the device has.", "5.1, whatever the device has. Mixed down on stereo speakers.")
 MENU_HINTS(hn_background, 0, "Only while the game's window has the focus.",
@@ -519,7 +529,7 @@ Row rows[] = {
      "Bounds-checked buffer reads: a read past a buffer's end is dropped instead of stopping the GPU. Applies after a "
      "restart.", hn_robust, true},
 
-    // Gameplay (5 rows)
+    // Gameplay (7 rows)
     {TAB_GAMEPLAY, "FPS counter", &opts.show_fps, 0, 1, 1, tx_onoff, "Frames per second in the top right corner.", hn_fps,
      false, true},
     {TAB_GAMEPLAY, "Game speed", &opts.realtime, 0, 1, 1, tx_speed, "How the game keeps time when it runs below 60 fps.",
@@ -531,6 +541,10 @@ Row rows[] = {
     {TAB_GAMEPLAY, "Microphone", &opts.mic, 0, 2 + kMaxMics, 1, tx_mic,
      "What the ocarina hears when the game's microphone option is on (playing an instrument, or humming).", hn_mic, false,
      true},
+    {TAB_GAMEPLAY, "Item wheel", &opts.item_wheel, 0, 1, 1, tx_onoff,   // (relink: host/oot_wheel.c, vk_wheel.cpp)
+     "Hold R or L for a wheel of your items: point at one with either stick and let go to equip it.", hn_item_wheel},
+    {TAB_GAMEPLAY, "Cycle items", &opts.cycle_items, 0, 4, 1, tx_cycle_items,
+     "Changes the item on ZR with a tap of R or L, within its group. Holding R or L still opens the row.", hn_cycle_items},
 
     // Controls (14 rows)
     {TAB_CONTROLS, "Controller in background", &opts.pad_background, 0, 1, 1, tx_onoff,
@@ -650,6 +664,7 @@ constexpr ItemSections make_item_sections() {
 }
 constexpr ItemSections item_sections = make_item_sections();
 std::atomic<int> item_counts[kItems];   // (-1 until the game side reports: OOT_CHEAT_ITEM_BASE + i)
+std::atomic<int> link_age{-1};          // (relink) 0 child, 1 adult, -1 unknown (OOT_CHEAT_AGE_ID: the item wheel's pages)
 int item_choice = 0, item_scroll = 0;
 constexpr int kCheatRows = 11;
 constexpr int kRows = sizeof rows / sizeof rows[0];
@@ -1801,7 +1816,10 @@ bool fps_take(int64_t now, int64_t shown, int64_t game, int64_t* next, int64_t* 
     return have;
 }
 
+int menu_item_count(int i) { return i >= 0 && i < kItems ? item_counts[i].load(std::memory_order_relaxed) : -1; }
+int menu_link_age() { return link_age.load(std::memory_order_relaxed); }
 void menu_option_set(int id, int value) {
+    if (id == OOT_CHEAT_AGE_ID) return link_age.store(value, std::memory_order_relaxed);   // (relink: the item wheel's pages)
     if (id >= OOT_CHEAT_ITEM_BASE && id < OOT_CHEAT_ITEM_BASE + kItems) {   // (the game side's inventory counts)
         if (item_counts[id - OOT_CHEAT_ITEM_BASE].exchange(value, std::memory_order_relaxed) != value && page == 4)
             menu_refresh = true;

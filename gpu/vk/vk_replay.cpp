@@ -35,6 +35,7 @@
 #include "vk_gprof.h"
 #include "vk_framegen.h"
 #include "vk_menu.h"
+#include "oot_cheat_items.h"   // (relink: OOT_CHEAT_ITEM_BASE, OOT_CHEAT_AGE_ID: the item wheel's counts and pages)
 #include "vk_jobs.h"
 #include "vk_shader.h"
 #include "vk_state.h"
@@ -3263,6 +3264,9 @@ void do_present(const nvn_tex* t, const int crop[4]) {
                  t ? t->d.width : 0, t ? t->d.height : 0, t ? t->d.format : 0,
                  tex ? (tex->gpu_written ? "rendered" : "never rendered") : "no image");
         if (tex) src = tex->image, sw = tex->width, sh = tex->height;
+        // (relink) the item wheel open: the game's picture covered with its scene before the HUD, dimmed, and the wheel over it
+        // (the game's own item row, its hints and the HUD gone from behind the wheel; before frame interpolation and shots read it)
+        if (tex) framegen_wheel_backdrop(r.cmd, tex->image, tex->format, sw, sh, crop);
         if (tex && !dev.offscreen && (opts.upscale || opts.sharpness)) {
             // Keep the sampled view with the same cached image as the direct present, before advancing its age.
             direct_view = texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample);
@@ -4438,6 +4442,10 @@ void fill_replay_table(MkwVkRenderer& t) {
         if (id == HOS_OPT_CHEAT_FLIGHT) return menu_player_flight();
         if (id == HOS_OPT_CHEAT_ACTION) return menu_take_cheat_action();
         if (id == HOS_OPT_CHEAT_CAMERA) return menu_free_camera();
+        if (id == HOS_OPT_ITEM_WHEEL) return opts.item_wheel != 0;   // (relink: host/oot_wheel.c)
+        if (id == HOS_OPT_CYCLE_ITEMS) return opts.cycle_items;
+        if (id == OOT_CHEAT_AGE_ID) return menu_link_age();
+        if (id >= OOT_CHEAT_ITEM_BASE && id < OOT_CHEAT_ITEM_BASE + 4096) return menu_item_count(id - OOT_CHEAT_ITEM_BASE);
         return id == 0 ? opts.realtime : id == 1 ? menu_is_open() : id == 2 ? resolution_auto() && !dlss_full_scale() : id == 3 ? (dlss_full_scale() ? 10000 : resolution_scale()) : id == 4 ? opts.pad_background : id == 5 ? opts.text_speed : id == 6 ? opts.mouse_native :
                id == 7 ? opts.mouse_sens : id == 8 ? opts.mouse_invert : id == 9 ? opts.rumble : id == 16 ? opts.invert_cam_x : id == 17 ? opts.invert_cam_y : id == HOS_OPT_GYRO ? opts.gyro : id == HOS_OPT_GYRO_SENS_X ? opts.gyro_sens_x : id == HOS_OPT_GYRO_SENS_Y ? opts.gyro_sens_y : id == HOS_OPT_GYRO_INV_X ? opts.gyro_inv_x : id == HOS_OPT_GYRO_INV_Y ? opts.gyro_inv_y :
                id == HOS_OPT_DLSS_JITTER_W || id == HOS_OPT_DLSS_JITTER_H ? (int)dlss_jitter_size(id - HOS_OPT_DLSS_JITTER_W) :

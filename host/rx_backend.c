@@ -142,6 +142,7 @@ static float host_aspect_ratio(void) { return hos_aspect_ratio; }
 int hos_mouse_pointer(MkwVkPointer *out);   /* display.c, posix/display_sdl.c */
 int hos_key_down(int vk);                   /* display.c, posix/display_sdl.c */
 int hos_sdl_gyro_status(void);   /* pad_sdl.c */
+const MkwVkWheel *hos_wheel_state(void);   /* oot_wheel.c (relink): the item wheel */
 
 #ifdef _WIN32
 static unsigned char menu_key_press[256];
@@ -174,6 +175,7 @@ static const MkwVkHost vk_host = {
     hos_gpu_maps_generation, nvn_vmap_generation, hos_reserved_cpus, host_collect_in, host_guest_alloc,
     host_watch_guest_writes, hos_pad_raw, hos_binding, hos_bind, host_aspect_ratio, host_take_key_press,
     hos_mouse_pointer, hos_mic_count, hos_mic_name, hos_mic_select, hos_sdl_gyro_status, host_region_release_gaps,
+    hos_wheel_state,
 };
 
 static const MkwVkRenderer *vk;   /* the Vulkan back end, when it was chosen and started */

@@ -92,6 +92,17 @@ The mouse turns the camera after a click in the game's window (Escape frees it).
 chooses how: as the right stick, or "Native", one to one as in a PC game. If the game has no sound, the same menu's
 **Audio output** row (Gameplay) can be set to Stereo; it applies after a restart.
 
+**Item wheel** (Gameplay, off by default): holding R or L shows the item row as a wheel, Twilight Princess style. Point at an
+item with either stick (or the mouse) and let go: it is on ZR at once. The items are on pages of 8 slots, one set for child
+Link and one for adult Link; Left and Right (or the mouse wheel) turn the page, Y takes an item up to put it in another slot,
+B puts it back. The pages are kept in `wheel_layout.txt` beside `relink_options.ini`. The wheel shows the game's own icons,
+names (in the game's language) and sounds, which every build takes from your game files into the `wheel` folder.
+**Cycle items** (Gameplay): a tap of R or L changes the item on ZR without opening the row: Last used swaps with the item
+that was on ZR before, whatever it is; Basic puts the next or the previous arrow, bottle or spell on ZR; +Bombs the bombs
+too; +Tools the hookshot, hammer, slingshot and boomerang too. Holding R or L still opens the row (or the wheel).
+`HOS_ITEM_WHEEL=0` or `1` and `HOS_CYCLE_ITEMS=0` to `4` in `relink_env.txt` stand
+in for the two rows.
+
 ## Measured frame rates
 
 On our PC: **Ryzen 5 5500, GeForce RTX 3060 Ti (8 GB), 16 GB of RAM, Windows 11**.

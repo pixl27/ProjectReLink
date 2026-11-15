@@ -9,6 +9,9 @@
 // then the game's, evenly over the game's recent frame time, about one frame behind the game. Loading hitches
 // (frames over 100 ms apart) are not interpolated.
 #include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <vector>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -19,6 +22,8 @@
 #include "vk_framegen.h"
 #include "vk_menu.h"
 #include "vk_texture.h"
+#include "vk_wheel.h"   // (relink: the item wheel's picture, laid over its backdrop)
+#include <sirit/sirit.h>   // (relink: the item wheel's passes, built at run time)
 
 #include "shaders/fg_copy_comp_spv.h"
 #include "shaders/fg_flow_comp_spv.h"
@@ -351,6 +356,211 @@ void display_main() {
     }
 }
 
+
+// ---- (relink, from Longshot) the item wheel's backdrop and picture ----
+// The game draws its HUD (hearts, the item row, prompts) onto the gameplay upscale's output, then copies that picture to the
+// window texture one to one. With the Item wheel row on, the upscale's output is copied each frame as the upscale leaves it
+// (the scene before the HUD): the game stops drawing its scene while its row is shown, so the last frame before the row opens
+// is the one there is. While the wheel is open, the window's picture is covered with it, blurred and dimmed, and the wheel
+// (vk_wheel.cpp, drawn on the CPU) laid over that. With the row off (the default) nothing here is made or recorded.
+struct WheelState {
+    std::mutex mu;   // (framegen_wheel_scene on the frame's recording, framegen_wheel_backdrop on the present's)
+    bool init = false, failed = false;
+    Pipe blur, backdrop, over;
+    VkSampler sampler = VK_NULL_HANDLE;
+    Img scene;    // (the upscale's output, copied: its format, w x h)
+    Img blurred;  // (the backdrop's first half, blurred across: rgba8, the window crop's size)
+    Img dimmed;   // (and blurred down and dimmed, then the wheel over it: rgba8, the same size)
+    Img picture;  // (the wheel's picture, uploaded: rgba8, premultiplied)
+    uint32_t dimmed_w = 0, dimmed_h = 0, picture_w = 0, picture_h = 0;
+    uint64_t picture_version = 0;
+    struct Up {
+        VkBuffer buf = VK_NULL_HANDLE;
+        VmaAllocation alloc = nullptr;
+        void* map = nullptr;
+        uint64_t bytes = 0;
+    } ups[4];
+    int up_next = 0;
+    uint32_t w = 0, h = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    std::atomic<bool> copied{false};   // (a scene was copied since the row was turned on: an older one is never shown)
+    int logged = 0;
+} wheel;
+
+/// Pictures of another size: made again, with every queue idle first (only when the window or the scene changes size)
+void wheel_idle() {
+    std::lock_guard qk(dev.present_mu);
+    device_wait_idle_locked();
+}
+
+/// The passes' SPIR-V, built here (the build has no shader compiler; vk_coopmat.cpp builds its probes the same way). 8x8
+/// groups, push constants ivec2 offset, ivec2 size. kind 0, 1: in (sampled), out (rgba8 storage), a Gaussian of
+/// 2 * kBlurTaps + 1 taps offset.x pixels apart: 0 across from the scene, encoded first (pow 1/2.2: the copy to the window's);
+/// 1 down from that, then dimmed by offset.y / 1000. kind 2: the wheel's picture (sampled, premultiplied) over the image
+/// (storage) at offset
+constexpr int kBlurTaps = 12;   // (each side of a pixel)
+std::vector<uint32_t> wheel_shader(int kind) {
+    using namespace Sirit;
+    const bool across = kind == 0;
+    Module m{0x00010000};
+    m.AddCapability(spv::Capability::Shader);
+    m.SetMemoryModel(spv::AddressingModel::Logical, spv::MemoryModel::GLSL450);
+    const Id void_t = m.TypeVoid(), b1 = m.TypeBool(), f32 = m.TypeFloat(32), i32 = m.TypeSInt(32), u32 = m.TypeUInt(32);
+    const Id vec3 = m.TypeVector(f32, 3), vec4 = m.TypeVector(f32, 4), ivec2 = m.TypeVector(i32, 2);
+    const Id uvec3 = m.TypeVector(u32, 3), bvec2 = m.TypeVector(b1, 2);
+    const Id sampled = m.TypeImage(f32, spv::Dim::Dim2D, 0, false, false, 1, spv::ImageFormat::Unknown);
+    const Id sampled_t = m.TypeSampledImage(sampled);
+    const Id storage = m.TypeImage(f32, spv::Dim::Dim2D, 0, false, false, 2, spv::ImageFormat::Rgba8);
+    uint32_t binding = 0;
+    const auto var = [&](Id type) {
+        const Id v = m.AddGlobalVariable(m.TypePointer(spv::StorageClass::UniformConstant, type), spv::StorageClass::UniformConstant);
+        m.Decorate(v, spv::Decoration::DescriptorSet, 0U);
+        m.Decorate(v, spv::Decoration::Binding, binding++);
+        return v;
+    };
+    const Id in = var(sampled_t), out = var(storage);
+    const Id block = m.TypeStruct(ivec2, ivec2);
+    m.Decorate(block, spv::Decoration::Block);
+    m.MemberDecorate(block, 0U, spv::Decoration::Offset, 0U);
+    m.MemberDecorate(block, 1U, spv::Decoration::Offset, 8U);
+    const Id pc = m.AddGlobalVariable(m.TypePointer(spv::StorageClass::PushConstant, block), spv::StorageClass::PushConstant);
+    const Id gid = m.AddGlobalVariable(m.TypePointer(spv::StorageClass::Input, uvec3), spv::StorageClass::Input);
+    m.Decorate(gid, spv::Decoration::BuiltIn, spv::BuiltIn::GlobalInvocationId);
+    const Id ivec2_pc = m.TypePointer(spv::StorageClass::PushConstant, ivec2);
+    const Id c0 = m.Constant(i32, 0), c1 = m.Constant(i32, 1);
+    const Id f0 = m.Constant(f32, 0.0f), f1 = m.Constant(f32, 1.0f);
+    const Id zero3 = m.ConstantComposite(vec3, f0, f0, f0), one3 = m.ConstantComposite(vec3, f1, f1, f1);
+    const Id gamma = m.Constant(f32, 1.0f / 2.2f);
+    const Id gamma3 = m.ConstantComposite(vec3, gamma, gamma, gamma);
+
+    const Id main = m.OpFunction(void_t, spv::FunctionControlMask::MaskNone, m.TypeFunction(void_t));
+    m.AddLabel();
+    const Id id = m.OpLoad(uvec3, gid);
+    const Id g = m.OpCompositeConstruct(ivec2, m.OpBitcast(i32, m.OpCompositeExtract(u32, id, 0U)),
+                                        m.OpBitcast(i32, m.OpCompositeExtract(u32, id, 1U)));
+    const Id offset = m.OpLoad(ivec2, m.OpAccessChain(ivec2_pc, pc, c0));
+    const Id size = m.OpLoad(ivec2, m.OpAccessChain(ivec2_pc, pc, c1));
+    const Id outside = m.OpAny(b1, m.OpSGreaterThanEqual(bvec2, g, size));
+    const Id leave = m.OpLabel(), body = m.OpLabel();
+    m.OpSelectionMerge(body, spv::SelectionControlMask::MaskNone);
+    m.OpBranchConditional(outside, leave, body);
+    m.AddLabel(leave);
+    m.OpReturn();
+    m.AddLabel(body);
+    if (kind == 2) {   // (the picture over the image: premultiplied, src + dst * (1 - src.a))
+        const Id src = m.OpImageFetch(vec4, m.OpImage(sampled, m.OpLoad(sampled_t, in)), g, spv::ImageOperandsMask::Lod, c0);
+        const Id at = m.OpIAdd(ivec2, g, offset);
+        const Id img = m.OpLoad(storage, out);
+        const Id dst = m.OpImageRead(vec4, img, at);
+        const Id keep = m.OpFSub(f32, f1, m.OpCompositeExtract(f32, src, 3U));
+        const Id rgb = m.OpFAdd(vec3, m.OpVectorShuffle(vec3, src, src, 0U, 1U, 2U),
+                                m.OpVectorTimesScalar(vec3, m.OpVectorShuffle(vec3, dst, dst, 0U, 1U, 2U), keep));
+        m.OpImageWrite(img, at, m.OpCompositeConstruct(vec4, rgb, f1));
+    } else {
+        const Id stride = m.OpCompositeExtract(i32, offset, 0U);
+        const Id dir = across ? m.ConstantComposite(ivec2, c1, c0) : m.ConstantComposite(ivec2, c0, c1);
+        const Id step = m.OpIMul(ivec2, dir, m.OpCompositeConstruct(ivec2, stride, stride));
+        const Id last = m.OpISub(ivec2, size, m.ConstantComposite(ivec2, c1, c1));
+        const Id origin = m.ConstantComposite(ivec2, c0, c0);
+        double wsum = 0;
+        for (int k = -kBlurTaps; k <= kBlurTaps; k++) wsum += std::exp(-2.0 * k * k / (kBlurTaps * kBlurTaps));
+        Id sum = zero3;
+        for (int k = -kBlurTaps; k <= kBlurTaps; k++) {
+            const Id kk = m.Constant(i32, k);
+            const Id at = m.OpSClamp(ivec2, m.OpIAdd(ivec2, g, m.OpIMul(ivec2, step, m.OpCompositeConstruct(ivec2, kk, kk))), origin, last);
+            const Id v4 = m.OpImageFetch(vec4, m.OpImage(sampled, m.OpLoad(sampled_t, in)), at, spv::ImageOperandsMask::Lod, c0);
+            Id c = m.OpVectorShuffle(vec3, v4, v4, 0U, 1U, 2U);
+            if (across) c = m.OpPow(vec3, m.OpFClamp(vec3, c, zero3, one3), gamma3);
+            const float wk = (float)(std::exp(-2.0 * k * k / (kBlurTaps * kBlurTaps)) / wsum);
+            sum = m.OpFAdd(vec3, sum, m.OpVectorTimesScalar(vec3, c, m.Constant(f32, wk)));
+        }
+        if (!across) {
+            const Id dim = m.OpFMul(f32, m.OpConvertSToF(f32, m.OpCompositeExtract(i32, offset, 1U)), m.Constant(f32, 0.001f));
+            sum = m.OpVectorTimesScalar(vec3, sum, dim);
+        }
+        m.OpImageWrite(m.OpLoad(storage, out), g, m.OpCompositeConstruct(vec4, sum, f1));
+    }
+    m.OpReturn();
+    m.OpFunctionEnd();
+    m.AddEntryPoint(spv::ExecutionModel::GLCompute, main, "main", gid);
+    m.AddExecutionMode(main, spv::ExecutionMode::LocalSize, 8U, 8U, 1U);
+    return m.Assemble();
+}
+
+void drop_wheel_pipe(Pipe& p) {
+    if (p.pipe) vkDestroyPipeline(dev.device, p.pipe, nullptr);
+    if (p.layout) vkDestroyPipelineLayout(dev.device, p.layout, nullptr);
+    if (p.set) vkDestroyDescriptorSetLayout(dev.device, p.set, nullptr);
+    p = {};
+}
+
+/// The passes, at the wheel's first opening (wheel.mu held)
+bool init_wheel() {
+    if (wheel.init) return !wheel.failed;
+    wheel.init = wheel.failed = true;
+    const VkDescriptorType S = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, I = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    std::vector<uint32_t> blur, backdrop, over;
+    try {
+        blur = wheel_shader(0), backdrop = wheel_shader(1), over = wheel_shader(2);
+    } catch (const std::exception& e) {
+        logf("vk: item wheel: its passes were not built (%s): the game's row shows instead", e.what());
+        return false;
+    }
+    VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    si.magFilter = si.minFilter = VK_FILTER_NEAREST;
+    si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (vkCreateSampler(dev.device, &si, nullptr, &wheel.sampler) != VK_SUCCESS) wheel.sampler = VK_NULL_HANDLE;
+    if (!wheel.sampler || !make_pipe(wheel.blur, blur.data(), blur.size() * 4, {S, I}, 16) ||
+        !make_pipe(wheel.backdrop, backdrop.data(), backdrop.size() * 4, {S, I}, 16) ||
+        !make_pipe(wheel.over, over.data(), over.size() * 4, {S, I}, 16)) {
+        drop_wheel_pipe(wheel.blur), drop_wheel_pipe(wheel.backdrop), drop_wheel_pipe(wheel.over);
+        if (wheel.sampler) vkDestroySampler(dev.device, wheel.sampler, nullptr);
+        wheel.sampler = VK_NULL_HANDLE;
+        logf("vk: item wheel: its passes were not made: the game's row shows instead");
+        return false;
+    }
+    wheel.failed = false;
+    return true;
+}
+
+/// The wheel's picture into wheel.picture (wheel.mu held): uploaded when it changed. False when it could not be
+bool wheel_upload(VkCommandBuffer cmd, const WheelPicture& pic) {
+    if (wheel.picture_w != pic.w || wheel.picture_h != pic.h) {
+        if (wheel.picture.image) wheel_idle(), drop_img(wheel.picture);
+        wheel.picture_w = wheel.picture_h = 0, wheel.picture_version = 0;
+        if (!make_img(wheel.picture, pic.w, pic.h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
+            drop_img(wheel.picture);
+            return false;
+        }
+        to_general(cmd, wheel.picture.image);
+        wheel.picture_w = pic.w, wheel.picture_h = pic.h;
+    }
+    if (wheel.picture_version == pic.version) return true;
+    // (four upload buffers in turn: one is not written again before the three frames after it were recorded and shown)
+    WheelState::Up& u = wheel.ups[wheel.up_next];
+    wheel.up_next = (wheel.up_next + 1) % 4;
+    const uint64_t bytes = (uint64_t)pic.w * pic.h * 4;
+    if (u.bytes < bytes) {
+        if (u.buf) wheel_idle(), destroy_buffer(u.buf, u.alloc);
+        u = {};
+        if (!create_buffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, u.buf, u.alloc, &u.map) || !u.map) {
+            if (u.buf) destroy_buffer(u.buf, u.alloc);
+            u = {};
+            return false;
+        }
+        u.bytes = bytes;
+    }
+    std::memcpy(u.map, pic.px, bytes);
+    full_barrier(cmd);
+    VkBufferImageCopy r{};
+    r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    r.imageExtent = {pic.w, pic.h, 1};
+    vkCmdCopyBufferToImage(cmd, u.buf, wheel.picture.image, VK_IMAGE_LAYOUT_GENERAL, 1, &r);
+    full_barrier(cmd);
+    wheel.picture_version = pic.version;
+    return true;
+}
+
 } // namespace
 
 // The Insert menu's Frame generation is off at 0. While it was ignored, every present still copied the frame and
@@ -490,6 +700,97 @@ void framegen_queue(uint64_t value) {
     fg.jobs.push_back({fg.recorded, fg.recorded_at, value});
     fg.recorded = nullptr;
     fg.cv.notify_all();
+}
+
+/// (relink, from Longshot) The Gameplay tab's Item wheel row is on (HOS_ITEM_WHEEL=0 or 1 over it, as host/oot_wheel.c reads
+/// it). Off: nothing below records or makes anything
+bool framegen_wheel_on() {
+    static const int forced = getenv("HOS_ITEM_WHEEL") ? atoi(getenv("HOS_ITEM_WHEEL")) : -1;
+    const bool on = forced >= 0 ? forced != 0 : opts.item_wheel != 0;
+    if (!on && wheel.copied.load(std::memory_order_relaxed))   // (turned on again later: the frames before are not the scene)
+        wheel.copied.store(false, std::memory_order_relaxed);
+    return on;
+}
+
+void framegen_wheel_scene(VkCommandBuffer cmd, VkImage image, VkFormat format, uint32_t w, uint32_t h, uint32_t level) {
+    if (!cmd || !image || !w || !h || !framegen_wheel_on()) return;
+    std::lock_guard lk(wheel.mu);
+    if (!init_wheel()) return;
+    if (wheel.w != w || wheel.h != h || wheel.format != format) {   // (another scene size: a new picture)
+        if (wheel.scene.image) wheel_idle(), drop_img(wheel.scene);
+        wheel.w = wheel.h = 0;
+        if (!make_img(wheel.scene, w, h, format, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
+            drop_img(wheel.scene);
+            if (wheel.logged++ < 4) logf("vk: item wheel: the scene's copy (%ux%u, format %d) was not made", w, h, (int)format);
+            return;
+        }
+        to_general(cmd, wheel.scene.image);
+        wheel.w = w, wheel.h = h, wheel.format = format;
+    }
+    full_barrier(cmd);
+    const VkImageCopy c{{VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1}, {0, 0, 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {w, h, 1}};
+    vkCmdCopyImage(cmd, image, VK_IMAGE_LAYOUT_GENERAL, wheel.scene.image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+    full_barrier(cmd);
+    wheel.copied.store(true, std::memory_order_relaxed);
+}
+
+bool framegen_wheel_backdrop(VkCommandBuffer cmd, VkImage dst, VkFormat format, uint32_t sw, uint32_t sh, const int crop[4]) {
+    if (!cmd || !dst || !sw || !sh || !framegen_wheel_on()) return false;
+    int x0 = 0, y0 = 0, w = (int)sw, h = (int)sh;
+    if (crop && crop[2] > 0 && crop[3] > 0) x0 = crop[0], y0 = crop[1], w = crop[2], h = crop[3];
+    w = std::min(w, (int)sw - x0), h = std::min(h, (int)sh - y0);
+    if (w <= 0 || h <= 0) return false;
+    WheelPicture pic;
+    if (!wheel_picture((uint32_t)w, (uint32_t)h, &pic)) return false;   // (closed)
+    std::lock_guard lk(wheel.mu);
+    if (wheel.failed || !wheel.init || !wheel.copied.load(std::memory_order_relaxed)) {
+        if (wheel.logged++ < 4) logf("vk: item wheel: no scene copied yet: not drawn");
+        return false;
+    }
+    // (only the window picture the game copies its scene into one to one: RGBA8 of the scene's size)
+    if (format != VK_FORMAT_R8G8B8A8_UNORM || !wheel.scene.image || wheel.w != (uint32_t)w || wheel.h != (uint32_t)h) {
+        if (wheel.logged++ < 4)
+            logf("vk: item wheel: not drawn (window picture %dx%d format %d, scene %ux%u)", w, h, (int)format, wheel.w, wheel.h);
+        return false;
+    }
+    if (wheel.dimmed_w != (uint32_t)w || wheel.dimmed_h != (uint32_t)h) {
+        if (wheel.dimmed.image || wheel.blurred.image) wheel_idle(), drop_img(wheel.dimmed), drop_img(wheel.blurred);
+        wheel.dimmed_w = wheel.dimmed_h = 0;
+        if (!make_img(wheel.dimmed, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT) ||
+            !make_img(wheel.blurred, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) {
+            drop_img(wheel.dimmed), drop_img(wheel.blurred);
+            if (wheel.logged++ < 4) logf("vk: item wheel: its backdrop (%dx%d) was not made", w, h);
+            return false;
+        }
+        to_general(cmd, wheel.dimmed.image), to_general(cmd, wheel.blurred.image);
+        wheel.dimmed_w = w, wheel.dimmed_h = h;
+        logf("vk: item wheel: the backdrop is the scene before the HUD, blurred and dimmed (%dx%d at %d,%d)", w, h, x0, y0);
+    }
+    if (!wheel_upload(cmd, pic)) {
+        if (wheel.logged++ < 4) logf("vk: item wheel: its picture (%ux%u) was not uploaded", pic.w, pic.h);
+        return false;
+    }
+    full_barrier(cmd);
+    // (the blur's taps a 400th of the height apart: 12 each side reach about 3% of the height at any size. The opening eases it
+    // in over 160 ms, the wheel's own spread: the taps from 0 apart (no blur) and the dimming from none to 0.55)
+    static int64_t last_at = 0, opened_at = 0;
+    const int64_t t_now = now_ns();
+    if (!last_at || t_now - last_at > 150000000) opened_at = t_now;
+    last_at = t_now;
+    const float t = std::min(1.0f, (float)(t_now - opened_at) / 160e6f), e = 1 - (1 - t) * (1 - t) * (1 - t);
+    const int32_t pc[4] = {(int32_t)std::lround(std::max(1, h / 400) * e), (int32_t)std::lround(1000 - 450 * e), w, h};
+    pass(cmd, wheel.blur, {{wheel.scene.view, wheel.sampler}, {wheel.blurred.view, VK_NULL_HANDLE}}, w, h, pc, 16);
+    full_barrier(cmd);
+    pass(cmd, wheel.backdrop, {{wheel.blurred.view, wheel.sampler}, {wheel.dimmed.view, VK_NULL_HANDLE}}, w, h, pc, 16);
+    full_barrier(cmd);
+    const int32_t po[4] = {pic.x, pic.y, (int32_t)pic.w, (int32_t)pic.h};
+    pass(cmd, wheel.over, {{wheel.picture.view, wheel.sampler}, {wheel.dimmed.view, VK_NULL_HANDLE}}, pic.w, pic.h, po, 16);
+    full_barrier(cmd);
+    const VkImageCopy c{{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {x0, y0, 0},
+                        {(uint32_t)w, (uint32_t)h, 1}};
+    vkCmdCopyImage(cmd, wheel.dimmed.image, VK_IMAGE_LAYOUT_GENERAL, dst, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+    full_barrier(cmd);
+    return true;
 }
 
 } // namespace mkwvk
