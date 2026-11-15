@@ -436,6 +436,8 @@ bool create_device() {
     dev.sparse_images = (families[dev.queue_family].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) && f.features.sparseBinding &&
                         f.features.sparseResidencyImage2D && !(getenv("RX_VK_SPARSE") && !atoi(getenv("RX_VK_SPARSE")));
     dev.sparse_buffers = (families[dev.queue_family].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) && f.features.sparseBinding;
+    dev.sparse_zero_buffers = dev.sparse_buffers && f.features.sparseResidencyBuffer &&
+                              dev.props.sparseProperties.residencyNonResidentStrict;
     VkDeviceCreateInfo ci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     ci.pNext = &f;
     ci.queueCreateInfoCount = compute_family != UINT32_MAX ? 2 : 1;

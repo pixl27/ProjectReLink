@@ -27,6 +27,7 @@
 #include "shader_recompiler/frontend/ir/value.h"
 #include "shader_recompiler/host_translate_info.h"
 #include "shader_recompiler/ir_opt/passes.h"
+#include "shader_recompiler/ir_opt/native_cbuf_pointer_policy.h"
 
 namespace Shader::Optimization {
 
@@ -1309,7 +1310,8 @@ bool MixesLoadedPointer(const IR::Value& value) {
 }
 
 thread_local bool g_follow_stage = false;   // (relink: the program being translated is compute, where the page table is)
-thread_local bool g_graphics_stage = false;   // (sharkiix: the program being translated is a geometry stage: vertex, tessellation, geometry, task, mesh)
+thread_local bool g_graphics_stage = false;   // (relink: any graphics stage, including fragment)
+thread_local bool g_geometry_stage = false;   // (sharkiix: vertex, tessellation, geometry, task or mesh; not fragment)
 
 /// Collects the storage buffer used by a global memory instruction and the instruction itself
 void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info, Environment& env,
@@ -1492,10 +1494,19 @@ void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info, 
     {   // (sharkiix, from BernabeCR93 in upstream issue 667) A graphics stage's address tracked to another constant buffer than
         // c0 while part of it comes from memory: the far-foliage and mesh programs (95db514a35353e28, d905f52b7517c681,
         // 51183fe750d5d0c8...) took float constants for a buffer address ("storage buffer NOT bound (reads zeros)", c5+0x60),
-        // read zeros and drew the plants without colour (white/sky-blue "mirror" ferns, glowing flowers). Left to the run-time
-        // search. RX_VK_NO_CBUF_LOAD_RULE=1: off
+        // read zeros and drew the plants without colour (white/sky-blue "mirror" ferns, glowing flowers). A native argument
+        // table can also be mistaken directly for a pointer: da7a7ab28b8e73d9's fragment stage took c5+0's
+        // 0x4180000000000200 (16.0f and a 0x200 scalar). The environment validates candidate words against mapped GPU
+        // pools. The memory-origin rule remains geometry-only; native scalar rejection also covers fragment stages.
+        // Both cases stay on the run-time address search. RX_VK_NO_CBUF_LOAD_RULE=1: off
         static const bool cbuf_load_rule{std::getenv("RX_VK_NO_CBUF_LOAD_RULE") == nullptr};
-        if (cbuf_load_rule && storage_buffer->index != 0 && g_graphics_stage && Origins(inst.Arg(0)).load) {
+        const bool native_program{env.IsNativeProgram()};
+        const bool validate_pointer{native_program && g_graphics_stage && storage_buffer->index != 0};
+        const bool mapped_pointer{!validate_pointer ||
+                                  env.IsCbufStorageBufferPointer(storage_buffer->index, storage_buffer->offset)};
+        if (cbuf_load_rule && native_cbuf_pointer_policy::leave_global(
+                                  native_program, g_graphics_stage, g_geometry_stage, storage_buffer->index,
+                                  Origins(inst.Arg(0)).load, mapped_pointer)) {
             leave_global();
             return;
         }
@@ -1660,8 +1671,10 @@ void GlobalMemoryToStorageBufferPass(Environment& env, IR::Program& program,
     // (relink)
     static const bool no_mesh{std::getenv("RX_VK_FOLLOW_MESH") == nullptr};
     g_follow_stage = program.stage == Stage::Compute || (!no_mesh && (program.stage == Stage::Task || program.stage == Stage::Mesh));
-    // (geometry stages only: with the fragment stage too, the sky drew black rectangles and the lighting went too bright at the castle)
-    g_graphics_stage = program.stage != Stage::Compute && program.stage != Stage::Fragment;
+    g_graphics_stage = program.stage != Stage::Compute;
+    // The older memory-origin workaround remains geometry-only: enabling it for fragment shaders made the sky draw
+    // black rectangles and lifted the castle lighting. Native unmapped-candidate rejection is independent and safe there.
+    g_geometry_stage = g_graphics_stage && program.stage != Stage::Fragment;
     g_origins.clear();   // (EvilOOT: Origins' walk, kept per program)
     const bool pairing{!GmLegacyFor(program.stage)};
     std::optional<TrackingConditions> conditions;

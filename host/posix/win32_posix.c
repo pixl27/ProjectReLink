@@ -201,6 +201,9 @@ static HThread *thread_self(void) {
     }
     return self_thread;
 }
+static int nice_of_thread_priority(int p) {
+    return p <= THREAD_PRIORITY_IDLE ? 19 : p <= THREAD_PRIORITY_LOWEST ? 10 : p == THREAD_PRIORITY_BELOW_NORMAL ? 5 : 0;
+}
 #define PSEUDO_THREAD ((HANDLE)(intptr_t)-2)
 static HThread *thread_of(HANDLE h) {
     if (h == PSEUDO_THREAD) return thread_self();
@@ -219,7 +222,12 @@ static void thread_finish(DWORD code) {
 static void *thread_entry(void *p) {
     HThread *t = (HThread *)p;
     self_thread = t;
-    t->tid = (pid_t)syscall(SYS_gettid);
+    const pid_t tid = (pid_t)syscall(SYS_gettid);
+    __atomic_store_n(&t->tid, tid, __ATOMIC_SEQ_CST);
+    /* SetThreadPriority can run before this thread publishes its tid.  The two sequentially consistent handoff
+       operations guarantee that either it sees tid, or this side sees priority, so a requested lowering is not lost. */
+    const int nice = nice_of_thread_priority(__atomic_load_n(&t->priority, __ATOMIC_SEQ_CST));
+    if (nice) setpriority(PRIO_PROCESS, (id_t)tid, nice);
     thread_finish(t->fn(t->arg));
     return NULL;
 }
@@ -241,8 +249,9 @@ HANDLE CreateThread(void *attr, SIZE_T stack, LPTHREAD_START_ROUTINE fn, void *a
         return NULL;
     }
     if (id) {
-        while (!t->tid) sched_yield();
-        *id = (DWORD)t->tid;
+        pid_t tid;
+        while (!(tid = __atomic_load_n(&t->tid, __ATOMIC_SEQ_CST))) sched_yield();
+        *id = (DWORD)tid;
     }
     return t;
 }
@@ -251,8 +260,9 @@ DWORD GetCurrentThreadId(void) { return (DWORD)thread_self()->tid; }
 DWORD GetThreadId(HANDLE h) {
     HThread *t = thread_of(h);
     if (!t) return 0;
-    while (!t->tid && !t->done) sched_yield();
-    return (DWORD)t->tid;
+    pid_t tid;
+    while (!(tid = __atomic_load_n(&t->tid, __ATOMIC_SEQ_CST)) && !t->done) sched_yield();
+    return (DWORD)tid;
 }
 DWORD GetProcessId(HANDLE p) { (void)p; return (DWORD)getpid(); }
 HANDLE OpenThread(DWORD access, BOOL inherit, DWORD id) {
@@ -272,14 +282,15 @@ BOOL DuplicateHandle(HANDLE sp, HANDLE src, HANDLE tp, HANDLE *out, DWORD access
 BOOL SetThreadPriority(HANDLE h, int p) {
     HThread *t = thread_of(h);
     if (!t) { last_error = ERROR_INVALID_HANDLE; return FALSE; }
-    t->priority = p;
-    const int nice = p <= THREAD_PRIORITY_IDLE ? 19 : p <= THREAD_PRIORITY_LOWEST ? 10 : p == THREAD_PRIORITY_BELOW_NORMAL ? 5 : 0;
-    if (nice && t->tid) setpriority(PRIO_PROCESS, (id_t)t->tid, nice);
+    __atomic_store_n(&t->priority, p, __ATOMIC_SEQ_CST);
+    const int nice = nice_of_thread_priority(p);
+    const pid_t tid = __atomic_load_n(&t->tid, __ATOMIC_SEQ_CST);
+    if (nice && tid) setpriority(PRIO_PROCESS, (id_t)tid, nice);
     return TRUE;
 }
 int GetThreadPriority(HANDLE h) {
     HThread *t = thread_of(h);
-    return t ? t->priority : 0;
+    return t ? __atomic_load_n(&t->priority, __ATOMIC_SEQ_CST) : 0;
 }
 DWORD_PTR SetThreadAffinityMask(HANDLE h, DWORD_PTR mask) {
     HThread *t = thread_of(h);
@@ -294,13 +305,22 @@ DWORD_PTR SetThreadAffinityMask(HANDLE h, DWORD_PTR mask) {
     for (int i = 0; i < 64; i++) if (CPU_ISSET(i, &old)) r |= (DWORD_PTR)1 << i;
     return r ? r : 1;
 }
+static cpu_set_t initial_process_affinity;
+static pthread_once_t initial_process_affinity_once = PTHREAD_ONCE_INIT;
+static void remember_initial_process_affinity(void) {
+    CPU_ZERO(&initial_process_affinity);
+    sched_getaffinity(0, sizeof initial_process_affinity, &initial_process_affinity);
+}
+/* Run before main can pin itself.  sched_getaffinity(0) reports the calling thread's mask, not a process-wide mask,
+   so sampling it later would make each pin progressively narrow the next one. */
+static void __attribute__((constructor)) remember_launch_affinity(void) {
+    pthread_once(&initial_process_affinity_once, remember_initial_process_affinity);
+}
 BOOL GetProcessAffinityMask(HANDLE p, DWORD_PTR *proc, DWORD_PTR *sys) {
     (void)p;
-    cpu_set_t s;
-    CPU_ZERO(&s);
-    sched_getaffinity(0, sizeof s, &s);
+    pthread_once(&initial_process_affinity_once, remember_initial_process_affinity);
     DWORD_PTR m = 0;
-    for (int i = 0; i < 64; i++) if (CPU_ISSET(i, &s)) m |= (DWORD_PTR)1 << i;
+    for (int i = 0; i < 64; i++) if (CPU_ISSET(i, &initial_process_affinity)) m |= (DWORD_PTR)1 << i;
     long n = sysconf(_SC_NPROCESSORS_CONF);
     *proc = m;
     *sys = n >= 64 ? ~(DWORD_PTR)0 : (((DWORD_PTR)1 << n) - 1);

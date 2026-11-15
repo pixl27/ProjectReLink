@@ -34,6 +34,9 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 #endif
+#ifdef __linux__
+#include "sparse_file_ranges.h"
+#endif
 /* (linux) the separator of the paths the executable's folder is joined with */
 #ifdef _WIN32
 #define SEP 92
@@ -226,6 +229,17 @@ int hos_guest_memfd = -1;
 int hos_posix_guest_memfd(void) { return hos_guest_memfd; }
 int hos_posix_guest_discard(void *p, size_t n) {
     return madvise(p, n, hos_guest_memfd >= 0 ? MADV_REMOVE : MADV_DONTNEED);
+}
+int hos_posix_guest_zero_allocated(void *p, size_t n) {
+#ifdef __linux__
+    if (hos_guest_memfd < 0 || (uint8_t *)p < A64_MEM) return -1;
+    const uint64_t lo = (uint64_t)((uint8_t *)p - A64_MEM);
+    if (lo > GUEST_SPACE || (uint64_t)n > GUEST_SPACE - lo) return -1;
+    return hos_sparse_file_zero_data(hos_guest_memfd, A64_MEM, lo, lo + (uint64_t)n);
+#else
+    (void)p, (void)n;
+    return -1;
+#endif
 }
 #endif
 

@@ -17,7 +17,10 @@ Why Vulkan, after WebGPU:
 - **Guest memory in place.** `VK_EXT_external_memory_host` imports the game's pools as buffers. GPU writes land in
   guest memory and CPU writes are seen by the GPU, with no mirrored buffer cache, write-back syncs or upload
   streams (the WebGPU renderer's biggest costs). Hot read-only ranges can later be mirrored to device memory, as
-  totk-pc-recomp does.
+  totk-pc-recomp does. On Linux, a memfd plus `/dev/udmabuf` avoids re-pinning every host page at each AMD submit.
+  `RX_VK_SPARSE_GUEST=1` is an opt-in low-memory form of that path: when the device guarantees strict zero reads
+  from non-resident sparse-buffer blocks, only populated device-sized blocks are imported and untouched blocks stay
+  unbound. It falls back to the ordinary complete import when any required capability or import is unavailable.
 - **SPIR-V straight from the IR.** No WGSL, no naga, and none of the WebGPU workarounds the WGSL back end carries
   (texture swizzle and border emulation, d16 quantization, storage format casts, vertex pulling).
 - **No validation or usage tracking on every call**, and bindless descriptors like NVN's own pools.

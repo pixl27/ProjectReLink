@@ -83,6 +83,7 @@ uint64_t hos_sys_alloc(uint64_t size, uint64_t align);     /* zeroed, from the s
 uint64_t hos_region_alloc(uint64_t size, uint64_t align);  /* address space above the heap */
 void hos_region_free(uint64_t addr);
 void hos_mem_init(uint64_t image_end);
+void hos_zero_guest_pages(void *p, size_t n);               /* zero allocated extents, preserving sparse memfd holes */
 extern uint64_t hos_heap_size, hos_heap_used, hos_total_memory, hos_program_size;
 
 /* ---- threads (hos_thread.c) */

@@ -18,9 +18,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+static inline void names_checkpoint(Ctx *c) {
+    /* The helper replaces lifted loop back edges, including their A64_POLL.  Keep the common path to one relaxed load
+       and preserve the poll's clear-before-yield order when another guest thread has asked for this virtual core. */
+    if (__builtin_expect(__atomic_load_n(&c->poll, __ATOMIC_RELAXED) != 0, 0)) {
+        __atomic_store_n(&c->poll, 0, __ATOMIC_RELAXED);
+        hos_vcore_checkpoint();
+    }
+}
+
 static inline uint64_t ld64(uint64_t a) { uint64_t v; memcpy(&v, GP(a), 8); return v; }
 static inline uint32_t ld32(uint64_t a) { uint32_t v; memcpy(&v, GP(a), 4); return v; }
-static inline uint32_t ld8(uint64_t a) { return *(const uint8_t *)GP(a); }
 
 typedef struct {
     uint64_t x[32];
@@ -34,20 +42,37 @@ typedef struct {
 /* The game's inlined strcmp (0x805afc64.. / 0x805b1e24..), from x8 = the element's key e and x9 = the name t: what it leaves
    in x8 (the result; the key's low word before any byte differs), x9-x14. 0: done (the latch); 1: no end in 32 MB (left to
    the lifted code) */
-static int str_cmp(St *s, uint64_t e, uint64_t t, uint32_t neg) {
+static int str_cmp(Ctx *c, St *s, uint64_t e, uint64_t t, uint32_t neg) {
     uint64_t x9 = t + 3, x10 = e + 3, x11 = 0x400000;
+    const uint8_t *const pe = (const uint8_t *)GP(e);
+    const uint8_t *const pt = (const uint8_t *)GP(t);
+    uint64_t at = 0;
     uint32_t w8 = (uint32_t)e, w12 = 0, w13 = 0, w14 = 0;
     for (;;) {
-        for (int64_t j = -3; j <= 4; j++) {
-            w12 = ld8(x10 + (uint64_t)j);
-            if (w12 == 0) w8 = 0;   /* (its handler: w8 = 0, then the same compare) */
-            w13 = ld8(x9 + (uint64_t)j);
-            w14 = w12 >= w13 ? 0u - neg : neg;
-            if (w12 != w13) w8 = w14;
-            if (w12 == 0 || w12 != w13) goto out;
+        const uintptr_t ea = (uintptr_t)(pe + at), ta = (uintptr_t)(pt + at);
+        int inspect = 1;
+        /* Do not read beyond a terminator into an uncommitted guest page. The 4 KB boundary is conservative on hosts with
+           larger pages; aligned guest mappings make it a real boundary wherever the host can protect pages individually. */
+        if ((ea & 4095) <= 4088 && (ta & 4095) <= 4088) {
+            uint64_t ew, tw;
+            memcpy(&ew, (const void *)ea, sizeof ew);
+            memcpy(&tw, (const void *)ta, sizeof tw);
+            const uint64_t zero = (ew - UINT64_C(0x0101010101010101)) & ~ew & UINT64_C(0x8080808080808080);
+            inspect = ew != tw || zero;
         }
-        x11 -= 8, x9 += 8, x10 += 8;
+        if (inspect) {
+            for (uint64_t j = 0; j < 8; j++) {
+                w12 = pe[at + j];
+                if (w12 == 0) w8 = 0;   /* (its handler: w8 = 0, then the same compare) */
+                w13 = pt[at + j];
+                w14 = w12 >= w13 ? 0u - neg : neg;
+                if (w12 != w13) w8 = w14;
+                if (w12 == 0 || w12 != w13) goto out;
+            }
+        }
+        x11 -= 8, x9 += 8, x10 += 8, at += 8;
         if (x11 == 0) return 1;
+        names_checkpoint(c);
     }
 out:
     s->x[8] = w8, s->x[9] = x9, s->x[10] = x10, s->x[11] = x11, s->x[12] = w12, s->x[13] = w13, s->x[14] = w14;
@@ -81,14 +106,14 @@ static int element(const uint64_t *x, uint64_t mid, uint64_t vt_a, uint64_t *n0,
 }
 
 /* One iteration of the first loop, from 0x805afbd4: -1 left to the lifted code (s unchanged), 0 back at its head, 1 out */
-static int step_lower(St *s) {
+static __attribute__((always_inline)) inline int step_lower(Ctx *c, St *s) {
     uint64_t *x = s->x;
     const uint64_t mid = (uint32_t)(x[25] + x[26]) >> 1;
     uint64_t n0, n1, n2, key, tgt;
     if (element(x, mid, x[7], &n0, &n1, &n2, &key, &tgt, (uint32_t)x[22])) return -1;
-    St t = *s;
-    if (str_cmp(&t, key, tgt, (uint32_t)x[27])) return -1;
-    *s = t;
+    /* str_cmp commits x8..x14 only at its normal exit; its too-long fallback leaves s untouched. Calling it on s avoids
+       copying this 288-byte register snapshot twice for every binary-search step. */
+    if (str_cmp(c, s, key, tgt, (uint32_t)x[27])) return -1;
     x[0] = n0, x[1] = n1, x[2] = n2, x[28] = mid;
     s->slot_type = (uint32_t)x[22], s->slot_key = key, s->slots = 1;
     const int32_t r = (int32_t)(uint32_t)x[8];   /* (0x805afbc0) */
@@ -99,7 +124,7 @@ static int step_lower(St *s) {
 }
 
 /* One iteration of the second loop: from 0x805b1d8c (at_head) or from 0x805b1d98 (its first, without the bounds' check) */
-static int step_upper(St *s, int at_head) {
+static __attribute__((always_inline)) inline int step_upper(Ctx *c, St *s, int at_head) {
     uint64_t *x = s->x;
     if (at_head) {
         x[3] = (uint32_t)x[26];
@@ -109,9 +134,7 @@ static int step_upper(St *s, int at_head) {
     const uint64_t mid = (uint32_t)(x[23] + x[3]) >> 1;
     uint64_t n0, n1, n2, key, tgt;
     if (element(x, mid, x[5], &n0, &n1, &n2, &key, &tgt, (uint32_t)x[7])) return -1;
-    St t = *s;
-    if (str_cmp(&t, key, tgt, (uint32_t)x[22])) return -1;
-    *s = t;
+    if (str_cmp(c, s, key, tgt, (uint32_t)x[22])) return -1;
     x[0] = n0, x[1] = n1, x[2] = n2, x[26] = mid;
     s->slot_type = (uint32_t)x[7], s->slot_key = key, s->slots = 1;
     const int32_t r = (int32_t)(uint32_t)x[8];   /* (0x805b1f64) */
@@ -148,12 +171,30 @@ static int names_mode(void) {
 
 static volatile long st_heads, st_steps, st_left;
 static void count(long steps, int left) {
-    __atomic_add_fetch(&st_steps, steps, __ATOMIC_RELAXED);
-    if (left) __atomic_add_fetch(&st_left, 1, __ATOMIC_RELAXED);
-    if (__atomic_add_fetch(&st_heads, 1, __ATOMIC_RELAXED) % 100000 == 0)
-        hos_log("names: %ld searches entered: %ld iterations native in all, %ld left to the lifted code", (long)st_heads,
-                (long)st_steps, (long)st_left);
+    /* These are diagnostics, not synchronization. OptimizeChangeBanc can enter this helper tens of millions of times
+       while an area loads; three global atomic read-modify-writes per search made the measurement part of the stall.
+       Accumulate on each guest thread and publish only once per million searches. */
+    static __thread long local_heads, local_steps, local_left;
+    local_heads++, local_steps += steps, local_left += left != 0;
+    if (local_heads < 1000000) return;
+    const long batch_heads = local_heads, batch_steps = local_steps, batch_left = local_left;
+    local_heads = local_steps = local_left = 0;
+    __atomic_add_fetch(&st_steps, batch_steps, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&st_left, batch_left, __ATOMIC_RELAXED);
+    const long heads = __atomic_add_fetch(&st_heads, batch_heads, __ATOMIC_RELAXED);
+    if (heads / 10000000 != (heads - batch_heads) / 10000000)
+        hos_log("names: %ld searches entered: %ld iterations native in all, %ld left to the lifted code", heads,
+                __atomic_load_n(&st_steps, __ATOMIC_RELAXED), __atomic_load_n(&st_left, __ATOMIC_RELAXED));
 }
+
+#ifdef HOS_NAMES_TEST
+int hos_names_test_str_cmp(Ctx *c, uint64_t element, uint64_t target, uint32_t neg, uint64_t out[7]) {
+    St s = {0};
+    const int r = str_cmp(c, &s, element, target, neg);
+    memcpy(out, &s.x[8], 7 * sizeof out[0]);
+    return r;
+}
+#endif
 
 /* HOS_NAMES_NATIVE=2: one prediction a loop and guest thread, checked where the lifted loop goes next */
 enum { TO_HEAD = 0, TO_OUT = 1 };
@@ -186,12 +227,13 @@ static void check(Ctx *c, int which, int reached) {
 static void predict(Ctx *c, int which, int at_head) {
     Pred *p = &pred[which];
     load(&p->s, c);
-    const int r = which ? step_upper(&p->s, at_head) : step_lower(&p->s);
+    const int r = which ? step_upper(c, &p->s, at_head) : step_lower(c, &p->s);
     p->pending = r >= 0, p->to = r == 1 ? TO_OUT : TO_HEAD;
 }
 
 /* (the first loop's head, 0x805afbd4) 1: the loop ended natively, out at 0x805afe30 */
 int hos_names_lower(Ctx *c) {
+    names_checkpoint(c);
     const int m = names_mode();
     if (m == 0) return 0;
     if (m == 2) {
@@ -203,7 +245,10 @@ int hos_names_lower(Ctx *c) {
     load(&s, c);
     long steps = 0;
     int r;
-    while ((r = step_lower(&s)) == 0) steps++;
+    while ((r = step_lower(c, &s)) == 0) {
+        steps++;
+        names_checkpoint(c);
+    }
     if (r == 1) steps++;
     commit(c, &s);
     count(steps, r < 0);
@@ -212,6 +257,7 @@ int hos_names_lower(Ctx *c) {
 
 /* (the second loop: at_head 1 at 0x805b1d8c, 0 at 0x805b1d98) 1: ended natively, out at 0x805b0200 */
 int hos_names_upper(Ctx *c, int at_head) {
+    names_checkpoint(c);
     const int m = names_mode();
     if (m == 0) return 0;
     if (m == 2) {
@@ -222,8 +268,12 @@ int hos_names_upper(Ctx *c, int at_head) {
     St s;
     load(&s, c);
     long steps = 0;
-    int r = step_upper(&s, at_head);
-    while (r == 0) steps++, r = step_upper(&s, 1);
+    int r = step_upper(c, &s, at_head);
+    while (r == 0) {
+        steps++;
+        names_checkpoint(c);
+        r = step_upper(c, &s, 1);
+    }
     commit(c, &s);
     count(steps, r < 0);
     return r == 1;

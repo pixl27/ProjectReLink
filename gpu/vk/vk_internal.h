@@ -55,6 +55,7 @@ struct Device {
          device_fault = false,  // (VK_EXT_device_fault: what a lost device faulted on)
          sparse_images = false, // (sparse resident 2D images on the queue: the terrain's huge arrays)
          sparse_buffers = false, // (sparse-bound buffers on the queue: a pool imported as several dma-bufs)
+         sparse_zero_buffers = false, // (partly unbound buffers read zero: sparse guest-memory holes)
          view_2d_of_3d = false, // (VK_EXT_image_2d_view_of_3d: a 3D texture a 2D sample instruction reads)
          coop_matrix = false,   // (VK_KHR_cooperative_matrix with its feature)
          max_reconvergence = false,   // (relink, EDEN_NX2_MAXRECONV=1: VK_KHR_shader_maximal_reconvergence with its feature)

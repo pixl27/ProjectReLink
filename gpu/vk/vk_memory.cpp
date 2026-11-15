@@ -31,12 +31,14 @@
 #include "import_hold.h"
 #include "mirror_inherit.h"
 #include "mirror_trim.h"
+#include "sparse_guest_ranges.h"
 #ifdef __linux__
 #include <cerrno>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 #include "shaders/wb_diff_comp_spv.h"
@@ -45,6 +47,14 @@
 namespace mkwvk {
 namespace {
 
+#ifdef __linux__
+struct SparseGuestAllocation {
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    std::vector<sparse_guest::Run> runs;
+    bool keep = false;   // the one-block primary allocation keeps Pool::memory valid for the pool's lifetime
+};
+#endif
+
 struct Pool {
     uint64_t lo = 0, hi = 0;   // guest range imported (aligned outwards)
     uint64_t range_lo = 0, range_hi = 0;   // (the game's pool range it was found for: pool_of's last hit)
@@ -52,6 +62,12 @@ struct Pool {
     std::vector<VkDeviceMemory> pieces;   // (a pool imported as several dma-bufs: the ones after `memory`)
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceAddress address = 0;
+#ifdef __linux__
+    bool sparse_guest = false;   // (RX_VK_SPARSE_GUEST: untouched guest blocks stay unbound and read as zero)
+    uint64_t sparse_align = 0, sparse_size = 0;
+    std::vector<uint64_t> sparse_bound;   // (one bit per sparse block already backed by the guest memfd)
+    std::vector<SparseGuestAllocation> sparse_allocations;   // the exact runs owned by each imported dma-buf
+#endif
     // its VRAM mirror (see "the VRAM mirror" below)
     enum : uint8_t { MIRROR_NONE, MIRROR_WANTED, MIRROR_ON, MIRROR_REFUSED } mstate = MIRROR_NONE;
     VkBuffer mirror = VK_NULL_HANDLE;
@@ -87,6 +103,21 @@ struct Pool {
     std::vector<uint32_t> wb_flush_words; // (the words of wb_flushing that are not zero)
     uint32_t wb_pending_n = 0;
 };
+
+uint64_t pool_imported_bytes(const Pool& p) {
+#ifdef __linux__
+    if (p.sparse_guest) {
+        uint64_t bytes = 0;
+        for (const SparseGuestAllocation& allocation : p.sparse_allocations) {
+            const uint64_t allocation_bytes = sparse_guest::bytes(allocation.runs);
+            if (allocation_bytes > UINT64_MAX - bytes) return UINT64_MAX;
+            bytes += allocation_bytes;
+        }
+        return bytes;
+    }
+#endif
+    return p.hi - p.lo;
+}
 uint64_t mem_rec_value = 0, mem_completed = 0;   // (the recording being made, and the GPU's progress)
 
 struct GuestPool {
@@ -145,35 +176,73 @@ constexpr VkBufferUsageFlags kUsage =
 // pool is still one buffer with one device address and nobody has to raise the limit. RX_VK_NO_DMABUF=1: host pointers only,
 // as before; RX_VK_DMABUF_PIECE_MB=<n>: pieces of at most n MB (to try the sparse path with the limit raised)
 struct UdmabufCreate { uint32_t memfd, flags; uint64_t offset, size; };
+struct UdmabufCreateItem { uint32_t memfd, pad; uint64_t offset, size; };
+struct UdmabufCreateList { uint32_t flags, count; };
 constexpr unsigned long kUdmabufCreate = (1ul << 30) | (sizeof(UdmabufCreate) << 16) | ('u' << 8) | 0x42;   // (_IOW('u', 0x42, ...))
+constexpr unsigned long kUdmabufCreateList =
+    (1ul << 30) | (sizeof(UdmabufCreateList) << 16) | ('u' << 8) | 0x43;   // (_IOW('u', 0x43, ...))
 int dmabuf_memfd = -2, dmabuf_dev = -1, dmabuf_failures = 0;
-uint64_t dmabuf_limit = 0;
+uint64_t dmabuf_limit = 0, dmabuf_piece = 0, dmabuf_list_limit = 1024;
+std::atomic<int64_t> dmabuf_seen_blocks{-1};
 
-/// The memory of guest [lo, lo + size) as an imported dma-buf; VK_NULL_HANDLE when udmabuf or the import refused it
-VkDeviceMemory dma_buf_memory(uint64_t lo, uint64_t size) {
-    UdmabufCreate c{(uint32_t)dmabuf_memfd, 1 /* UDMABUF_FLAGS_CLOEXEC */, lo, size};
-    const int fd = ioctl(dmabuf_dev, kUdmabufCreate, &c);
-    if (fd < 0) {
-        if (dmabuf_failures++ < 8)
-            logf("vk: guest %#llx..%#llx: no udmabuf (errno %d)", (unsigned long long)lo, (unsigned long long)(lo + size), errno);
-        return VK_NULL_HANDLE;
-    }
-    static uint32_t type = UINT32_MAX;   // (the same for every dma-buf of the window: asked once)
-    if (type == UINT32_MAX) {
-        VkMemoryFdPropertiesKHR fp{VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR};
-        if (vkGetMemoryFdPropertiesKHR(dev.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT, fd, &fp) == VK_SUCCESS) {
-            for (uint32_t i = 0; i < dev.memory.memoryTypeCount && type == UINT32_MAX; i++)   // (host visible, coherent, first)
-                if ((fp.memoryTypeBits >> i & 1) &&
-                    (dev.memory.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
-                        (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
-                    type = i;
-            for (uint32_t i = 0; i < dev.memory.memoryTypeCount && type == UINT32_MAX; i++)
-                if (fp.memoryTypeBits >> i & 1) type = i;
+bool dma_buf_init() {
+    static std::mutex init_mu;
+    std::lock_guard lk(init_mu);
+    if (dmabuf_memfd != -2) return dmabuf_memfd >= 0;
+    dmabuf_memfd = -1;
+    typedef int (*MemfdFn)(void);
+    const MemfdFn fn = getenv("RX_VK_NO_DMABUF") ? nullptr : (MemfdFn)dlsym(RTLD_DEFAULT, "hos_posix_guest_memfd");
+    const int fd = fn ? fn() : -1;
+    if (fd >= 0 && dev.dma_buf_import && vkGetMemoryFdPropertiesKHR) dmabuf_dev = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+    if (fd >= 0 && dmabuf_dev >= 0) {
+        dmabuf_memfd = fd;
+        dmabuf_limit = 64ull << 20;
+        if (FILE* f = fopen("/sys/module/udmabuf/parameters/size_limit_mb", "r")) {
+            unsigned long long mb = 0;
+            if (fscanf(f, "%llu", &mb) == 1 && mb) dmabuf_limit = mb << 20;
+            fclose(f);
         }
+        if (FILE* f = fopen("/sys/module/udmabuf/parameters/list_limit", "r")) {
+            unsigned long long n = 0;
+            if (fscanf(f, "%llu", &n) == 1 && n) dmabuf_list_limit = n;
+            fclose(f);
+        }
+        dmabuf_piece = dmabuf_limit;
+        if (const char* e = getenv("RX_VK_DMABUF_PIECE_MB"))
+            if (atoll(e) > 0) dmabuf_piece = std::min<uint64_t>(dmabuf_piece, (uint64_t)atoll(e) << 20);
+    }
+    logf("vk: guest memory as dma-bufs: %s", dmabuf_memfd >= 0 ? "yes" : !fn ? "no (no memfd window, or RX_VK_NO_DMABUF)"
+             : fd < 0 ? "no (the window is anonymous memory)" : !dev.dma_buf_import ? "no (VK_EXT_external_memory_dma_buf)"
+             : "no (/dev/udmabuf cannot be opened)");
+    if (dmabuf_memfd >= 0)
+        logf("vk: dma-bufs of at most %llu MB (udmabuf's limit %llu MB); larger pools %s", (unsigned long long)(dmabuf_piece >> 20),
+             (unsigned long long)(dmabuf_limit >> 20),
+             dev.sparse_buffers ? "are several, in a sparse buffer" : "are host-pointer imports (no sparse binding)");
+    return dmabuf_memfd >= 0;
+}
+
+/// Import an already-created dma-buf. Vulkan consumes fd on success and leaves it to the caller on failure.
+VkDeviceMemory dma_buf_fd_memory(int fd, uint64_t size, uint64_t guest_lo) {
+    static uint32_t type = UINT32_MAX;   // (the same for every dma-buf of the window: asked once)
+    static std::mutex type_mu;
+    {
+        std::lock_guard lk(type_mu);
         if (type == UINT32_MAX) {
-            close(fd);
-            if (dmabuf_failures++ < 8) logf("vk: a dma-buf of guest memory has no memory type");
-            return VK_NULL_HANDLE;
+            VkMemoryFdPropertiesKHR fp{VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR};
+            if (vkGetMemoryFdPropertiesKHR(dev.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT, fd, &fp) == VK_SUCCESS) {
+                for (uint32_t i = 0; i < dev.memory.memoryTypeCount && type == UINT32_MAX; i++)   // (host visible, coherent, first)
+                    if ((fp.memoryTypeBits >> i & 1) &&
+                        (dev.memory.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                            (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+                        type = i;
+                for (uint32_t i = 0; i < dev.memory.memoryTypeCount && type == UINT32_MAX; i++)
+                    if (fp.memoryTypeBits >> i & 1) type = i;
+            }
+            if (type == UINT32_MAX) {
+                close(fd);
+                if (dmabuf_failures++ < 8) logf("vk: a dma-buf of guest memory has no memory type");
+                return VK_NULL_HANDLE;
+            }
         }
     }
     VkImportMemoryFdInfoKHR im{VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR};
@@ -191,11 +260,364 @@ VkDeviceMemory dma_buf_memory(uint64_t lo, uint64_t size) {
     if (r != VK_SUCCESS) {   // (the fd is the caller's again when the import fails)
         close(fd);
         if (dmabuf_failures++ < 8)
-            logf("vk: guest %#llx..%#llx: its dma-buf not imported (VkResult %d)", (unsigned long long)lo,
-                 (unsigned long long)(lo + size), (int)r);
+            logf("vk: guest %#llx: its %llu-byte dma-buf not imported (VkResult %d)", (unsigned long long)guest_lo,
+                 (unsigned long long)size, (int)r);
         return VK_NULL_HANDLE;
     }
     return memory;
+}
+
+/// The memory of guest [lo, lo + size) as an imported dma-buf; VK_NULL_HANDLE when udmabuf or the import refused it
+VkDeviceMemory dma_buf_memory(uint64_t lo, uint64_t size) {
+    UdmabufCreate c{(uint32_t)dmabuf_memfd, 1 /* UDMABUF_FLAGS_CLOEXEC */, lo, size};
+    const int fd = ioctl(dmabuf_dev, kUdmabufCreate, &c);
+    if (fd < 0) {
+        if (dmabuf_failures++ < 8)
+            logf("vk: guest %#llx..%#llx: no udmabuf (errno %d)", (unsigned long long)lo, (unsigned long long)(lo + size), errno);
+        return VK_NULL_HANDLE;
+    }
+    return dma_buf_fd_memory(fd, size, lo);
+}
+
+VkResult bind_sparse_buffers(const std::vector<VkSparseBufferMemoryBindInfo>& buffers, bool drain_before) {
+    if (buffers.empty()) return VK_SUCCESS;
+    VkBindSparseInfo si{VK_STRUCTURE_TYPE_BIND_SPARSE_INFO};
+    si.bufferBindCount = (uint32_t)buffers.size();
+    si.pBufferBinds = buffers.data();
+    static VkFence fence = VK_NULL_HANDLE;   // (the background importer and the recording thread can both import)
+    static std::mutex fence_mu;
+    std::lock_guard fk(fence_mu);
+    if (!fence) {
+        VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        const VkResult r = vkCreateFence(dev.device, &fi, nullptr, &fence);
+        if (r != VK_SUCCESS) return r;
+    }
+    VkResult res;
+    {   // Sparse binds are not implicitly ordered against command-buffer execution, even on one queue. A mapping change on
+        // a published buffer drains earlier access; a brand-new buffer has none. The fence completes either change before
+        // any later submit can use it.
+        std::lock_guard qk(dev.present_mu);
+        queue_flush_locked();
+        res = drain_before ? vkQueueWaitIdle(dev.queue) : VK_SUCCESS;
+        if (res == VK_SUCCESS) res = vkQueueBindSparse(dev.queue, 1, &si, fence);
+    }
+    if (res == VK_SUCCESS) {
+        res = vkWaitForFences(dev.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkResetFences(dev.device, 1, &fence);
+    }
+    return res;
+}
+
+VkResult bind_sparse_buffer(VkBuffer buffer, const std::vector<VkSparseMemoryBind>& binds, bool drain_before = false) {
+    if (binds.empty()) return VK_SUCCESS;
+    const std::vector<VkSparseBufferMemoryBindInfo> buffers{{buffer, (uint32_t)binds.size(), binds.data()}};
+    return bind_sparse_buffers(buffers, drain_before);
+}
+
+/// Import and bind one allocation's bounded runs. The primary allocation is deliberately one block: Pool::memory remains
+/// valid even when every other allocation is released, while at most one sparse block stays pinned for that bookkeeping rule.
+bool sparse_guest_bind_batch(Pool& p, const std::vector<sparse_guest::Run>& runs, bool keep, bool drain_before) {
+    if (runs.empty()) return true;
+    uint64_t packed_size = 0;
+    for (const sparse_guest::Run& r : runs) packed_size += r.size;
+    if (!packed_size || packed_size > dmabuf_limit || runs.size() > dmabuf_list_limit || runs.size() > UINT32_MAX) {
+        if (dmabuf_failures++ < 8)
+            logf("vk: pool %#llx: %llu MB of sparse guest blocks exceed one udmabuf list", (unsigned long long)p.lo,
+                 (unsigned long long)(packed_size >> 20));
+        return false;
+    }
+    std::vector<uint8_t> storage(sizeof(UdmabufCreateList) + runs.size() * sizeof(UdmabufCreateItem));
+    auto* create = reinterpret_cast<UdmabufCreateList*>(storage.data());
+    auto* items = reinterpret_cast<UdmabufCreateItem*>(storage.data() + sizeof(UdmabufCreateList));
+    create->flags = 1 /* UDMABUF_FLAGS_CLOEXEC */;
+    create->count = (uint32_t)runs.size();
+    for (size_t i = 0; i < runs.size(); i++)
+        items[i] = {(uint32_t)dmabuf_memfd, 0, p.lo + runs[i].offset, runs[i].size};
+    const int fd = ioctl(dmabuf_dev, kUdmabufCreateList, create);
+    if (fd < 0) {
+        if (dmabuf_failures++ < 8)
+            logf("vk: pool %#llx: UDMABUF_CREATE_LIST refused %zu extents (errno %d)", (unsigned long long)p.lo,
+                 runs.size(), errno);
+        return false;
+    }
+    const VkDeviceMemory memory = dma_buf_fd_memory(fd, packed_size, p.lo);
+    if (!memory) return false;
+    std::vector<VkSparseMemoryBind> binds;
+    uint64_t memory_offset = 0;
+    for (const sparse_guest::Run& r : runs) {
+        binds.push_back({r.offset, r.size, memory, memory_offset, 0});
+        memory_offset += r.size;
+    }
+    const VkResult res = bind_sparse_buffer(p.buffer, binds, drain_before);
+    if (res != VK_SUCCESS) {
+        vkFreeMemory(dev.device, memory, nullptr);
+        if (dmabuf_failures++ < 8)
+            logf("vk: pool %#llx: %zu sparse guest extents not bound (VkResult %d)", (unsigned long long)p.lo,
+                 runs.size(), (int)res);
+        return false;
+    }
+    if (keep) p.memory = memory;
+    else p.pieces.push_back(memory);
+    p.sparse_allocations.push_back({memory, runs, keep});
+    for (const sparse_guest::Run& r : runs)
+        sparse_guest::set_bound(p.sparse_bound, r.offset / p.sparse_align, r.size / p.sparse_align);
+    static uint64_t bound_bytes;
+    static int64_t bound_calls;
+    bound_bytes += packed_size, bound_calls++;
+    if (bound_calls <= 8 || bound_calls % 64 == 0)
+        logf("vk: sparse guest pool %#llx: bound %zu runs / %llu KB (%lld binds, %llu MB in all)",
+             (unsigned long long)p.lo, runs.size(), (unsigned long long)(packed_size >> 10), (long long)bound_calls,
+             (unsigned long long)(bound_bytes >> 20));
+    return true;
+}
+
+/// Import any number of runs as as many bounded UDMABUF_CREATE_LIST allocations as the kernel's byte and extent limits
+/// require. A run itself may be larger than size_limit_mb; splitting it preserves the sparse resource instead of falling
+/// back to a dense import that pins all of its holes.
+bool sparse_guest_bind_runs(Pool& p, const std::vector<sparse_guest::Run>& runs, bool keep, bool drain_before) {
+    if (runs.empty()) return true;
+    const uint64_t list_limit = std::min<uint64_t>(dmabuf_list_limit, UINT32_MAX);
+    const auto batches = sparse_guest::batches(runs, dmabuf_limit, list_limit, p.sparse_align);
+    if (batches.empty()) {
+        if (dmabuf_failures++ < 8)
+            logf("vk: pool %#llx: sparse guest runs cannot fit udmabuf's %llu MB / %llu-extent lists",
+                 (unsigned long long)p.lo, (unsigned long long)(dmabuf_limit >> 20),
+                 (unsigned long long)dmabuf_list_limit);
+        return false;
+    }
+    static int split_logged;
+    if (batches.size() > 1 && split_logged++ < 16)
+        logf("vk: pool %#llx: %zu sparse guest runs split across %zu udmabuf lists",
+             (unsigned long long)p.lo, runs.size(), batches.size());
+    for (size_t i = 0; i < batches.size(); i++)
+        if (!sparse_guest_bind_batch(p, batches[i], keep && i == 0, drain_before && i == 0)) return false;
+    return true;
+}
+
+/// Back the data blocks in sorted resource-relative ranges, or every block there when `force` is true. The latter is
+/// used before GPU writes, so their results always land in the guest memfd. `ensure_one` keeps Pool::memory non-null.
+bool sparse_guest_bind_ranges(Pool& p, const std::vector<sparse_guest::Run>& scan_ranges, bool force, bool ensure_one) {
+    if (!p.sparse_guest || !p.sparse_align || !p.sparse_size) return true;
+    const uint64_t blocks = (p.sparse_size + p.sparse_align - 1) / p.sparse_align;
+    std::vector<uint8_t> wanted((size_t)blocks);
+    if (force) {
+        for (const sparse_guest::Run& r : scan_ranges)
+            sparse_guest::mark(wanted, p.lo, p.sparse_align, p.lo + r.offset, p.lo + r.offset + r.size);
+    } else if (!scan_ranges.empty()) {
+        // A changed memfd block count refreshes every live sparse import. Most
+        // of those blocks are normally already bound; walking their often
+        // fragmented SEEK_DATA map again made an area load spend whole frames
+        // in lseek. Only an unbound block can need a new Vulkan binding.
+        std::vector<sparse_guest::Run> unbound;
+        for (const sparse_guest::Run& scan : scan_ranges) {
+            const auto found = sparse_guest::unbound_runs(p.sparse_bound, p.sparse_align, p.sparse_size,
+                                                          scan.offset, scan.offset + scan.size);
+            for (const sparse_guest::Run& r : found)
+                if (!sparse_guest::append_merged(unbound, r)) return false;
+        }
+        if (!unbound.empty()) {
+            const auto scan_started = std::chrono::steady_clock::now();
+            uint64_t scan_seeks = 0;
+            const int scanfd = fcntl(dmabuf_memfd, F_DUPFD_CLOEXEC, 0);
+            if (scanfd < 0) return false;
+            for (const sparse_guest::Run& r : unbound) {
+                const uint64_t run_lo = p.lo + r.offset;
+                const uint64_t run_hi = run_lo + r.size;
+                for (uint64_t at = run_lo; at < run_hi;) {
+                    const off_t data = lseek(scanfd, (off_t)at, SEEK_DATA);
+                    scan_seeks++;
+                    if (data < 0) {
+                        const int e = errno;
+                        if (e == ENXIO) goto sparse_scan_done;
+                        close(scanfd);
+                        if (dmabuf_failures++ < 8) logf("vk: guest sparse scan failed (errno %d)", e);
+                        return false;
+                    }
+                    if ((uint64_t)data >= run_hi) break;
+                    const off_t hole = lseek(scanfd, data, SEEK_HOLE);
+                    scan_seeks++;
+                    if (hole < 0) {
+                        const int e = errno;
+                        close(scanfd);
+                        if (dmabuf_failures++ < 8) logf("vk: guest sparse hole scan failed (errno %d)", e);
+                        return false;
+                    }
+                    const uint64_t hi = std::min<uint64_t>((uint64_t)hole, run_hi);
+                    sparse_guest::mark(wanted, p.lo, p.sparse_align, (uint64_t)data, hi);
+                    // A shmem file can have many page-sized extents inside one
+                    // Vulkan sparse block. The first already makes the complete
+                    // block wanted, so do not issue two more seeks per fragment.
+                    at = sparse_guest::scan_advance(p.lo, p.sparse_align, (uint64_t)data, hi, run_hi);
+                }
+            }
+sparse_scan_done:
+            close(scanfd);
+            const double scan_ms = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now() - scan_started)
+                                       .count();
+            if (scan_ms >= 20.0) {
+                static int64_t slow_scans;
+                slow_scans++;
+                if (slow_scans <= 32 || slow_scans % 64 == 0)
+                    logf("vk: sparse guest pool %#llx: %.1f ms scanning %llu KB, %zu live / %zu unbound runs, %llu seeks",
+                         (unsigned long long)p.lo, scan_ms,
+                         (unsigned long long)(sparse_guest::bytes(scan_ranges) >> 10), scan_ranges.size(), unbound.size(),
+                         (unsigned long long)scan_seeks);
+            }
+        }
+    }
+    bool any = false;
+    for (uint8_t x : wanted) any |= x != 0;
+    // The generic Pool lifecycle owns its primary allocation through p.memory. Always include block zero in the first
+    // sparse import, even when other populated blocks were found, so the split below can establish that invariant.
+    if (ensure_one && blocks) wanted[0] = 1, any = true;
+    if (!any) return true;
+    std::vector<sparse_guest::Run> runs = sparse_guest::runs(wanted, p.sparse_bound, p.sparse_align);
+    if (runs.empty()) return true;
+    if (!p.memory && ensure_one) {
+        // wanted[0] made the first run start at zero. Split one block out so later releases never have to keep a large,
+        // mixed allocation merely because Pool::memory is the primary handle used by the generic cleanup paths.
+        const sparse_guest::Run primary{0, p.sparse_align};
+        if (runs.front().offset != 0 || runs.front().size < p.sparse_align ||
+            !sparse_guest_bind_runs(p, {primary}, true, false))
+            return false;
+        runs.front().offset += p.sparse_align;
+        runs.front().size -= p.sparse_align;
+        if (!runs.front().size) runs.erase(runs.begin());
+        return sparse_guest_bind_runs(p, runs, false, false);
+    }
+    return sparse_guest_bind_runs(p, runs, false, true);
+}
+
+bool sparse_guest_bind(Pool& p, uint64_t guest_lo, uint64_t guest_hi, bool force, bool ensure_one) {
+    std::vector<sparse_guest::Run> ranges;
+    const uint64_t scan_lo = std::max(guest_lo, p.lo);
+    const uint64_t scan_hi = std::min(guest_hi, p.lo + p.sparse_size);
+    if (scan_hi > scan_lo) ranges.push_back({scan_lo - p.lo, scan_hi - scan_lo});
+    return sparse_guest_bind_ranges(p, ranges, force, ensure_one);
+}
+
+struct SparseGuestRelease {
+    Pool* pool = nullptr;
+    std::vector<size_t> allocations;
+    std::vector<VkSparseMemoryBind> binds;
+};
+
+/// Plan whole imported allocations touched by any released range once none of their packed runs belongs to a current
+/// game pool. Vulkan names one VkDeviceMemory for all of an allocation's runs, so freeing only part would leave the same
+/// dma-buf (and all its pinned pages) alive. The one-block primary allocation is kept until Pool teardown.
+void sparse_guest_release_plan(Pool& p, const std::vector<std::pair<uint64_t, uint64_t>>& released,
+                               SparseGuestRelease& plan) {
+    if (!p.sparse_guest || !p.sparse_align) return;
+    plan.pool = &p;
+    for (size_t i = 0; i < p.sparse_allocations.size(); i++) {
+        const SparseGuestAllocation& a = p.sparse_allocations[i];
+        bool touched = false;
+        for (const auto& [lo, hi] : released)
+            if (sparse_guest::touches(a.runs, p.lo, lo, hi)) {
+                touched = true;
+                break;
+            }
+        if (a.keep || !touched || !sparse_guest::all_outside(a.runs, p.lo, guest_pools)) continue;
+        plan.allocations.push_back(i);
+        for (const sparse_guest::Run& r : a.runs)
+            plan.binds.push_back({r.offset, r.size, VK_NULL_HANDLE, 0, 0});
+    }
+}
+
+void sparse_guest_release_finish(SparseGuestRelease& plan, std::vector<std::pair<uint64_t, uint64_t>>& freed) {
+    Pool& p = *plan.pool;
+    uint64_t bytes = 0;
+    const size_t allocations = plan.allocations.size();
+    for (auto at = plan.allocations.rbegin(); at != plan.allocations.rend(); ++at) {
+        SparseGuestAllocation a = std::move(p.sparse_allocations[*at]);
+        for (const sparse_guest::Run& r : a.runs) {
+            sparse_guest::clear_bound(p.sparse_bound, r.offset / p.sparse_align, r.size / p.sparse_align);
+            const uint64_t lo = p.lo + r.offset;
+            freed.push_back({lo, lo + r.size});
+            bytes += r.size;
+        }
+        const auto piece = std::find(p.pieces.begin(), p.pieces.end(), a.memory);
+        if (piece != p.pieces.end()) p.pieces.erase(piece);
+        vkFreeMemory(dev.device, a.memory, nullptr);
+        p.sparse_allocations.erase(p.sparse_allocations.begin() + (ptrdiff_t)*at);
+    }
+    static uint64_t released_bytes;
+    static int64_t released_allocations;
+    released_bytes += bytes, released_allocations += (int64_t)allocations;
+    logf("vk: sparse guest pool %#llx: released %zu allocations / %llu KB (%lld allocations, %llu MB in all)",
+         (unsigned long long)p.lo, allocations, (unsigned long long)(bytes >> 10), (long long)released_allocations,
+         (unsigned long long)(released_bytes >> 20));
+}
+
+bool import_sparse_guest(uint64_t lo, uint64_t hi, Pool& p) {
+    static const bool asked = getenv("RX_VK_SPARSE_GUEST") && atoi(getenv("RX_VK_SPARSE_GUEST")) != 0;
+    if (!asked) return false;
+    static bool reported;
+    if (!dev.sparse_zero_buffers || !dma_buf_init()) {
+        if (!reported) logf("vk: sparse guest memory: unavailable (needs dma-buf, sparse residency, strict zero reads)"), reported = true;
+        return false;
+    }
+    if (!reported) logf("vk: sparse guest memory: on (RX_VK_SPARSE_GUEST)"), reported = true;
+    VkExternalMemoryBufferCreateInfo eb{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
+    eb.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.pNext = &eb;
+    bi.flags = VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT;
+    bi.size = hi - lo;
+    bi.usage = kUsage;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    if (vkCreateBuffer(dev.device, &bi, nullptr, &buffer) != VK_SUCCESS) return false;
+    VkMemoryRequirements req{};
+    vkGetBufferMemoryRequirements(dev.device, buffer, &req);
+    const uint64_t block = std::max<uint64_t>(req.alignment, 4096);
+    if (!block || (block & (block - 1)) || (req.size % block) || lo + req.size < lo || lo + req.size > host->guest_size()) {
+        vkDestroyBuffer(dev.device, buffer, nullptr);
+        return false;
+    }
+    p.lo = lo, p.hi = hi, p.buffer = buffer, p.sparse_guest = true, p.sparse_align = block, p.sparse_size = req.size;
+    p.sparse_bound.assign((size_t)((req.size / block + 63) / 64), 0);
+    // Establish only the primary allocation here.  The imported buffer is a
+    // chunk around the resource that caused the lookup, and scanning that
+    // whole chunk made a small texture upload pay SEEK_DATA over tens of MB
+    // (and occasionally seconds under shmem pressure).  gpu_buffer[_bind]
+    // binds the exact range before returning it to a Vulkan consumer; imports
+    // made ahead need no other blocks until their first binding.
+    if (!sparse_guest_bind(p, lo, lo, false, true)) {
+        vkDestroyBuffer(dev.device, buffer, nullptr);
+        if (p.memory) vkFreeMemory(dev.device, p.memory, nullptr);
+        for (VkDeviceMemory m : p.pieces) vkFreeMemory(dev.device, m, nullptr);
+        p = Pool{};
+        return false;
+    }
+    VkBufferDeviceAddressInfo da{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    da.buffer = p.buffer;
+    p.address = vkGetBufferDeviceAddress(dev.device, &da);
+    return true;
+}
+
+/// Newly allocated memfd extents can appear after a pool was imported. A single fstat normally makes this free; only a
+/// changed block count scans the parts of sparse imports that current game pools cover. Scanning an import's whole range
+/// would immediately rebind CPU pages after the game released their old pool. Explicit bindings refresh their exact range.
+void sparse_guest_refresh_all() {
+    if (dmabuf_memfd < 0) return;
+    struct stat st{};
+    if (fstat(dmabuf_memfd, &st) != 0) return;
+    if (dmabuf_seen_blocks.load(std::memory_order_relaxed) == st.st_blocks) return;
+    bool ok = true;
+    for (auto& kv : imported) {
+        Pool& p = kv.second;
+        if (!p.sparse_guest) continue;
+        std::vector<sparse_guest::Run> live;
+        for (const GuestPool& g : guest_pools) {
+            if (g.lo >= p.lo + p.sparse_size) break;
+            if (g.hi <= p.lo) continue;
+            const uint64_t lo = std::max(p.lo, g.lo), hi = std::min(p.lo + p.sparse_size, g.hi);
+            if (hi > lo && !sparse_guest::append_merged(live, {lo - p.lo, hi - lo})) ok = false;
+        }
+        if (!live.empty() && !sparse_guest_bind_ranges(p, live, false, false)) ok = false;
+    }
+    dmabuf_seen_blocks.store(ok ? st.st_blocks : -1, std::memory_order_relaxed);
 }
 
 /// A pool larger than a dma-buf may be: a sparse buffer, each `piece` bytes of it bound to its own dma-buf
@@ -237,26 +659,7 @@ bool import_dma_buf_pieces(uint64_t lo, uint64_t hi, uint64_t piece, Pool& p) {
     }
     VkResult res = VK_ERROR_UNKNOWN;
     if (binds.size() == (req.size + piece - 1) / piece) {
-        VkSparseBufferMemoryBindInfo bb{buffer, (uint32_t)binds.size(), binds.data()};
-        VkBindSparseInfo si{VK_STRUCTURE_TYPE_BIND_SPARSE_INFO};
-        si.bufferBindCount = 1;
-        si.pBufferBinds = &bb;
-        static VkFence fence = VK_NULL_HANDLE;   // (the background importer and the recording thread can both import)
-        static std::mutex fence_mu;
-        std::lock_guard fk(fence_mu);
-        if (!fence) {
-            VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-            vkCreateFence(dev.device, &fi, nullptr, &fence);
-        }
-        {   // (on the queue, as the sparse textures' binds: nothing uses the new buffer yet, so no wait for earlier work)
-            std::lock_guard qk(dev.present_mu);
-            queue_flush_locked();
-            res = vkQueueBindSparse(dev.queue, 1, &si, fence);
-        }
-        if (res == VK_SUCCESS) {
-            res = vkWaitForFences(dev.device, 1, &fence, VK_TRUE, UINT64_MAX);
-            vkResetFences(dev.device, 1, &fence);
-        }
+        res = bind_sparse_buffer(buffer, binds);
     }
     if (res != VK_SUCCESS) {
         vkDestroyBuffer(dev.device, buffer, nullptr);
@@ -272,36 +675,10 @@ bool import_dma_buf_pieces(uint64_t lo, uint64_t hi, uint64_t piece, Pool& p) {
 }
 
 bool import_dma_buf(uint64_t lo, uint64_t hi, Pool& p) {
-    static uint64_t piece = 0;
-    if (dmabuf_memfd == -2) {
-        dmabuf_memfd = -1;
-        typedef int (*MemfdFn)(void);
-        const MemfdFn fn = getenv("RX_VK_NO_DMABUF") ? nullptr : (MemfdFn)dlsym(RTLD_DEFAULT, "hos_posix_guest_memfd");
-        const int fd = fn ? fn() : -1;
-        if (fd >= 0 && dev.dma_buf_import && vkGetMemoryFdPropertiesKHR) dmabuf_dev = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
-        if (fd >= 0 && dmabuf_dev >= 0) {
-            dmabuf_memfd = fd;
-            dmabuf_limit = 64ull << 20;
-            if (FILE* f = fopen("/sys/module/udmabuf/parameters/size_limit_mb", "r")) {
-                unsigned long long mb = 0;
-                if (fscanf(f, "%llu", &mb) == 1 && mb) dmabuf_limit = mb << 20;
-                fclose(f);
-            }
-            piece = dmabuf_limit;
-            if (const char* e = getenv("RX_VK_DMABUF_PIECE_MB"))
-                if (atoll(e) > 0) piece = std::min<uint64_t>(piece, (uint64_t)atoll(e) << 20);
-        }
-        logf("vk: guest memory as dma-bufs: %s", dmabuf_memfd >= 0 ? "yes" : !fn ? "no (no memfd window, or RX_VK_NO_DMABUF)"
-                 : fd < 0 ? "no (the window is anonymous memory)" : !dev.dma_buf_import ? "no (VK_EXT_external_memory_dma_buf)"
-                 : "no (/dev/udmabuf cannot be opened)");
-        if (dmabuf_memfd >= 0)
-            logf("vk: dma-bufs of at most %llu MB (udmabuf's limit %llu MB); larger pools %s", (unsigned long long)(piece >> 20),
-                 (unsigned long long)(dmabuf_limit >> 20),
-                 dev.sparse_buffers ? "are several, in a sparse buffer" : "are host-pointer imports (no sparse binding)");
-    }
+    dma_buf_init();
     if (dmabuf_memfd < 0 || (lo & 4095) || (hi & 4095)) return false;
-    if (hi - lo > piece) {
-        if (!dev.sparse_buffers || !import_dma_buf_pieces(lo, hi, piece, p)) return false;
+    if (hi - lo > dmabuf_piece) {
+        if (!dev.sparse_buffers || !import_dma_buf_pieces(lo, hi, dmabuf_piece, p)) return false;
     } else {
         VkExternalMemoryBufferCreateInfo eb{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
         eb.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
@@ -365,6 +742,14 @@ bool import_pool(uint64_t lo, uint64_t hi, Pool& p) {
                  total, ms(a, b), ms(b, c), ms(c, d), ms(d, e), (unsigned long long)(n >> 10), (unsigned long long)(com >> 10));
         }
     } report{t0, t1, t2, t3, t4, committed, bytes};
+#ifdef __linux__
+    // (opt-in: inspect the memfd before the ordinary path commits every reserved page. The sparse buffer leaves
+    // untouched blocks unbound; residencyNonResidentStrict makes their reads deterministic zero.)
+    if (import_sparse_guest(lo, hi, p)) {
+        t1 = t2 = t3 = t4 = clk::now();
+        return true;
+    }
+#endif
     // (pages the game has not touched yet may be only reserved: committed now, as the pool's memory is usable; a range
     // committed already is left alone: the call took milliseconds in the game's huge reservation)
     {
@@ -586,6 +971,11 @@ void memory_sync() {
     std::sort(next.begin(), next.end(), [](const GuestPool& a, const GuestPool& b) { return a.lo < b.lo; });
     std::lock_guard lk(pools_mu);
     guest_pools.swap(next);
+#ifdef __linux__
+    // The memfd's block count need not change when a game pool begins covering already-allocated pages. Make the next
+    // submission refresh the new live intersections even when fstat alone would otherwise skip the scan.
+    dmabuf_seen_blocks.store(-1, std::memory_order_relaxed);
+#endif
     guest_pools_gen.fetch_add(1, std::memory_order_relaxed);
     last_pool = nullptr;
     std::fill(std::begin(pool_cache), std::end(pool_cache), nullptr);
@@ -3234,6 +3624,12 @@ BufferRef gpu_buffer(uint64_t gpu, uint64_t size) {
     std::lock_guard lk(pools_mu);
     Pool* p = pool_of(guest, size);
     if (!p) return {};
+#ifdef __linux__
+    // A sparse import starts with only its primary block.  Bind the exact
+    // direct-source span here instead of scanning the import chunk around it.
+    // gpu_buffer_bind does the same for descriptor-backed ranges.
+    if (p->sparse_guest && !sparse_guest_bind(*p, guest, guest + size, false, false)) return {};
+#endif
     if (p->last_value < mem_rec_value) p->last_value = mem_rec_value;   // (in use: not given back under it, imports_give_back)
     return {p->buffer, guest - p->lo, size, p->address + (guest - p->lo)};
 }
@@ -3254,14 +3650,24 @@ void memory_pool_created(uint64_t gpu, uint64_t size) {
 
 int memory_guest_imported(uint64_t lo, uint64_t hi) {
     std::lock_guard lk(pools_mu);
+    auto overlaps_import = [&](const Pool& p) {
+        if (!p.memory || p.lo >= hi || lo >= p.hi) return false;
+#ifdef __linux__
+        // An unbound sparse block is not visible to the GPU and strict non-resident reads are zero. Let the host punch
+        // freed pages there out of the memfd instead of allocating them merely to write the same zeroes.
+        if (p.sparse_guest)
+            return sparse_guest::overlaps_bound(p.sparse_bound, p.lo, p.sparse_align, lo, hi);
+#endif
+        return true;
+    };
     auto it = imported.upper_bound(hi);   // (pools by lo: those starting below hi, the last ones checked first)
     while (it != imported.begin()) {
         --it;
-        if (it->second.hi > lo) return 1;
+        if (overlaps_import(it->second)) return 1;
         if (it->second.hi + (1ull << 30) < lo) break;   // (imports are at most 1 GB: none further down reaches lo)
     }
     for (const auto& nh : retired_pools)
-        if (nh.mapped().memory && nh.mapped().lo < hi && lo < nh.mapped().hi) return 1;
+        if (overlaps_import(nh.mapped())) return 1;
     return 0;
 }
 
@@ -3377,6 +3783,12 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
             bind_memo[bind_slot(guest, size)] = BindMemo{guest, size, gpu_bind_stamp(), ref};
         return ref;
     };
+    auto remember_pool = [&](Pool* p, BufferRef ref) {
+#ifdef __linux__
+        if (p->sparse_guest) return ref;   // (the range is checked for newly allocated blocks at every binding)
+#endif
+        return remember(ref);
+    };
     if (!written) {
         const BindMemo& m = bind_memo[bind_slot(guest, size)];
         if (bind_memo_hit(guest, size, gpu_bind_stamp(), m.guest, m.size, m.stamp, m.ref.buffer != VK_NULL_HANDLE))
@@ -3387,15 +3799,19 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
     // lookup under the lock was ~8% of the replay's time in a race); the rest under it, as below)
     const bool par = par_active.load(std::memory_order_relaxed);
     TlPool& tl = tl_pools[(guest >> 16) & 1023];
-    if (!written && tl.p && tl.gen == pools_gen.load(std::memory_order_relaxed) && guest >= tl.p->lo &&
-        guest + size <= tl.p->hi) {
+    bool tl_hit = !written && tl.p && tl.gen == pools_gen.load(std::memory_order_relaxed) && guest >= tl.p->lo &&
+                  guest + size <= tl.p->hi;
+#ifdef __linux__
+    if (tl_hit && tl.p->sparse_guest) tl_hit = false;
+#endif
+    if (tl_hit) {
         Pool* p = tl.p;
         const uint64_t off = guest - p->lo;
         if (p->last_value < mem_rec_value) p->last_value = mem_rec_value;
         if (!mirror_on() || !mirror_upload || p->mstate == Pool::MIRROR_REFUSED || p->mstate == Pool::MIRROR_WANTED)
-            return remember({p->buffer, off, size, 0});
+            return remember_pool(p, {p->buffer, off, size, 0});
         if (p->mstate == Pool::MIRROR_ON && p->synced_epoch == mirror_epoch && p->sync_seg <= texture_segment())
-            return remember({p->mirror, off, size, 0});
+            return remember_pool(p, {p->mirror, off, size, 0});
     }
     ParLock plk;   // (before pools_mu, always: a mirror sync records into the shared upload command buffer)
     std::lock_guard lk(pools_mu);
@@ -3404,9 +3820,12 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
     tl = {p, pools_gen.load(std::memory_order_relaxed)};
     if (p->last_value < mem_rec_value) p->last_value = mem_rec_value;
     const uint64_t off = guest - p->lo;
+#ifdef __linux__
+    if (p->sparse_guest && !sparse_guest_bind(*p, guest, guest + size, written, false)) return {};
+#endif
     if (!mirror_on() || !mirror_upload || p->mstate == Pool::MIRROR_REFUSED) {
         if (mirror_on()) { auto& e = direct_by_pool[p->lo]; e.first++, e.second = mirror_upload ? (int)p->mstate : 9; direct_bytes_by_pool[p->lo] += size; }
-        return remember({p->buffer, off, size, 0});
+        return remember_pool(p, {p->buffer, off, size, 0});
     }
     // (a pool's mirror is made at its first binding, in this part's uploads: bound in guest memory until the next
     // submission, the GPU read it there while the game's threads wrote it for their next frames, and a pass that drew
@@ -3435,7 +3854,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
         if (written) p->direct_write_epoch = mirror_epoch;
         if (written && size <= (1u << 20))   // (EvilBoyce: GPU results written in place; small ones: the readbacks are)
             wb_pages_note(p->lo + off, p->lo + std::min(off + size, p->hi - p->lo), mem_rec_value);
-        return remember({p->buffer, off, size, 0});
+        return remember_pool(p, {p->buffer, off, size, 0});
     }
     if (p->synced_epoch != mirror_epoch || p->sync_seg > texture_segment()) mirror_sync(*p);
     if (written) {
@@ -3445,7 +3864,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
         if (wb_lazy_on() && p->shadow && texture_storage_overlaps(gpu, size))
             wb_pages_shared(*p, off, std::min(off + size, p->hi - p->lo));
     }
-    return remember({p->mirror, off, size, 0});
+    return remember_pool(p, {p->mirror, off, size, 0});
 }
 
 // ---- mirrors given back ----
@@ -3617,7 +4036,7 @@ int64_t st_imports_evicted = 0;
 uint64_t st_import_bytes_evicted = 0;
 constexpr uint64_t kImportIdle = 600;
 
-// ---- (relink, night 10/11) the game's freed address space given back to Windows. The game frees an address region without
+// ---- (relink, night 10/11) the game's freed address space given back to the host. The game frees an address region without
 // unmapping its pages, the host only discarded them (their content dropped, their commit kept) and whatever lay under an import
 // had to stay: the regions' commit stood at their whole span, 8 GB for the ~2.9 GB mapped at a time, and the process at 29 GB
 // after a few areas on a 16 GB PC (vmmap.ps1, hs491). Here, under pools_mu, where every import is made (the background thread's,
@@ -3627,7 +4046,6 @@ constexpr uint64_t kImportIdle = 600;
 int64_t st_released_calls = 0;
 uint64_t st_released_bytes = 0;
 void release_uncovered(uint64_t lo, uint64_t hi) {   // (pools_mu held)
-#ifdef _WIN32
     static const bool off = getenv("RX_VK_KEEP_FREED") || getenv("RX_VK_BG_IMPORT") ||
                             (getenv("RX_VK_PREFETCH_CHUNKS") && atoi(getenv("RX_VK_PREFETCH_CHUNKS")) > 0);
     if (off || !host->region_release_gaps || hi <= lo) return;
@@ -3635,13 +4053,32 @@ void release_uncovered(uint64_t lo, uint64_t hi) {   // (pools_mu held)
     auto note = [&](uint64_t a, uint64_t b) {
         if (a < hi && b > lo) held.push_back({std::max(a, lo), std::min(b, hi)});
     };
+    auto note_pool = [&](const Pool& p) {
+#ifdef __linux__
+        if (p.sparse_guest && p.sparse_align) {
+            const uint64_t first = std::max(lo, p.lo) > p.lo ? (std::max(lo, p.lo) - p.lo) / p.sparse_align : 0;
+            const uint64_t end = std::min(hi, p.hi) > p.lo ? std::min(hi, p.hi) - p.lo : 0;
+            const uint64_t last = end / p.sparse_align + (end % p.sparse_align != 0);
+            for (uint64_t block = first; block < last;) {
+                while (block < last && !sparse_guest::bound(p.sparse_bound, block)) block++;
+                const uint64_t begin = block;
+                while (block < last && sparse_guest::bound(p.sparse_bound, block)) block++;
+                if (block > begin)
+                    note(p.lo + begin * p.sparse_align,
+                         std::min(p.hi, p.lo + block * p.sparse_align));
+            }
+            return;
+        }
+#endif
+        note(p.lo, p.hi);
+    };
     for (auto it = imported.lower_bound(hi); it != imported.begin();) {   // (the pools starting below hi, the last ones first)
         --it;
         if (it->second.hi + (1ull << 30) < lo) break;   // (imports are at most 1 GB: none further down reaches lo)
-        note(it->second.lo, it->second.hi);
+        note_pool(it->second);
     }
     for (const auto& nh : retired_pools)
-        if (nh.mapped().memory) note(nh.mapped().lo, nh.mapped().hi);
+        if (nh.mapped().memory) note_pool(nh.mapped());
     for (const DeadImport& d : dead_imports) note(d.lo, d.lo + d.bytes);
     for (const auto& nh : evicted_pools) note(nh.mapped().lo, nh.mapped().hi);
     std::sort(held.begin(), held.end());
@@ -3655,12 +4092,9 @@ void release_uncovered(uint64_t lo, uint64_t hi) {   // (pools_mu held)
     static uint64_t logged_at;
     if (st_released_bytes >> 30 != logged_at) {   // (said at every GB)
         logged_at = st_released_bytes >> 30;
-        logf("vk: the game's freed memory given back to Windows: %llu MB in all, over %lld freed regions and imports",
+        logf("vk: the game's freed memory given back to the host: %llu MB in all, over %lld freed regions and imports",
              (unsigned long long)(st_released_bytes >> 20), (long long)st_released_calls);
     }
-#else
-    (void)lo, (void)hi;
-#endif
 }
 // (the game's thread only leaves the range: the replay holds pools_mu for much of a submission, and the game frees regions
 // by the thousand while it loads. Taken up at the next submission; a range handed out again meanwhile is no gap by then)
@@ -3668,6 +4102,11 @@ std::mutex released_mu;
 std::vector<std::pair<uint64_t, uint64_t>> released_queue;
 void memory_guest_release(uint64_t lo, uint64_t hi) {
     if (hi <= lo) return;
+#ifdef __linux__
+    // A release can remove memfd blocks while another thread allocates the same number elsewhere. The total st_blocks
+    // would then be unchanged, so make the next submission scan even when that cheap aggregate happens to match.
+    dmabuf_seen_blocks.store(-1, std::memory_order_relaxed);
+#endif
     std::lock_guard lk(released_mu);
     if (!released_queue.empty() && released_queue.back().second == lo) released_queue.back().second = hi;   // (the next one up)
     else if (!released_queue.empty() && released_queue.back().first == hi) released_queue.back().first = lo;   // (or down)
@@ -3682,7 +4121,46 @@ void released_drain() {   // (pools_mu held)
         take.assign(released_queue.begin(), released_queue.begin() + n);
         released_queue.erase(released_queue.begin(), released_queue.begin() + n);
     }
-    for (const auto& [lo, hi] : take) release_uncovered(lo, hi);
+    std::vector<std::pair<uint64_t, uint64_t>> gaps = take;
+#ifdef __linux__
+    // Unbind every affected buffer in one sparse submission. release_uncovered then sees the cleared bound bits and can
+    // let the host punch those pages out. An allocation can contain runs from earlier releases too, so add all its runs.
+    std::vector<SparseGuestRelease> plans;
+    for (auto& kv : imported) {
+        Pool& p = kv.second;
+        bool overlaps = false;
+        for (const auto& [lo, hi] : take)
+            if (p.lo < hi && p.hi > lo) {
+                overlaps = true;
+                break;
+            }
+        if (!overlaps) continue;
+        SparseGuestRelease plan;
+        sparse_guest_release_plan(p, take, plan);
+        if (!plan.allocations.empty()) plans.push_back(std::move(plan));
+    }
+    if (!plans.empty()) {
+        std::vector<VkSparseBufferMemoryBindInfo> buffers;
+        size_t extents = 0;
+        for (const SparseGuestRelease& plan : plans) {
+            buffers.push_back({plan.pool->buffer, (uint32_t)plan.binds.size(), plan.binds.data()});
+            extents += plan.binds.size();
+        }
+        const VkResult res = bind_sparse_buffers(buffers, true);
+        if (res == VK_SUCCESS) {
+            for (SparseGuestRelease& plan : plans) sparse_guest_release_finish(plan, gaps);
+        } else if (dmabuf_failures++ < 8) {
+            logf("vk: %zu sparse guest extents in %zu pools not released (VkResult %d)", extents, plans.size(), (int)res);
+        }
+    }
+#endif
+    std::sort(gaps.begin(), gaps.end());
+    std::vector<std::pair<uint64_t, uint64_t>> merged;
+    for (const auto& gap : gaps) {
+        if (!merged.empty() && gap.first <= merged.back().second) merged.back().second = std::max(merged.back().second, gap.second);
+        else merged.push_back(gap);
+    }
+    for (const auto& [lo, hi] : merged) release_uncovered(lo, hi);
 }
 
 void imports_give_back() {   // (pools_mu held)
@@ -3742,7 +4220,7 @@ void imports_give_back() {   // (pools_mu held)
                 Pool& p = it->second;
                 guest_pages_set(p.lo, p.hi, 0);
                 p.retired_value = mem_rec_value;   // (freed once this submission's recording is done on the GPU)
-                bytes += p.hi - p.lo;
+                bytes += pool_imported_bytes(p);
                 evicted_pools.push_back(imported.extract(it));
             }
             pools_gen++;
@@ -3785,7 +4263,7 @@ void imports_give_back() {   // (pools_mu held)
         Pool& p = it->second;
         guest_pages_set(p.lo, p.hi, 0);
         p.retired_value = mem_rec_value;   // (this submission's recording is being made: freed once it is done)
-        freed += p.hi - p.lo;
+        freed += pool_imported_bytes(p);
         n++;
         evicted_pools.push_back(imported.extract(it));
     }
@@ -3952,6 +4430,9 @@ void memory_begin_submission() {
     writebacks.clear();
     imports_give_back();
     released_drain();
+#ifdef __linux__
+    sparse_guest_refresh_all();
+#endif
     if (tex_capture_on()) publish_tex_spans(texture_frame_no());
     if (!mirror_on()) return;
     mirrors_trim();

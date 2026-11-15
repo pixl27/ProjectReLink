@@ -464,7 +464,7 @@ void a64_svc(Ctx *c, uint32_t imm) {
     case 0x2D:   /* UnmapPhysicalMemory(address, size): the pages read as zero if mapped again */
         {   /* (pages under a Vulkan import stay committed, zeroed: hos_mem.c FreeMemoryPages) */
             extern int rx_guest_imported(uint64_t lo, uint64_t hi);
-            if (rx_guest_imported(c->x[0], c->x[0] + c->x[1])) memset(GP(c->x[0]), 0, (size_t)c->x[1]);
+            if (rx_guest_imported(c->x[0], c->x[0] + c->x[1])) hos_zero_guest_pages(GP(c->x[0]), (size_t)c->x[1]);
             else VirtualFree(GP(c->x[0]), (SIZE_T)c->x[1], MEM_DECOMMIT);
         }
         c->x[0] = R_OK;

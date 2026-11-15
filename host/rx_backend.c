@@ -380,6 +380,11 @@ static void forward(const early_call *c) {
         break;
     }
 }
+/* These synchronous renderer calls may wait for replay work, GPU completion, or a renderer mutex held by replay.
+   That work runs no guest code, so it must not keep one of Horizon's virtual cores from the next guest thread. */
+static int renderer_wait_away(void) { return hos_vcore_away(); }
+static void renderer_wait_back(int away) { if (away) hos_vcore_back(); }
+
 void rx_nvn_register_texture(int id, const nvn_tex *t, const nvn_view *v) {
     if (!started && t) {
         early_call c = {0, id};
@@ -387,7 +392,9 @@ void rx_nvn_register_texture(int id, const nvn_tex *t, const nvn_view *v) {
         if (v) c.v = *v, c.has_view = 1;
         if (keep_early(&c)) return;
     }
+    const int away = renderer_wait_away();
     vk ? vk->nvn_register_texture(id, t, v) : wgr_nvn_register_texture(id, t, v);
+    renderer_wait_back(away);
 }
 void rx_nvn_register_sampler(int id, const nvn_samp_par *p) {
     if (!started && p) {
@@ -395,7 +402,9 @@ void rx_nvn_register_sampler(int id, const nvn_samp_par *p) {
         c.p = *p;
         if (keep_early(&c)) return;
     }
+    const int away = renderer_wait_away();
     vk ? vk->nvn_register_sampler(id, p) : wgr_nvn_register_sampler(id, p);
+    renderer_wait_back(away);
 }
 void rx_nvn_set_texture_pool_size(int n) {
     if (!started) {
@@ -410,7 +419,9 @@ void rx_nvn_texture_released(const nvn_tex *t) {
         c.t = *t;
         if (keep_early(&c)) return;
     }
+    const int away = renderer_wait_away();
     vk ? vk->nvn_texture_released(t) : wgr_nvn_texture_released(t);
+    renderer_wait_back(away);
 }
 void rx_nvn_texture_created(const nvn_tex *t) {
     if (!started && t) {
@@ -423,10 +434,16 @@ void rx_nvn_texture_created(const nvn_tex *t) {
 void rx_nvn_program_set(const nvn_prog *p) {
     if (vk && program_set_fn) program_set_fn(p);
 }
-void rx_nvn_program_released(const nvn_prog *p) { vk ? vk->nvn_program_released(p) : wgr_nvn_program_released(p); }
+void rx_nvn_program_released(const nvn_prog *p) {
+    const int away = renderer_wait_away();
+    vk ? vk->nvn_program_released(p) : wgr_nvn_program_released(p);
+    renderer_wait_back(away);
+}
 void rx_nvn_read_texels(const nvn_tex *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, uint8_t *dst,
                         size_t row, size_t img) {
+    const int away = renderer_wait_away();
     vk ? vk->nvn_read_texels(t, level, layer0, r, dst, row, img) : wgr_nvn_read_texels(t, level, layer0, r, dst, row, img);
+    renderer_wait_back(away);
 }
 void rx_nvn_write_texels(const nvn_tex *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, const uint8_t *src,
                          size_t row, size_t img) {
@@ -448,8 +465,10 @@ void rx_nvn_write_texels(const nvn_tex *t, unsigned level, unsigned layer0, cons
             }
         }
     }
+    const int away = renderer_wait_away();
     vk ? vk->nvn_write_texels(t, level, layer0, r, src, row, img)
        : wgr_nvn_write_texels(t, level, layer0, r, src, row, img);
+    renderer_wait_back(away);
 }
 void rx_nvn_invalidate(uint64_t gpu, uint64_t size) {
     /* The callback can wait for replay or GPU write-back: let another guest thread use this core meanwhile. */

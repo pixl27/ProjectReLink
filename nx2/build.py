@@ -832,6 +832,7 @@ def main():
                                    os.path.join(GPU, "compat"))
         vdeps = tree_headers(vk, os.path.join(GPU, "render"), os.path.join(GPU, "compat"),
                              os.path.join(GPU, "third_party", "suyu", "video_core", "textures"))
+        sparse_file_deps = open(os.path.join(HOST, "sparse_file_ranges.h"), "rb").read()
         # (relink) RX_VK_PGO=gen: the back end's own files (not Eden's recompiler nor sirit) count their branches, and host/pgo_rt.c
         # in the DLL writes them (RX_VK_PGO_FILE=<path>, <path>.reset and <path>.dump as HOS_PGO's); RX_VK_PGO=<merged .profdata>:
         # built with that profile. The replay on the game's render thread is the frame's limit in heavy places (Kokiri village)
@@ -850,7 +851,8 @@ def main():
                             vflags + ([] if lib else vk_pgo_flags) + ([shader_stamp] if os.path.basename(src) == "vk_shader.cpp" else []) +
                             ([stamp_def] if os.path.basename(src) == "vk_menu.cpp" else []) +
                             (ngx_flags if os.path.basename(src) == "vk_dlss.cpp" else []),
-                            vk_lib_deps if lib else vdeps + (logo_text if os.path.basename(src) == "vk_menu.cpp" else b"")))
+                            vk_lib_deps if lib else vdeps + (logo_text if os.path.basename(src) == "vk_menu.cpp" else b"") +
+                            (sparse_file_deps if os.path.basename(src) == "vk_texture.cpp" else b"")))
         if vk_pgo == "gen":   # (the counters' writer, the DLL's own copy: its sections are the DLL's)
             vk_jobs.append((cc, os.path.join(HOST, "pgo_rt.c"), os.path.join(obj_dir, "vk_pgo_rt.o"),
                             target() + ["-O2", "-g0", "-Wno-everything", '-DPGO_ENV="RX_VK_PGO_FILE"'], b""))
