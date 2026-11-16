@@ -217,6 +217,8 @@ static volatile LONG pulse_x, pulse_y, nudge_x, nudge_y;
 static volatile LONG64 nudge_until;
 static int pulse_unanswered;
 static long long pulses;
+/* (stick_instead's, below: the stick has the mouse; because a pulse went unanswered; a motion goes on with the trial before) */
+static int fallback, fb_quiet, trial_carried;
 
 static int env_percent(const char *name, int otherwise) {
     const char *e = getenv(name);
@@ -265,7 +267,8 @@ static int pulse_due(int64_t now, int sx, int sy, int known) {
     if (!on || !(sx || sy) || now < pulse_until) return 0;
     const int64_t every = pulse_unanswered >= 3 ? PULSE_SLOW_NS : PULSE_EVERY_NS;
     if (now - pulse_last < every) return 0;
-    if (known ? (now - seen_changed < QUIET_NS || now - moving_since < QUIET_NS) : !started) return 0;
+    /* (a motion that goes on with an unanswered trial has its pulse at once: a flick shorter than QUIET_NS had none, issue 13) */
+    if (known ? (now - seen_changed < QUIET_NS || (now - moving_since < QUIET_NS && !trial_carried)) : !started) return 0;
     /* (the pulse before this one: answered if the game moved the angles since. With no controller there is no telling) */
     pulse_unanswered = !known || seen_changed > pulse_last ? 0 : pulse_unanswered + 1;
     pulse_last = now;
@@ -293,7 +296,7 @@ int hos_mouse_stick_pulse(int32_t rx, int32_t ry, int32_t *px, int32_t *py) {
     if (!InterlockedExchange(&busy, 1)) {
         const int known = controllers(now, sx || sy);
         if (known) answer_seen(now);
-        pulse_due(now, sx, sy, known);
+        if (!(fallback && fb_quiet)) pulse_due(now, sx, sy, known);   /* (aiming with the stick: no pulse, issue 13) */
         busy = 0;
     }
     return pulse_out(now, px, py);
@@ -349,11 +352,28 @@ static void turn(size_t i, int64_t now, float dpitch, float dyaw) {
    rest); a fallback again within 3 s of coming back waits for a rest (no to and fro in a house). */
 static const int64_t UNANSWERED_NS = 130000000, TRIAL_MAX_NS = 700000000, LIVE_BACK_NS = 1000000000, AGAIN_NS = 3000000000LL;
 enum { REVERTS = 4 };
+/* (relink, issues 13 and 2, 0.7.8) Three things in the trial above made aiming "sometimes work, sometimes not at all,
+   sometimes after a hangup", and made the mouse lock up when swimming, mounting Epona, readying an aimed item or going
+   through a door unless it stopped first:
+     - a motion after a rest started the trial anew, so flicks shorter than the trial (0.2 s with a pulse, 0.7 s without,
+       and after three unanswered pulses one comes only every 2 s) never reached the stick. Now a motion after a rest goes
+       on with the trial before it while that one was not answered (for up to AGAIN_NS), and its pulse need not wait for
+       QUIET_NS of motion; the trial's limit counts the time in motion, not the time since it began;
+     - the motion written during a trial that failed was lost (the hangup). When the game did not use the angles (a pulse
+       unanswered) or put them back, that motion now goes to the stick; capped at GIVE_BACK_MAX counts an axis;
+     - a trial was judged only from the start of a motion: once the game had followed one, a change of camera in the middle
+       of it (the water, the horse, an aim, a door) was never noticed until the mouse rested. Now, while the mouse moves,
+       LOST_NS without the game following starts a new trial there and then.
+   Within AGAIN_NS of coming back from the stick, two reads that put the angles back are enough (four before), and while
+   the stick has the mouse because a pulse went unanswered (aiming), no more pulses: the aim jerked by them. */
+static const int64_t LOST_NS = 200000000;
+enum { GIVE_BACK_MAX = 400 };
 static float wrote_y, wrote_p, before_y, before_p, fb_y, fb_p;
 static uint64_t wrote_at, native_ctl;
-static int64_t wrote_ns, last_followed, motion_t0, last_motion, native_t0, fb_t0, native_back;
-static int fallback, fb_moved, fb_sticky, reverts;
-static long long fallbacks;
+static int64_t wrote_ns, last_followed, motion_t0, last_motion, native_t0, fb_t0, native_back, trial_ns;
+static int fb_moved, fb_sticky, reverts;
+static int32_t trial_dx, trial_dy;   /* the counts written natively since the trial began, not known to be taken */
+static long long fallbacks, retrials;
 
 static int fallback_on(void) {
     static int on = -1;
@@ -367,7 +387,7 @@ static int stick_instead(int64_t now, int moving) {
     if (!fallback && wrote_at == ctl[0] && now - wrote_ns < 100000000 && (cy != wrote_y || cp != wrote_p)) {
         const float d_wrote = fabsf(wrap180(cy - wrote_y)) + fabsf(cp - wrote_p);
         const float d_before = fabsf(wrap180(cy - before_y)) + fabsf(cp - before_p);
-        if (d_wrote < d_before && d_wrote < 3.0f) last_followed = now;
+        if (d_wrote < d_before && d_wrote < 3.0f) last_followed = now, trial_dx = trial_dy = 0;   /* (taken: nothing to give) */
         else reverts++;
         wrote_at = 0;   /* (one verdict a write) */
     }
@@ -375,23 +395,41 @@ static int stick_instead(int64_t now, int moving) {
     int new_motion = 0;
     if (moving) {
         if (!motion_t0 || now - last_motion > REST_NS) motion_t0 = now, new_motion = 1;
+        else trial_ns += now - last_motion;   /* (the trial's time in motion) */
         last_motion = now;
     }
     if (!fallback_on()) return 0;
     if (fallback) {
         if (!fb_moved || !(new_motion || (!fb_sticky && now - fb_t0 > LIVE_BACK_NS))) return 1;
-        fallback = 0, native_t0 = 0, native_back = now;   /* (the game moves its camera again: native look) */
+        fallback = 0, fb_quiet = 0, native_t0 = 0, native_back = now;   /* (the game moves its camera again: native look) */
     }
     if (!moving) return 0;
-    if (!native_t0 || new_motion || native_ctl != ctl[0]) native_t0 = now, native_ctl = ctl[0], reverts = 0;
+    /* (a motion after a rest goes on with the trial before it while that one was not answered; a motion the game followed
+       and stopped following for LOST_NS starts a new one where it is) */
+    const int carry = new_motion && native_t0 && last_followed < native_t0 && now - native_t0 <= AGAIN_NS;
+    const int lost = !new_motion && native_t0 && last_followed >= native_t0 && now - last_followed > LOST_NS;
+    if (!native_t0 || native_ctl != ctl[0] || (new_motion && !carry) || lost) {
+        native_t0 = now, native_ctl = ctl[0], reverts = 0, trial_ns = 0, trial_carried = 0, trial_dx = trial_dy = 0;
+        const long long r = lost ? ++retrials : 0;
+        if (r && !(r & (r - 1)))   /* (at each power of two) */
+            hos_log("mouse native: the camera stopped following in the middle of a motion: tried again (%lld so far)", retrials);
+    } else if (carry)
+        trial_carried = 1;
     if (last_followed >= native_t0) return 0;
     const int unanswered = pulse_last > native_t0 && now - pulse_last > UNANSWERED_NS;
-    if (unanswered || reverts >= REVERTS || now - native_t0 > TRIAL_MAX_NS) {
+    const int reverts_max = native_back && now - native_back < AGAIN_NS ? 2 : REVERTS;   /* (just back from the stick) */
+    if (unanswered || reverts >= reverts_max || trial_ns > TRIAL_MAX_NS) {
         fallback = 1, fb_moved = 0, fb_y = cy, fb_p = cp, fb_t0 = now;
         fb_sticky = native_back && now - native_back < AGAIN_NS;
+        fb_quiet = unanswered;
+        /* (the motion the game did not use or put back goes to the stick; "not followed" alone may have been used) */
+        if ((unanswered || reverts >= reverts_max) && (trial_dx || trial_dy))
+            hos_mouse_give_back(trial_dx > GIVE_BACK_MAX ? GIVE_BACK_MAX : trial_dx < -GIVE_BACK_MAX ? -GIVE_BACK_MAX : trial_dx,
+                                trial_dy > GIVE_BACK_MAX ? GIVE_BACK_MAX : trial_dy < -GIVE_BACK_MAX ? -GIVE_BACK_MAX : trial_dy);
+        trial_dx = trial_dy = 0, trial_carried = 0;
         if (!(++fallbacks & (fallbacks - 1)))
             hos_log("mouse native: the game does not take the camera's angles (%s): the mouse as the stick until it does "
-                    "(%lld so far)", unanswered ? "a pulse unanswered: aiming?" : reverts >= REVERTS ? "put back: a fixed camera?"
+                    "(%lld so far)", unanswered ? "a pulse unanswered: aiming?" : reverts >= reverts_max ? "put back: a fixed camera?"
                     : "not followed", fallbacks);
     }
     return fallback;
@@ -438,6 +476,7 @@ int hos_mouse_native(void) {
             if (!memcmp(GP(ctl[i]), limits_sig, sizeof limits_sig) && angles(ctl[i])) turn(i, now, dpitch, dyaw);
         seen_yaw = getf(ctl[0] + YAW_AT), seen_pitch = getf(ctl[0] + PITCH_AT);   /* (ours: not the game's answer) */
         wrote_y = seen_yaw, wrote_p = seen_pitch, wrote_at = ctl[0], wrote_ns = now;
+        if (last_followed < native_t0) trial_dx += dx, trial_dy += dy;   /* (not known to be taken: the stick's if the trial fails) */
         InterlockedExchange(&nudge_x, sx);
         InterlockedExchange(&nudge_y, sy);
         InterlockedExchange64(&nudge_until, now + 40000000);

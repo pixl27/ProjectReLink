@@ -28,6 +28,8 @@ static class Texts
     public const string RepoPage = "https://github.com/" + Repo;
     public const string ReleasesPage = RepoPage + "/releases/latest";
     public const string HelpPage = RepoPage + "#readme";
+    /// The project's Discord server (a permanent invite): opened in the browser when the player asks, never fetched by the launcher
+    public const string DiscordInvite = "https://discord.gg/RFNUtCQk8j";
 
     /// The game's languages: the code language.txt takes, and the language's own name
     public static readonly (string Code, string Name)[] GameLanguages =

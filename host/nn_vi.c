@@ -102,32 +102,58 @@ static int64_t next_frame_at, window_start, frames_in_window;
 /* (relink) The frame rate cap: the game's 60, or unlocked (HOS_FPS_UNLOCKED=1):
    up to the display's refresh, game time following the clock (realtime_step below, whatever the Game speed row says: per frame
    at 100 fps the game would run 1.67 times too fast). HOS_FPS_MAX=<fps>: that cap instead of the display's (60 to 240). */
+/* (relink, issue 16) On Windows, the refresh of the display the game's window is on, looked at again when the window goes to
+   another display. It was the primary display's, read once: the game on a 144 Hz screen beside a 60 Hz primary one stayed
+   at 60. Elsewhere, the desktop's refresh as SDL gives it, read once as before */
 static int display_hz(void) {
     static int hz;
-    if (!hz) {
 #ifdef _WIN32
-        DEVMODEA dm;
-        memset(&dm, 0, sizeof dm);
-        dm.dmSize = sizeof dm;
-        hz = EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1 ? (int)dm.dmDisplayFrequency : 60;
+    static int calls;
+    static HWND window;
+    static HMONITOR monitor;
+    if (hz && ++calls % 120) return hz;
+    if (!window) window = FindWindowA("ProjectReLink", NULL);   /* (host/display.c's window class) */
+    HMONITOR m = window ? MonitorFromWindow(window, MONITOR_DEFAULTTOPRIMARY) : NULL;
+    if (hz && m == monitor) return hz;
+    monitor = m;
+    MONITORINFOEXA mi;
+    memset(&mi, 0, sizeof mi);
+    mi.cbSize = sizeof mi;
+    const char *device = m && GetMonitorInfoA(m, (MONITORINFO *)&mi) ? mi.szDevice : NULL;   /* (NULL: the primary display) */
+    DEVMODEA dm;
+    memset(&dm, 0, sizeof dm);
+    dm.dmSize = sizeof dm;
+    const int reported = EnumDisplaySettingsA(device, ENUM_CURRENT_SETTINGS, &dm) ? (int)dm.dmDisplayFrequency : 0;
+    int now = reported > 1 ? reported : 60;
+    now = now < 60 ? 60 : now > 240 ? 240 : now;
+    if (now != hz) hos_log("vi: the game's display (%s) runs at %d Hz", device ? device : "primary, the window not found yet", reported);
+    hz = now;
 #else
+    if (!hz) {
         hz = hos_sdl_desktop_hz();
         if (hz <= 1) hz = 60;
-#endif
         hz = hz < 60 ? 60 : hz > 240 ? 240 : hz;
     }
+#endif
     return hz;
 }
 static int fps_max(void) {
-    int rx_option(int id, int otherwise);
     static int env = -1;
     if (env < 0) env = getenv("HOS_FPS_MAX") ? atoi(getenv("HOS_FPS_MAX")) : 0;
-    static int unlocked = -1;   /* (relink: HOS_FPS_UNLOCKED=1, or the menu's row) */
+    static int unlocked = -1;   /* (relink: HOS_FPS_UNLOCKED=1, which the launcher passes for Unlocked; no in-game row) */
     if (unlocked < 0) unlocked = getenv("HOS_FPS_UNLOCKED") && atoi(getenv("HOS_FPS_UNLOCKED")) != 0;
-    (void)rx_option;
-    if (!unlocked && env <= 60) return 60;
-    const int cap = env > 60 ? env : display_hz();
-    return cap < 60 ? 60 : cap > 240 ? 240 : cap;
+    int cap = 60;
+    if (unlocked || env > 60) {
+        cap = env > 60 ? env : display_hz();
+        cap = cap < 60 ? 60 : cap > 240 ? 240 : cap;
+    }
+    static int told;   /* (the cap in the log, at the start and when it changes: a report says which it was) */
+    if (cap != told) {
+        told = cap;
+        hos_log("vi: frame rate cap %d fps (unlocked %s, HOS_FPS_MAX %d%s)", cap, unlocked ? "on" : "off", env,
+                unlocked && env <= 60 ? ", the display's refresh" : "");
+    }
+    return cap;
 }
 static int64_t frame_period(void) {   /* (the display interval the frames are paced to) */
     const int cap = fps_max();

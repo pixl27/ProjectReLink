@@ -279,12 +279,39 @@ public partial class MainWindow
             MessageBox.Show(this, L("Ce dossier exefs ne contient pas de fichier nommé main.", "That exefs folder has no file named main."), Texts.Name);
             return;
         }
+        if (RomfsProblem(r) is { } why)
+        {
+            MessageBox.Show(this, why, Texts.Name);
+            return;
+        }
         romfs = r;
         exefs = x;
         chosenNup = null;
         foldersNote = L($"Dossiers utilisés : {r} et {x}", $"Using the folders {r} and {x}");
         FillDumps();
         Refresh();
+    }
+
+    const string RomfsTable = "ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs";   // (the supported version's)
+
+    /// (issue 26) Why a romfs folder is not the supported game's RomFS, or null. One taken from another PC port's folder (a few
+    /// packed .bin files, no subfolders) was accepted, built for 40 minutes, and the game closed in its first second
+    string? RomfsProblem(string r)
+    {
+        var res = Path.Combine(r, "System", "Resource");
+        if (File.Exists(Path.Combine(res, RomfsTable))) return null;
+        var other = Directory.Exists(res) ? Directory.GetFiles(res, "ResourceSizeTable*").Select(Path.GetFileName).FirstOrDefault() : null;
+        if (other != null)
+            return L($"Ce dossier romfs vient d'une autre version du jeu ({other}). ReLink a besoin de la version dont le romfs contient " +
+                     $"System\\Resource\\{RomfsTable} : faites une copie (dump) du jeu avec sa mise à jour, et prenez le romfs et l'exefs de cette même copie.",
+                     $"This romfs folder is from another version of the game ({other}). ReLink needs the version whose romfs has " +
+                     $"System\\Resource\\{RomfsTable}: dump the game with its update applied, and use the romfs and exefs of that same dump.");
+        return L("Ce dossier romfs n'est pas le RomFS du jeu : il n'a pas de fichier System\\Resource\\ResourceSizeTable. Les dossiers pris " +
+                 "dans un autre portage PC ou un autre outil gardent le jeu dans leur propre format et ne marchent pas ici. Utilisez votre " +
+                 "propre copie du jeu : le fichier .nup, ou les dossiers romfs et exefs extraits de lui.",
+                 "This romfs folder is not the game's own RomFS: it has no System\\Resource\\ResourceSizeTable file. Folders taken from " +
+                 "another PC port or tool hold the game in their own format and do not work here. Use your own dump of the game: the " +
+                 ".nup file, or the romfs and exefs folders dumped from it.");
     }
 
     static string? PickFolder(string title)

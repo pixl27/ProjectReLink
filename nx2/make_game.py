@@ -285,6 +285,32 @@ def check_supported_build(exefs):
         fail("This is build %s. ReLink supports build %s." % (bid[:8], BUILD_ID))
 
 
+ROMFS_TABLE = "ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs"   # (the supported version's, in System/Resource)
+
+
+def romfs_problem(romfs):
+    """(issue 26) Why a romfs folder chosen by hand is not the supported game's RomFS, or None. A romfs taken from another PC
+    port's folder (a few packed .bin files, no subfolders) was accepted, built for 40 minutes, and the game died in its first
+    second: its own allocator returned null. The game's RomFS has System/Resource/<the table above> and hundreds of folders"""
+    res = os.path.join(romfs, "System", "Resource")
+    if os.path.isfile(os.path.join(res, ROMFS_TABLE)):
+        return None
+    others = sorted(f for f in os.listdir(res) if f.startswith("ResourceSizeTable")) if os.path.isdir(res) else []
+    if others:
+        return ("The romfs folder %s is from another version of the game (%s). ReLink needs the version whose romfs has "
+                "System\\Resource\\%s: dump the game with its update applied, and use that romfs with the exefs from the same "
+                "dump." % (romfs, others[0], ROMFS_TABLE))
+    try:
+        top = os.listdir(romfs)
+    except OSError:
+        top = []
+    folders = sum(os.path.isdir(os.path.join(romfs, t)) for t in top)
+    return ("The romfs folder %s is not the game's own RomFS: it has no System\\Resource\\%s (at its top: %d files, %d folders; "
+            "the game's has hundreds of folders). Folders taken from another PC port or tool hold the game in their own format "
+            "and do not work here. Use your own dump of the game: the .nup file, or the romfs and exefs folders dumped from it."
+            % (romfs, ROMFS_TABLE, len(top) - folders, folders))
+
+
 def check_cache_paths(out, paths):
     """Resolve generated paths and reject symbolic links/reparse points before replacement."""
     root = os.path.realpath(out)
@@ -327,6 +353,10 @@ def check(a, work):
         shutil.rmtree(probe, ignore_errors=True)
     else:
         bid = build_id(os.path.join(a.exefs, "main"))
+        why = romfs_problem(a.romfs) if a.romfs else None
+        if why:
+            say("check", "bad", why)
+            return
     if bid.startswith(BUILD_ID):
         say("check", "ok", "This is the version ReLink supports (build %s)." % bid[:8])
     else:
@@ -778,6 +808,20 @@ def ship_state_list(out):
     print("the shipped pipeline state list: %d pipelines" % ((os.path.getsize(src) - 12) // 528), flush=True)
 
 
+def ship_compute_list(out):
+    """The compute programs a play of the game used on the development PC (work/computes.bin, a copy of a played game folder's
+    relink_computes.bin: 8 bytes a program, a hash of its code; no game code), as the folder's relink_computes_shipped.bin: a
+    lean start builds their pipelines before the title (gpu/vk/vk_draw.cpp precompile_run), from the player's own shaders,
+    instead of at their first dispatch in play. Good for any build: optional"""
+    src = os.path.join(ROOT, "work", "computes.bin")
+    dst = os.path.join(out, "relink_computes_shipped.bin")
+    if not os.path.isfile(src):
+        return
+    if not (os.path.isfile(dst) and filecmp.cmp(src, dst, shallow=False)):
+        shutil.copyfile(src, dst)
+    print("the shipped compute list: %d programs" % (os.path.getsize(src) // 8), flush=True)
+
+
 def folder_language(out):
     """the language a game folder was built in: the code line of its language.txt"""
     try:
@@ -1090,6 +1134,9 @@ def main(a=None):
                 f.write(stamp + chr(10))
         check_modules(exefs)
     else:
+        why = romfs_problem(a.romfs)   # (issue 26: said before anything is read or built)
+        if why:
+            fail(why)
         shutil.copytree(a.exefs, exefs)   # (unpacked in place: the user's copy stays as it is)
         run(PY + ["nx2/unpack.py", exefs])
         link_or_copy(a.romfs, romfs)
@@ -1300,6 +1347,15 @@ def main(a=None):
         print("the Travel places' data was not made: they arrive with the plain event and take no pictures", flush=True)
     seed_pipelines(out)
     ship_state_list(out)
+    ship_compute_list(out)
+    # (relink) the item wheel's icons, names and sounds (gpu/vk/vk_wheel.cpp, host/oot_wheel.c, host/nn_audio.c): the game's own,
+    # from the RomFS, at every build (nx2/wheel_assets.py). Without them the wheel shows the items' names in English, silently
+    wheel = os.path.join(out, "wheel")
+    for script, opt, name, without in (("wheel_assets.py", "--icons", "icons.bin", "it shows the items' names"),
+                                       ("wheel_names.py", "--out", "names.bin", "it names the items in English"),
+                                       ("wheel_sounds.py", "--out", "sounds.bin", "it is silent")):
+        if run(PY + [os.path.join(HERE, script), "--romfs", romfs, opt, os.path.join(wheel, name)], check=False, output=sys.stderr):
+            print("the item wheel's %s was not made: %s" % (name, without), flush=True)
     language = os.path.join(out, "language.txt")   # (the same text as host/nn_applet.c writes)
     with open(language, "w", encoding="utf-8", newline="\n") as f:
         f.write("# The game's language. Change the line below to one of the codes listed here, save, and start the game again.\n\n%s\n\n" % a.language)

@@ -35,6 +35,29 @@ static void put64(uint64_t a, uint64_t v) { memcpy(GP(a), &v, 8); HOS_WRITTEN(GP
 static void put32(uint64_t a, uint32_t v) { memcpy(GP(a), &v, 4); HOS_WRITTEN(GP(a), 4); }
 static inline uint64_t ror64(uint64_t v, unsigned n) { n &= 63; return n ? (v >> n) | (v << (64 - n)) : v; }
 
+/* (relink, 15/11) The virtual cores' polls. The lifted f_801102e0 polls at every backward branch (nx2/poll.py): a thread
+   that a better waiter asked for its virtual core (hos_thread.c, vc_kick) gives it up there. This loop is one block's
+   sequences (110 KB written a call on average, ~155 us natively: hs3004), and without the polls a waiter asked for the core
+   waited for the whole call. BACK(cond) is one of those branches here: when it is taken, the lifted code's check of c->poll;
+   POLL() alone, a backward branch always taken (each copy loop's way back to its head among them). Before the core is given
+   up, the output written so far is marked: the lifted code marks each store as it goes, this loop at its end otherwise, and
+   the thread may now wait for a core in between */
+static __attribute__((noinline, cold)) void give_core(Ctx *c, uint64_t op0, uint64_t whi) {
+    if (whi > op0) HOS_WRITTEN(GP(op0), (size_t)(whi - op0));
+#if defined(A64_POLL_CTX)
+    a64_poll(c);
+#else
+    __atomic_store_n(&c->poll, 0, __ATOMIC_RELAXED);
+    a64_poll_cur();
+#endif
+}
+#if defined(A64_POLLING)
+#define POLL() ((void)(__builtin_expect(__atomic_load_n(&c->poll, __ATOMIC_RELAXED) != 0, 0) ? (give_core(c, op0, whi), 0) : 0))
+#else
+#define POLL() ((void)0)
+#endif
+#define BACK(cond) ((cond) && (POLL(), 1))
+
 /* ZSTD_execSequenceEnd, the lifted function, as the loop calls it (0x80110730): its seq_t on the guest stack */
 static uint64_t sequence_end(Ctx *c, uint64_t op, uint64_t oend, uint64_t ll, uint64_t ml, uint64_t off, uint64_t pLit,
                              uint64_t litEnd, uint64_t prefixStart, uint64_t virtualStart, uint64_t dictEnd) {
@@ -128,10 +151,11 @@ L80110410:
     goto L8011045c;
 L80110418:
     if (!((x26 >> 63) & 1)) goto L801107dc;
-    if (x11 == 0) goto L8011039c;
+    if (BACK(x11 == 0)) goto L8011039c;
     if (x27 > x11) x27 = x11;
     x11 -= x27;
     x9 -= x27 << 3;
+    POLL();
     goto L80110394;
 L80110434:
     if (!((x26 >> 63) & 1)) goto L801104a0;
@@ -158,7 +182,7 @@ L8011045c:
     x26 = x9 - 65;
     x27 = x9 >> 3;
     cflag = !cflag ? (x11 >= 8) : 0;
-    if (!cflag) goto L80110434;
+    if (BACK(!cflag)) goto L80110434;
     x11 -= x27;
     x9 &= 7;
 L80110498:
@@ -217,6 +241,7 @@ L801104a0:
         ST64(x4, v);
         x4 += 8;
         if (!(old > 8)) break;
+        POLL();
     }
     x4 = x17 - x22;
     x3 = x27;
@@ -248,11 +273,13 @@ L80110580:
         const uint64_t old = x21;
         x21 -= 8;
         if (!(old > 8)) break;
+        POLL();
     }
 L8011059c:
     ST64(x17, v);
-L801105a0:
+L801105a0:   /* (the lifted code polls on the branch to 0x80110370 and on the backward ones to here: this one poll stands for both) */
     x4 = oMatchEnd;
+    POLL();
     goto L80110370;
 L801105a8:
     if (x18 <= x17) goto L801105cc;
@@ -267,6 +294,7 @@ L801105a8:
         ST64(x17, x28);
         x17 += 8;
         if (!(old > 8)) break;
+        POLL();
     }
     x17 = x18;
 L801105cc:
@@ -278,7 +306,7 @@ L801105cc:
         x26 -= 1;
         ST8(x17, x27);
         x17 += 1;
-    } while (x26 != 0);
+    } while (BACK(x26 != 0));
     goto L801105a0;
 L801105e8:   /* the match starts in the dictionary (before prefixStart) */
     x19 = dictEnd;
@@ -300,7 +328,7 @@ L80110614:   /* memmove(x17, x4, x28), then on at `back` */
         x28 -= 1;
         ST8(x27, x26);
         x27 += 1;
-    } while (x28 != 0);
+    } while (BACK(x28 != 0));
     goto back_to;
 L8011063c:
     x20 = x28 & 7;
@@ -313,7 +341,7 @@ L8011063c:
         ST8(x27, x26);
         x27 += 1;
         x26 >>= 8;
-    } while (x20 != 0);
+    } while (BACK(x20 != 0));
 L80110660:
     do {
         x26 = ld64(x4);
@@ -321,7 +349,7 @@ L80110660:
         x28 -= 8;
         ST64(x27, x26);
         x27 += 8;
-    } while (x28 != 0);
+    } while (BACK(x28 != 0));
     goto back_to;
 L80110674:
     x4 += x28;
@@ -330,7 +358,7 @@ L80110674:
         x26 = ld8(x4);
         x28 -= 1;
         ST8(x17 + x28, x26);
-    } while (x28 != 0);
+    } while (BACK(x28 != 0));
 back_to:
     if (back == 0) goto L801105a0;
     goto L8011069c;
@@ -338,14 +366,14 @@ L8011068c:   /* the match runs from the dictionary into the prefix */
     x28 = x19 - x4;
     x19 = x19 - x4;
     back = 1;
-    if (x28 != 0) goto L80110614;
+    if (BACK(x28 != 0)) goto L80110614;
 L8011069c:
     x17 += x19;
     x21 -= x19;
     {
         const int hs = x18 >= x17;
         x4 = x0;
-        if (hs && x21 >= 3) goto L80110568;
+        if (BACK(hs && x21 >= 3)) goto L80110568;
     }
     if (x21 == 0) goto L801105a0;
     do {
@@ -354,7 +382,7 @@ L8011069c:
         x21 -= 1;
         ST8(x17, x26);
         x17 += 1;
-    } while (x21 != 0);
+    } while (BACK(x21 != 0));
     goto L801105a0;
 L801106cc:   /* an offset under 8: the match overlaps what it writes */
     {
@@ -375,7 +403,8 @@ L801106cc:   /* an offset under 8: the match overlaps what it writes */
         x28 = ld32(x4 + x28);
         x4 = x4 + (x27 >> 60);
         ST32(x17 - 4, x28);
-        if (ls) goto L80110580;
+        if (BACK(ls)) goto L80110580;
+        POLL();
         goto L801105a8;
     }
 L80110720:   /* near oend, or past what the literals hold: ZSTD_execSequenceEnd */

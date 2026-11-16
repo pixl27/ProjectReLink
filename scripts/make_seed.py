@@ -15,7 +15,10 @@ Writes <out>/relink-seed.txt and three parts, each a deterministic zip named by 
                                when it is there,
                                pipeline_states.bin: the pipelines a play of the game asked for (a game folder's
                                relink_pipeline_states.bin: hashes, formats and draw state), which a player's first
-                               start builds before the title instead of at each place's first visit
+                               start builds before the title instead of at each place's first visit; and
+                               computes.bin: the compute programs that play used (the same game folder's
+                               relink_computes.bin: 8 bytes a program, a hash of its code), whose pipelines a lean
+                               start builds before the title instead of at their first dispatch
 
 Upload the three zips and the list to the builder-parts release and set the repository variable SEED_LIST to the list's
 name there: the Windows workflow then starts from it instead of the latest release's list (docs/releasing.md). No game data
@@ -33,6 +36,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def setup_parts():
     spec = importlib.util.spec_from_file_location("make_setup_parts", os.path.join(HERE, "make_setup_parts.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def release_parts():
+    spec = importlib.util.spec_from_file_location("release_parts", os.path.join(HERE, "release_parts.py"))
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m
@@ -80,6 +90,7 @@ def main():
     for f in ("hot_funcs.txt", "relink_pieces.prof"):
         if not os.path.isfile(os.path.join(a.work, f)):
             sys.exit("%s: no %s" % (a.work, f))
+    print("the profile's first-start lists: %s" % release_parts().start_lists(a.work), flush=True)   # (exits on a bad computes.bin)
     m = setup_parts()
     base = a.base.rstrip("/")
     os.makedirs(a.out, exist_ok=True)

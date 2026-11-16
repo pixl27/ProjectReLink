@@ -270,6 +270,25 @@
       </Setter>
     </Style>
 
+    <!-- What a link leads to, said above it: the same stone and gold edge as the language list, no shadow -->
+    <Style x:Key="Tip" TargetType="ToolTip">
+      <Setter Property="Foreground" Value="{StaticResource Bone}"/>
+      <Setter Property="FontFamily" Value="{StaticResource Text}"/>
+      <Setter Property="FontSize" Value="13.5"/>
+      <Setter Property="HasDropShadow" Value="False"/>
+      <Setter Property="Placement" Value="Top"/>
+      <Setter Property="VerticalOffset" Value="-6"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToolTip">
+            <Border CornerRadius="3" Background="#F813231C" BorderBrush="#66C9A24B" BorderThickness="1" Padding="10,5,10,6">
+              <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <!-- Window buttons -->
     <Style x:Key="Chrome" TargetType="Button">
       <Setter Property="Cursor" Value="Hand"/>

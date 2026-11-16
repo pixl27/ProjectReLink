@@ -216,13 +216,33 @@ def extract(zip_path, prefix, dest, keep=lambda rel: True):
     return n
 
 
+def start_lists(work):
+    """What a play profile folder gives a player's first start (nx2/make_game.py installs both beside the game): the pipeline
+    state list (pipeline_states.bin, 528-byte records after a 12-byte head) and the compute list (computes.bin, 8 bytes a
+    program); one line. Exits when computes.bin is not a list of 8-byte keys"""
+    said = []
+    states = os.path.join(work, "pipeline_states.bin")
+    said.append("pipeline_states.bin: %d pipelines" % ((os.path.getsize(states) - 12) // 528) if os.path.isfile(states)
+                else "no pipeline_states.bin: a first start builds no graphics pipeline before the title")
+    computes = os.path.join(work, "computes.bin")
+    if os.path.isfile(computes):
+        if os.path.getsize(computes) % 8:
+            sys.exit("%s: %d bytes, not a list of 8-byte keys (a played game folder's relink_computes.bin)"
+                     % (computes, os.path.getsize(computes)))
+        said.append("computes.bin: %d compute programs" % (os.path.getsize(computes) // 8))
+    else:
+        said.append("no computes.bin: a new install builds its compute pipelines in play")
+    return "; ".join(said)
+
+
 def profile(a):
-    # (a seed has the profile as a part of its own; a release's list has it in its app part)
+    # (a seed has the profile as a part of its own; a release's list has it in its app part. Every file of its tools/work is
+    # taken, the first start's lists among them: start_lists)
     app = named_part(a.list, "profile") or named_part(a.list, "app")
     if not app:
         sys.exit("no profile or app part in %s" % a.list)
     n = extract(app, top_folder(app) + "/tools/work/", a.work)
-    print("%d profile files into %s" % (n, a.work))
+    print("%d profile files into %s (%s)" % (n, a.work, start_lists(a.work)))
     return 0
 
 

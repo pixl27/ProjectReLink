@@ -7,6 +7,10 @@ remake) into a native Windows game: the game's code is translated to PC code and
 
 [Français plus bas](#français)
 
+**Discord:** [join the Project ReLink server](https://discord.gg/RFNUtCQk8j) to ask questions, get help and follow new
+versions. Bugs are still best reported as [issues](https://github.com/pixl27/ProjectReLink/issues) with `relink_log.txt`
+attached, so they don't get lost.
+
 ![The Project ReLink launcher](docs/launcher.png)
 
 **No game files are in this repository.** ReLink builds the game on your PC from your own copy.
@@ -39,10 +43,13 @@ Other versions do not work: the launcher checks your copy and says so before it 
 version as above), build the game in the same way and start it. Its settings page writes the game's own
 `relink_options.ini`; the frame rate goes in `relink_env.txt` beside it.
 
-The first start is long, once (about 16 minutes on our PC): the game prepares its shaders and builds its graphics pipelines
-for your driver's cache, with a progress screen. It does that part again after a graphics driver update, so that the first
-visit of a place does not stutter while the driver compiles, and after an update of ReLink that changes the renderer's
-shader code or state (0.6.3 is one).
+The first start is long, once (about 16 minutes on our PC): the game prepares its shaders, builds its graphics pipelines
+for your driver's cache and makes the compute pipelines play is known to use, with a progress screen. It does that part
+again after a graphics driver update, so that the first visit of a place does not stutter while the driver compiles, and
+after an update of ReLink that changes the renderer's shader code or state (0.6.3 is one). Since 0.7.6 every PC starts the
+same way, whatever its RAM. A PC that ran an earlier version with 20 GB of RAM or more has a pipeline cache file in the game
+folder, `mkw_vk_pipelines.bin` (800 MB and more), that nothing reads any more: since 0.7.8 the game deletes it at its first
+start, unless `RX_VK_LEAN_PIPELINES=0` in `relink_env.txt` brings back the older start, which uses it.
 
 ![Installing](docs/install.png)
 
@@ -87,6 +94,18 @@ the game. We have none of them here, so that part is not tested by us.
 The mouse turns the camera after a click in the game's window (Escape frees it). The Insert menu's **Mouse camera** row
 chooses how: as the right stick, or "Native", one to one as in a PC game. If the game has no sound, the same menu's
 **Audio output** row (Gameplay) can be set to Stereo; it applies after a restart.
+
+**Item wheel** (Gameplay, off by default): holding R or L shows the item row as a wheel, Twilight Princess style. Point at an
+item with either stick (or the mouse) and let go: it is on ZR at once. The items are on pages of 8 slots, one set for child
+Link and one for adult Link; Left and Right (or the mouse wheel) turn the page, Y takes an item up to put it in another slot,
+B puts it back. The pages are kept in `wheel_layout.txt` beside `relink_options.ini`. The wheel shows the game's own icons,
+names (in the game's language) and sounds, which every build takes from your game files into the `wheel` folder.
+**Cycle items** (Gameplay, off by default): a tap of R or L changes the item on ZR without opening the row: Last used
+swaps with the item that was on ZR before, whatever it is; Basic puts the next or the previous arrow, bottle or spell on
+ZR; +Bombs the bombs too; +Tools the hookshot, hammer, slingshot and boomerang too. Holding R or L still opens the row
+(or the wheel), a quarter of a second later than without it.
+`HOS_ITEM_WHEEL=0` or `1` and `HOS_CYCLE_ITEMS=0` to `4` in `relink_env.txt` stand
+in for the two rows.
 
 **Travel** (Gameplay): a page of 190 places to go to, villages, dungeons' entrances, shops, warp points and story spots,
 grouped by area, for Link's age (Tab or X shows the other age's: going there makes Link that age). Each place has a picture taken from your own game the first time Link stays there a few
@@ -150,8 +169,8 @@ before and still do. It does not remove the longer stalls of a first visit, whil
 shaders are read from disk.
 
 Version 0.6.6 goes on with it. A shader drawn for the first time in a session is read from the shader cache by background
-threads, several at once, instead of on the thread that draws the frame (on a PC with less than 20 GB of RAM that was every
-scene shader), and the rest of the driver's cleanup (texture views, images the video-memory reshuffle moved, freed
+threads, several at once, instead of on the thread that draws the frame (then on a PC with less than 20 GB of RAM, and on
+every PC since 0.7.6, that is every scene shader), and the rest of the driver's cleanup (texture views, images the video-memory reshuffle moved, freed
 buffers) left the render thread too. The same build with these changes off (`RX_VK_REAP=0`, `RX_VK_ASYNC_LOAD=0`) and on,
 the Market twice per run, three runs per side taken in turn: frames over 25 ms while the camera turns 59.5 on average
 against 47.0, the 99th percentile 38.1 ms against 32.6 (lower in all six pairs), the time lost in long frames at the
@@ -224,6 +243,10 @@ described in [docs/releasing.md](docs/releasing.md).
 Switch 2) en jeu Windows natif : le code du jeu est traduit en code PC et compilé sur votre machine, sans émulateur.
 **Ce dépôt ne contient aucun fichier du jeu** : ReLink fabrique le jeu sur votre PC à partir de votre propre copie.
 
+**Discord :** [rejoignez le serveur Project ReLink](https://discord.gg/RFNUtCQk8j) pour poser vos questions, trouver de
+l'aide et suivre les nouvelles versions. Pour un bug, une [issue](https://github.com/pixl27/ProjectReLink/issues) avec
+`relink_log.txt` en pièce jointe reste le meilleur moyen qu'il ne se perde pas.
+
 ### La version du jeu qu'il vous faut
 
 Une seule version fonctionne : le remake Switch 2 avec sa mise à jour installée (programme `0400486024DEC000`, mise à jour
@@ -244,9 +267,22 @@ les cartes graphiques (la bibliothèque d'AMD est livrée avec ReLink) ; ou **NV
 activé **NVIDIA DLSS** dans la page Display du lanceur : le jeu est reconstruit avec le SDK DLSS, téléchargé chez NVIDIA sous
 la licence de NVIDIA. Avec FSR ou DLSS, mettez la netteté vers 80 %.
 
+**Roue d'objets** (depuis la 0.7.8, menu Insert, onglet Gameplay, éteinte par défaut) : maintenir R ou L montre vos objets
+en roue au lieu de la rangée du jeu ; visez-en un au stick et relâchez pour le mettre sur ZR, Gauche et Droite tournent les
+pages, Y déplace un objet. **Cycle items** change l'objet de ZR d'un appui bref sur R ou L. Le même onglet a une ligne
+**Quit game**, qui demande confirmation puis ferme le jeu.
+
 Il faut Windows 10 ou 11 en 64 bits, un processeur avec AVX2, une carte graphique avec Vulkan 1.3 et les mesh shaders
 (GeForce RTX 20 ou plus récente, Radeon RX 6000 ou plus récente, Intel Arc ; nous n'avons testé que sur NVIDIA), 16 Go de RAM
 et environ 60 Go libres pendant l'installation.
+
+Le premier démarrage est long, une seule fois (environ 16 minutes sur notre PC) : le jeu prépare ses shaders, construit ses
+pipelines graphiques pour le cache du pilote et fabrique les pipelines de calcul dont on sait que le jeu se sert, avec un
+écran de progression. Il le refait après une mise à jour du pilote graphique, et après une mise à jour de ReLink qui change
+le code des shaders du moteur de rendu. Depuis la 0.7.6, tous les PC démarrent de la même façon, quelle que soit leur RAM.
+Un PC qui a fait tourner une version plus ancienne avec 20 Go de RAM ou plus garde dans le dossier du jeu un fichier de cache
+de pipelines, `mkw_vk_pipelines.bin` (800 Mo et plus), que plus rien ne lit : depuis la 0.7.8, le jeu le supprime à son
+premier démarrage, sauf si `RX_VK_LEAN_PIPELINES=0` dans `relink_env.txt` remet l'ancien démarrage, qui s'en sert.
 
 Le lanceur dit quand une nouvelle version est sortie ; **Update** ne télécharge que ce qui a changé et reconstruit le jeu sur
 place. Les sauvegardes, les réglages et les mods sont conservés.

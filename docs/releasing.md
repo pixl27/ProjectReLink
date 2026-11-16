@@ -49,7 +49,12 @@ somewhere too. That is the seed, made on the maintainer's PC by `scripts/make_se
   frames a second. And `pipeline_states.bin`, a copy of `relink_pipeline_states.bin` from a
   game folder that was played through many places: the pipelines the game asked for there (hashes, formats and draw state).
   A player's first start builds them before the title, from the player's own shaders; without it every place stutters on
-  its first visit while the driver compiles.
+  its first visit while the driver compiles. And `computes.bin`, a copy of `relink_computes.bin` from the same folder: the
+  compute programs play used, 8 bytes each (a hash of the program's code, the same on every PC and in every build).
+  `nx2/make_game.py` installs it beside the game as `relink_computes_shipped.bin`, and every lean start (the default) builds
+  those compute pipelines before the title; without it a new install builds each at its first dispatch, and leaves that work out of its
+  first frames while the driver compiles. `make_seed.py` says how many entries each list holds, and stops on a
+  `computes.bin` whose size is not a multiple of 8.
 
 It writes three zips and `relink-seed.txt`. Upload the four files to the `builder-parts` release (a prerelease, made by hand
 the first time), then set the repository variable `SEED_LIST` (Settings, Secrets and variables, Actions, Variables) to
@@ -57,6 +62,15 @@ the first time), then set the repository variable `SEED_LIST` (Settings, Secrets
 Remove it once a release made from the seed is out: the next releases then chain from that one.
 
 The repository must be public for players to download a release's files, and for the workflow to read the seed.
+
+A new play profile file (a new `pipeline_states.bin` or `computes.bin`, a new `relink_vk.profdata`) only reaches players
+through a seed: the releases' lists carry the profile on from the seed or release before, and nothing in CI reads it from
+this repository. Put the file in the seed's `--work` folder and run `make_seed.py` again with the same `--python` and `--cpm`
+folders. While those folders and the Python that runs the script are unchanged, their zips come out the same, under the
+same names (`relink-seed.txt` shows it), so only the new `ReLink-profile-<sha>.zip` and `relink-seed.txt` (which replaces
+the old one) go to `builder-parts`. While `SEED_LIST` names `relink-seed.txt`, the next
+tag starts from it. The workflow's "Play profile" step prints what the profile gives a first start
+(`scripts/release_parts.py profile`: the number of pipelines and compute programs, or that a list is missing).
 
 ## Checking a release before it is the latest
 

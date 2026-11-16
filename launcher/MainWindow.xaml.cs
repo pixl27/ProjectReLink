@@ -30,6 +30,16 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // (a snapshot is for tests and pictures: its window is made off the screen, out of the taskbar and without taking the
+        // focus. On the screen it flashed open and shut at every picture, which looked like the launcher starting and dying)
+        if (Arg("--snapshot") != null)
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = -32000;
+            Top = -32000;
+            ShowInTaskbar = false;
+            ShowActivated = false;
+        }
         staff = new Staff(StaffCanvas);
         Scene.Draw(Sky, 1120, 700, Scene.Hour());
         skyTimer.Tick += (_, _) => Scene.Draw(Sky, 1120, 700, Scene.Hour());
@@ -63,6 +73,8 @@ public partial class MainWindow : Window
         Subtitle.Text = L("Ocarina of Time, recompilé pour votre PC", "Ocarina of Time, recompiled for your PC");
         HelpLink.Content = L("Aide", "Help");
         FolderLink.Content = L("Dossier du jeu", "Game folder");
+        DiscordLink.Content = "Discord";
+        DiscordLink.ToolTip = new ToolTip { Style = St("Tip"), Content = L($"Rejoindre le serveur Discord de {Texts.Name}", $"Join the {Texts.Name} Discord server") };
         UpdateLink.Content = L("Mettre à jour", "Update");
 
         InstallTitle.Text = L("Installer le jeu", "Install the game");
@@ -193,6 +205,8 @@ public partial class MainWindow : Window
     }
 
     void OpenHelp(object sender, RoutedEventArgs e) => Open(HelpPage);
+
+    void OpenDiscord(object sender, RoutedEventArgs e) => Open(DiscordInvite);
 
     void OpenGameFolder(object sender, RoutedEventArgs e)
     {

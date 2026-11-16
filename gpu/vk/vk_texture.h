@@ -84,6 +84,16 @@ struct Texture {
     uint64_t prefetched_frame = 0;   // (relink, RX_VK_PREFETCH: the present it was made ahead at, 0: made by a draw)
     bool drawn = false;              // (and whether a draw used it since)
     std::unordered_map<uint64_t, VkImageView> views;
+    // (relink, issue 21) a compressed image the game renders into through raw views (one texel a block): a plain image of
+    // the view's format, a level's size in blocks, stands in for that level as the attachment (vk_texture.cpp stand-ins)
+    struct StandIn {
+        uint32_t level = 0;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        VkImage image = VK_NULL_HANDLE;
+        VmaAllocation allocation = nullptr;
+        std::vector<VkImageView> views;   // (one a layer, a 3D image's slice, made as they are used)
+    };
+    std::vector<StandIn> stand_ins;
 };
 
 /// Makes texels [x, x + w) x [y, y + h) of level `level`, layers [first, first + count), of a sparse texture resident
@@ -140,6 +150,10 @@ Texture* texture_get(const nvn_tex* t, bool for_sampling);
 enum class ViewUse { Sample, Attachment, Storage };
 VkImageView texture_view(Texture* tex, const nvn_tex* t, const nvn_view* v, VkImageViewType view_type, ViewUse use,
                          VkFormat* format_out = nullptr, VkFormat force_format = VK_FORMAT_UNDEFINED);
+/// (relink, issue 21) Whether an attachment view texture_view gave is a stand-in's (a compressed image rendered through a raw
+/// view): the pass copies the compressed level's layer into it before (into = true) and back after (texture_stand_in_copy)
+bool texture_is_stand_in(Texture* tex, VkImageView view);
+bool texture_stand_in_copy(VkCommandBuffer cmd, Texture* tex, VkImageView view, bool into);
 /// The view format an NVN texture and view sample / render in
 int view_nvn_format(const nvn_tex* t, const nvn_view* v);
 /// The level and layer a view starts at (the texture's levels)

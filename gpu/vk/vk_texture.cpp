@@ -220,6 +220,28 @@ bool remade_skip_old() {
     static const bool on = getenv("RX_VK_REMADE_SKIP") && atoi(getenv("RX_VK_REMADE_SKIP")) != 0;
     return on;
 }
+// (relink, issue 47) Textures the GPU drew whose texels existed nowhere else when the budget evicted them: storage, size and
+// format -> when and why. One made again at that storage and sampled before anything draws it shows whatever its new image holds:
+// the terrain tiles' normal maps, streaks over the ground. RX_VK_LOG_REMADE's list looks 600 frames ahead only, and the tiles come
+// back thousands of frames later, so this one keeps them until then. Always on: written only for such evictions, bounded
+struct Lost {
+    uint64_t frame;
+    int why;
+    uint32_t gen;   // (the memory generation then: the CPU writing that storage since gives the game's own texels again)
+};
+const char* const kLostWhy[] = {"finalized, not recognised as one to keep", "finalized, past RX_VK_KEEP_FINALIZED_MB",
+                                "finalized, over 4 MB", "live, not written back into its memory"};
+std::mutex lost_mu;
+std::unordered_map<uint64_t, Lost> lost_at;
+std::atomic<size_t> lost_n{0};
+std::atomic<int64_t> st_lost[4], st_lost_sampled{0}, st_lost_drawn{0};
+void lost_note(const Texture& t, uint64_t frame, int why) {
+    st_lost[why]++;
+    std::lock_guard lk(lost_mu);
+    if (lost_at.size() > 20000) lost_at.clear();   // (a bound)
+    lost_at[evicted_key(t.gpu, t.width, t.height, t.nvn_format)] = {frame, why, memory_generation()};
+    lost_n.store(lost_at.size(), std::memory_order_relaxed);
+}
 
 struct Dead {
     uint64_t value;
@@ -1648,6 +1670,100 @@ bool texture_dirty(Texture& tex, uint32_t gen, Ranges& out) {
     return !out.empty();
 }
 
+// ---- (relink, issue 21, 2026-11-15) compressed images rendered into: a plain image stands in ----
+// OoT fills the slices of two 64^3 BC4 noise volumes (53509044401d78d2, while an area loads) by rendering into them as RGBA16UI
+// targets, one texel a block. Those were raw views of the compressed image itself as colour attachments: a usage the drivers
+// need not support (AMD's refuses it for 2D BC images; 3D ones were made with it on the driver's word for 2D), and on an RTX 4070
+// the device was lost in that pass at every new game (issue 21: the NV checkpoints of both stages in its draws, gone with the
+// program left out; this RTX 3060 Ti ran it without a loss). Now a plain 2D array image of the view's format, the level's size in
+// blocks, a layer per layer or 3D slice, is the attachment: the pass copies the level's layer into it before its draws and back
+// after (begin_pass / end_pass, vk_draw.cpp). Both are size-compatible copies between an uncompressed and a compressed format
+// (8 or 16 bytes a texel and a block, vkCmdCopyImage), 3D slices against 2D array layers (Vulkan 1.1): what every driver must do.
+// The compressed image needs no attachment usage then. Only levels of whole blocks (64 x 64: 16 x 16). RX_VK_RAW_TARGET_VIEWS=1:
+// the raw views as before
+bool stand_ins_on() {
+    static const bool on = !getenv("RX_VK_RAW_TARGET_VIEWS") || atoi(getenv("RX_VK_RAW_TARGET_VIEWS")) == 0;
+    return on;
+}
+std::mutex stand_in_mu;   // (a parallel replay's segments make and use them at once)
+/// The stand-in view of level `level`, layer (a 3D image's slice) `layer`, in format f; null where none is made (the raw view of
+/// the image itself is tried then)
+VkImageView stand_in_view(Texture* tex, VkFormat f, uint32_t level, uint32_t layer) {
+    const uint32_t w = std::max(1u, tex->width >> level), h = std::max(1u, tex->height >> level);
+    const uint32_t layers = tex->type == VK_IMAGE_TYPE_3D ? std::max(1u, tex->depth >> level) : tex->layers;
+    if ((w & 3) || (h & 3) || layer >= layers || tex->sparse || tex->samples != VK_SAMPLE_COUNT_1_BIT ||
+        tex->aspect != VK_IMAGE_ASPECT_COLOR_BIT || !(format_props(f).optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))
+        return VK_NULL_HANDLE;
+    std::lock_guard lk(stand_in_mu);
+    Texture::StandIn* s = nullptr;
+    for (Texture::StandIn& x : tex->stand_ins)
+        if (x.level == level && x.format == f) s = &x;
+    if (!s) {
+        VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ci.imageType = VK_IMAGE_TYPE_2D;
+        ci.format = f;
+        ci.extent = {w / 4, h / 4, 1};
+        ci.mipLevels = 1;
+        ci.arrayLayers = layers;
+        ci.samples = VK_SAMPLE_COUNT_1_BIT;
+        ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Texture::StandIn n;
+        n.level = level, n.format = f;
+        if (!create_image(ci, n.image, n.allocation)) {
+            static int told;
+            if (told++ < 4) logf("vk: no stand-in image for texture #%u (vk %d as vk %d, level %u)", tex->id, (int)tex->format, (int)f, level);
+            return VK_NULL_HANDLE;
+        }
+        n.views.assign(layers, VK_NULL_HANDLE);
+        {   // (into GENERAL, as every image: in queue order, as a new texture's)
+            InitRedirect redirect;
+            VkCommandBuffer cmd = upload_cmd();
+            VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+            b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+            b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = n.image;
+            b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
+            VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            di.imageMemoryBarrierCount = 1;
+            di.pImageMemoryBarriers = &b;
+            vkCmdPipelineBarrier2(cmd, &di);
+            redirect.done();
+        }
+        tex->stand_ins.push_back(std::move(n));
+        s = &tex->stand_ins.back();
+        static int told;
+        if (told++ < 8)
+            logf("vk: texture #%u %ux%ux%u (vk %d) rendered as vk %d, level %u: a %ux%u x%u image stands in for it, copied in and "
+                 "out around each pass (RX_VK_RAW_TARGET_VIEWS=1: raw views of it as before)", tex->id, tex->width, tex->height,
+                 tex->depth, (int)tex->format, (int)f, level, w / 4, h / 4, layers);
+    }
+    VkImageView& v = s->views[layer];
+    if (!v) {
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = s->image;
+        vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.format = f;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, layer, 1};
+        if (vkCreateImageView(dev.device, &vi, nullptr, &v) != VK_SUCCESS) v = VK_NULL_HANDLE;
+    }
+    return v;
+}
+/// The stand-in a view is of, and its layer (stand_in_mu held)
+Texture::StandIn* stand_in_of(Texture* tex, VkImageView view, uint32_t* layer) {
+    for (Texture::StandIn& s : tex->stand_ins)
+        for (uint32_t i = 0; i < (uint32_t)s.views.size(); i++)
+            if (s.views[i] == view) {
+                *layer = i;
+                return &s;
+            }
+    return nullptr;
+}
+
 uint64_t destroy_gen = 1;   // (bumped when textures go: what was resolved to them goes stale)
 
 void destroy_later(Texture& tex) {
@@ -1659,6 +1775,16 @@ void destroy_later(Texture& tex) {
     if (!tex.sparse && tex.image && tex.ci.sType == VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO) d.ci = tex.ci, d.bytes = tex.bytes;
     dead.push_back(std::move(d));
     total_bytes -= std::min(total_bytes, tex.bytes + tex.pad);
+    {   // (relink, issue 21: its stand-ins with it, never recycled)
+        std::lock_guard lk(stand_in_mu);
+        for (Texture::StandIn& s : tex.stand_ins) {
+            Dead sd{tex.last_value, s.image, s.allocation, {}, {}};
+            for (VkImageView v : s.views)
+                if (v) sd.views.push_back(v);
+            dead.push_back(std::move(sd));
+        }
+        tex.stand_ins.clear();
+    }
 }
 
 void vw_forget(const Texture& t);   // (below: a destroyed texture leaves the list of GPU-written ones)
@@ -1848,7 +1974,9 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
         // made, the volumes stayed zero, and the foliage's dithered LOD crossfade, which reads them, left trees bare at mid
         // distance. 3D images take the usage on the driver's word for the 2D one: the query does not cover
         // 2D_ARRAY_COMPATIBLE's per-slice attachment views)
-        if (format_props(raw).optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) {
+        // (relink, issue 21: only for the raw views of before, RX_VK_RAW_TARGET_VIEWS=1: a plain image stands in for it as the
+        // attachment now, stand_in_view above)
+        if (!stand_ins_on() && (format_props(raw).optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)) {
             // (asked with the flags a 3D image is made with below; a refused image is made again without the usage)
             const VkImageCreateFlags asked = flags | (x.type != VK_IMAGE_TYPE_3D ? 0u
                 : VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT | (dev.view_2d_of_3d ? VK_IMAGE_CREATE_2D_VIEW_COMPATIBLE_BIT_EXT : 0u));
@@ -2176,6 +2304,31 @@ unsigned view_layer(const nvn_view* v) {
     return v && v->set_layers ? v->min_layer : 0;
 }
 
+// (relink, issue 47) a texture just made at the storage of a drawn texture evicted with its texels (lost_note). Made to be sampled,
+// nothing has drawn it, and the CPU has not written that storage since: what it shows is not what the GPU drew there
+static void lost_made(Texture& t, bool for_sampling) {
+    if (!lost_n.load(std::memory_order_relaxed)) return;
+    Lost l;
+    {
+        std::lock_guard lk(lost_mu);
+        auto it = lost_at.find(evicted_key(t.gpu, t.width, t.height, t.nvn_format));
+        if (it == lost_at.end()) return;
+        l = it->second;
+        lost_at.erase(it);
+        lost_n.store(lost_at.size(), std::memory_order_relaxed);
+    }
+    static thread_local Ranges since;
+    if (!for_sampling || (t.guest && t.gpu < (1ull << 40) && texture_dirty(t, l.gen, since))) {
+        st_lost_drawn++;   // (drawn into first, or the game wrote new texels there)
+        return;
+    }
+    const int64_t n = ++st_lost_sampled;
+    if (n <= 100 || n % 100 == 0)
+        logf("vk: texture #%u %#llx %ux%u NVN %#x made again %llu frames after its eviction and sampled before any draw: the "
+             "texels the GPU drew are gone (%s; %lld so far)", t.id, (unsigned long long)t.gpu, t.width, t.height, t.nvn_format,
+             (unsigned long long)(frame_no - l.frame), kLostWhy[l.why], (long long)n);
+}
+
 Texture* texture_get(const nvn_tex* t, bool for_sampling) {
     PROF_HOT(PROF_TEXGET);
     if (!t || !t->gpu || t->d.target == NVN_TEXTURE_TARGET_BUFFER) return nullptr;
@@ -2209,6 +2362,7 @@ Texture* texture_get(const nvn_tex* t, bool for_sampling) {
     if (it == textures.end()) {
         tex = create(k, t, fi.format, fi.astc, bw, bh, bpb);
         if (!tex) return nullptr;
+        lost_made(*tex, for_sampling);   // (issue 47: at the storage of a drawn texture evicted with its texels)
         static const int64_t log_from = getenv("RX_VK_LOG_MADE") ? atoll(getenv("RX_VK_LOG_MADE")) : -1;
         static int made_logged;
         if (log_from >= 0 && (int64_t)frame_no >= log_from && made_logged++ < 300) {
@@ -2579,6 +2733,11 @@ VkImageView texture_view(Texture* tex, const nvn_tex* t, const nvn_view* v, VkIm
     default: break;
     }
     if (tex->type == VK_IMAGE_TYPE_3D && use == ViewUse::Attachment) type = VK_IMAGE_VIEW_TYPE_2D;
+    // (relink, issue 21) a compressed image as a raw colour target: a plain image stands in for it (stand_in_view)
+    if (use == ViewUse::Attachment && is_bc(tex->format) && !is_bc(f) && stand_ins_on()) {
+        if (format_out) *format_out = f;
+        if (const VkImageView sv = stand_in_view(tex, f, level0, layer0)) return sv;
+    }
     VkComponentMapping cm{};
     if (use == ViewUse::Sample) {
         const nvn_texdesc& d = t->d;
@@ -2626,6 +2785,41 @@ VkImageView texture_view(Texture* tex, const nvn_tex* t, const nvn_view* v, VkIm
     }
     tex->views[key] = view;
     return view;
+}
+
+bool texture_is_stand_in(Texture* tex, VkImageView view) {
+    if (!tex || !view) return false;
+    std::lock_guard lk(stand_in_mu);
+    uint32_t layer = 0;
+    return stand_in_of(tex, view, &layer) != nullptr;
+}
+
+bool texture_stand_in_copy(VkCommandBuffer cmd, Texture* tex, VkImageView view, bool into) {
+    if (!tex || !view) return false;
+    VkImage si = VK_NULL_HANDLE;
+    uint32_t level = 0, layer = 0;
+    {
+        std::lock_guard lk(stand_in_mu);
+        const Texture::StandIn* s = stand_in_of(tex, view, &layer);
+        if (!s) return false;
+        si = s->image, level = s->level;
+    }
+    const uint32_t w = std::max(1u, tex->width >> level), h = std::max(1u, tex->height >> level);
+    const bool vol = tex->type == VK_IMAGE_TYPE_3D;
+    // (the compressed image's level, its layer or slice; the stand-in's layer. Between an uncompressed and a compressed image the
+    // extent is the source's texels: the level's texels into the stand-in, its blocks back)
+    const VkImageSubresourceLayers bc_sub{VK_IMAGE_ASPECT_COLOR_BIT, level, vol ? 0u : layer, 1};
+    const VkImageSubresourceLayers si_sub{VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1};
+    const VkOffset3D bc_at{0, 0, vol ? (int32_t)layer : 0};
+    VkImageCopy c{};
+    if (into) {
+        c.srcSubresource = bc_sub, c.srcOffset = bc_at, c.dstSubresource = si_sub, c.extent = {w, h, 1};
+        vkCmdCopyImage(cmd, tex->image, VK_IMAGE_LAYOUT_GENERAL, si, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+    } else {
+        c.srcSubresource = si_sub, c.dstSubresource = bc_sub, c.dstOffset = bc_at, c.extent = {w / 4, h / 4, 1};
+        vkCmdCopyImage(cmd, si, VK_IMAGE_LAYOUT_GENERAL, tex->image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+    }
+    return true;
 }
 
 bool texture_copy_into_bc(VkCommandBuffer cmd, Texture* src, uint32_t src_level, uint32_t src_layer, int sx, int sy,
@@ -3254,7 +3448,15 @@ void texture_rendered(Texture* tex) {
         for (auto it = gpu_owned.lower_bound(lo); it != gpu_owned.end() && it->first < hi;)
             it = it->second.first <= hi ? gpu_owned.erase(it) : std::next(it);
         gpu_owned[lo] = {hi, memory_generation()};
-        if (gpu_owned.size() > 65536) gpu_owned.erase(gpu_owned.begin());   // (bounded; the oldest addresses go)
+        if (gpu_owned.size() > 65536) {   // (bounded; the lowest addresses go)
+            gpu_owned.erase(gpu_owned.begin());
+            // (relink, issue 47, a diagnosis: a texture made again over storage that left the list is uploaded from the game's
+            // memory, which never held what the GPU drew there)
+            static int64_t dropped;
+            if (dropped++ % 20000 == 0)
+                logf("vk: the list of storage render targets took is full (65536 ranges): its lowest addresses leave it (%lld so far)",
+                     (long long)dropped);
+        }
     }
 }
 uint64_t texture_frame_no() {
@@ -3614,6 +3816,31 @@ void texture_frame(uint64_t completed) {
     static const bool strict = !getenv("RX_VK_SPARE_STRICT") || atoi(getenv("RX_VK_SPARE_STRICT")) != 0;
     int per_frame = tight ? std::max(per_frame_cfg, 1024) : per_frame_cfg;
     if (strict && !tight && dead.size() > (size_t)per_frame * 8) per_frame = std::max(per_frame, (int)(dead.size() / 30));
+    // (relink, 0.7.8, RX_VK_SPARES_NEWEST=1) The spares as the newest dead images, and a few of them while VRAM is tight. In the
+    // Market with the camera turning (hs3006, 8 GB card) the game makes 3766-8484 images a 600 frames (its per-frame targets at
+    // addresses that move in its transient heap) and the render thread spent 7.9 % of its time in vmaCreateImage: VRAM was over
+    // 95 % of what the driver allows, so no dead image was kept (0 spares, 3 and 310 recycled), and in the block before, the
+    // reserve was full of images kept up to 300 frames earlier (59 spares, 180 of 192 MB), so the ones that had just died, the
+    // likeliest to be asked for again, were destroyed instead (15 recycled, 1715 made). With it: a dead image that does not fit
+    // under the cap takes the place of the oldest spares; and while VRAM is over 95 % but under what the driver allows (and the
+    // system not short of commit), up to RX_VK_TIGHT_SPARE_MB (64) of spares for RX_VK_TIGHT_SPARE_FRAMES (60) frames instead of
+    // none. A spare taken for a new texture is VRAM the new one would have taken anyway; the ones nobody takes are at most that.
+    static const bool newest = [] {
+        const bool on = getenv("RX_VK_SPARES_NEWEST") && atoi(getenv("RX_VK_SPARES_NEWEST")) != 0;
+        if (on)
+            logf("vk: spare images: the newest dead ones kept, the oldest let go for them, and up to %d MB kept for %d frames while VRAM "
+                 "is tight (RX_VK_SPARES_NEWEST=1; RX_VK_TIGHT_SPARE_MB, RX_VK_TIGHT_SPARE_FRAMES)",
+                 getenv("RX_VK_TIGHT_SPARE_MB") ? std::max(0, atoi(getenv("RX_VK_TIGHT_SPARE_MB"))) : 64,
+                 getenv("RX_VK_TIGHT_SPARE_FRAMES") ? std::max(1, atoi(getenv("RX_VK_TIGHT_SPARE_FRAMES"))) : 60);
+        return on;
+    }();
+    static const uint64_t tight_cap = (uint64_t)(getenv("RX_VK_TIGHT_SPARE_MB") ? std::max(0, atoi(getenv("RX_VK_TIGHT_SPARE_MB"))) : 64) << 20;
+    static const uint64_t tight_life = (uint64_t)(getenv("RX_VK_TIGHT_SPARE_FRAMES") ? std::max(1, atoi(getenv("RX_VK_TIGHT_SPARE_FRAMES"))) : 60);
+    static int64_t st_newest_kept, st_newest_tight, st_newest_evicted, st_tight_frames;
+    // (vu and va were asked above whenever tight is set for VRAM; tight for commit alone keeps the old rule: none kept)
+    const bool keep_tight = newest && tight && tight_cap && va && vu <= va && commit_short(frame_no) == 0;
+    const uint64_t spare_cap = keep_tight ? tight_cap : kSpareBytes;
+    st_tight_frames += keep_tight;
     int destroyed = 0;
     for (auto it = dead.begin(); it != dead.end() && destroyed < per_frame;) {
         if (it->value > completed) {
@@ -3622,8 +3849,19 @@ void texture_frame(uint64_t completed) {
         }
         if (!it->views.empty())   // (relink: on the reaper, before the image's own end: vk_vma.cpp)
             reap([views = std::move(it->views)] { for (VkImageView v : views) vkDestroyImageView(dev.device, v, nullptr); });
-        const bool spare = !tight && recycle_on() && it->ci.sType == VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO && it->image && it->memory.empty() &&
-                           it->bytes <= kSpareBytes / 4 && (!strict || spare_bytes + it->bytes <= kSpareBytes);
+        const bool kind_ok = recycle_on() && it->ci.sType == VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO && it->image && it->memory.empty();
+        bool spare = !tight && kind_ok && it->bytes <= kSpareBytes / 4 && (!strict || spare_bytes + it->bytes <= kSpareBytes);
+        if (newest && !spare && kind_ok && (!tight || keep_tight) && it->bytes <= spare_cap / 4) {
+            // (room made by the oldest spares, each one destroyed counted as the dead one would have been)
+            while (!spares.empty() && spare_bytes + it->bytes > spare_cap && destroyed < per_frame) {
+                destroy_image(spares.front().image, spares.front().allocation);
+                spare_bytes -= std::min(spare_bytes, spares.front().bytes);
+                spares.erase(spares.begin());
+                destroyed++, st_newest_evicted++;
+            }
+            spare = spare_bytes + it->bytes <= spare_cap;
+            if (spare) st_newest_kept++, st_newest_tight += keep_tight;
+        }
         if (spare) {
             spares.push_back({it->ci, it->image, it->allocation, frame_no, it->bytes});   // (relink: kept for the next of its kind)
             spare_bytes += it->bytes;
@@ -3639,7 +3877,11 @@ void texture_frame(uint64_t completed) {
     // (relink) spare images: none kept over 300 frames, nor past kSpareBytes (the oldest go first)
     if (strict) destroyed = 0;   // (their trim has the cap to itself)
     for (size_t i = 0; i < spares.size();) {
-        if ((frame_no - spares[i].frame > 300 || spare_bytes > kSpareBytes || tight) && destroyed < per_frame) {
+        // (RX_VK_SPARES_NEWEST: while VRAM is tight, the few kept go after tight_life frames or past their cap, not all at once)
+        const bool go = newest && (!tight || keep_tight)
+                            ? frame_no - spares[i].frame > (keep_tight ? tight_life : 300) || spare_bytes > spare_cap
+                            : frame_no - spares[i].frame > 300 || spare_bytes > kSpareBytes || tight;
+        if (go && destroyed < per_frame) {
             destroyed++;
             destroy_image(spares[i].image, spares[i].allocation);
             spare_bytes -= std::min(spare_bytes, spares[i].bytes);
@@ -3651,6 +3893,11 @@ void texture_frame(uint64_t completed) {
     if (frame_no % 600 == 0 && (st_recycled || st_fresh)) {
         logf("vk: images: %lld recycled, %lld made (%zu spares, %llu MB)", (long long)st_recycled, (long long)st_fresh, spares.size(),
              (unsigned long long)(spare_bytes >> 20));
+        if (newest)
+            logf("vk: spares (RX_VK_SPARES_NEWEST): %lld kept that the old rule destroyed (%lld of them while VRAM was tight), %lld older "
+                 "ones let go for them; VRAM tight with spares kept %lld of these frames", (long long)st_newest_kept,
+                 (long long)st_newest_tight, (long long)st_newest_evicted, (long long)st_tight_frames);
+        st_newest_kept = st_newest_tight = st_newest_evicted = st_tight_frames = 0;
         st_recycled = st_fresh = 0;
     }
     // A budget: RX_VK_VRAM_MB of textures (default 4096), and less when the driver says the process is near what it
@@ -3923,7 +4170,7 @@ void texture_frame(uint64_t completed) {
     // may have put other things there since, and a write-back over scene data once crashed it)
     static const uint64_t keep_finalized_max =
         (uint64_t)(getenv("RX_VK_KEEP_FINALIZED_MB") ? std::max(0, atoi(getenv("RX_VK_KEEP_FINALIZED_MB"))) : 512) << 20;
-    const auto keep_finalized = [&](const Texture* tex) {
+    const auto keep_finalized_old = [&](const Texture* tex) {
         if (!keep_finalized_max || !tex->gpu_written || !tex->released || !tex->first_written ||
             tex->first_written != tex->last_written || tex->bytes > (4ull << 20))
             return false;
@@ -3931,11 +4178,71 @@ void texture_frame(uint64_t completed) {
         if (g == gpu_owned.end() || g->second.first != tex->gpu + std::max<uint64_t>(tex->guest_size, 1)) return false;
         return !drawn_over(tex) && !drawn_over_shifted(tex);
     };
-    uint64_t finalized_kept = 0;
-    size_t finalized_kept_n = 0;
+    // (relink, issue 47) The rule above knew a texture to keep by two signs that fail on their own: drawn in one frame alone (a
+    // tile drawn over two frames, or drawn again later before it was finalized, was not), and its storage still listed under its
+    // own range as the render targets' (a list of 65536 ranges whose lowest addresses leave it when it is full, which the
+    // transient targets of shifting heaps fill in minutes). Either one failing, a finalized texture went at the next eviction
+    // without its texels written anywhere (the write-back is for live ones), and made again it was empty: the striped ground in
+    // Dodongo's Cavern after 5 to 15 minutes, on a 12 GB card whose budget the system's commit headroom had cut (issue 47; an AMD
+    // log of issue 59 shows the budget at 3072 MB on a 16 GB card, its 22 kept tiles gone at once). Now a finalized texture the
+    // GPU drew is kept as long as nothing took its storage since: no render target drew over it (same start, shifted, or any
+    // other range overlapping it registered after it was finalized) and the CPU did not write it (then it is uploaded from
+    // there when sampled again anyway). Same cap, RX_VK_KEEP_FINALIZED_MB, the least recently used going beyond it.
+    // RX_VK_KEEP_DRAWN=0: the rule above alone, as before
+    static const bool keep_drawn = !getenv("RX_VK_KEEP_DRAWN") || atoi(getenv("RX_VK_KEEP_DRAWN")) != 0;
+    const auto storage_taken = [&](const Texture* tex) {
+        const uint64_t lo = tex->gpu, hi = tex->gpu + std::max<uint64_t>(tex->guest_size, 1);
+        auto it = gpu_owned.upper_bound(lo);
+        if (it != gpu_owned.begin()) --it;
+        for (; it != gpu_owned.end() && it->first < hi; ++it)
+            if (it->second.first > lo && !(it->first == lo && it->second.first == hi) && it->second.second > tex->release_gen)
+                return true;
+        return false;
+    };
+    const auto rewritten = [&](Texture* tex) {
+        if (!tex->released || !tex->guest || tex->gpu >= (1ull << 40)) return false;   // (a virtual pool's: its page walk is the
+        static thread_local Ranges r;                                                    // sampling's to do)
+        return texture_dirty(*tex, std::max(tex->upload_gen, tex->release_gen), r);
+    };
+    const auto keep_finalized = [&](Texture* tex) {
+        if (!keep_drawn) return keep_finalized_old(tex);
+        if (!keep_finalized_max || !tex->gpu_written || !tex->released || tex->bytes > (4ull << 20)) return false;
+        return !drawn_over(tex) && !drawn_over_shifted(tex) && !storage_taken(tex) && !rewritten(tex);
+    };
+    // (what the old rule would have let go of these: drawn over more than one frame, its storage no longer listed as its own)
+    const auto old_misses = [&](const Texture* tex, bool* frames, bool* unlisted) {
+        *frames = !tex->first_written || tex->first_written != tex->last_written;
+        const auto g = gpu_owned.find(tex->gpu);
+        *unlisted = g == gpu_owned.end() || g->second.first != tex->gpu + std::max<uint64_t>(tex->guest_size, 1);
+    };
+    static std::unordered_set<uint32_t> caught_ids;   // (the textures it kept that the old rule would have evicted)
+    uint64_t finalized_kept = 0, newly_kept_b = 0;
+    size_t finalized_kept_n = 0, newly_kept_n = 0, newly_frames = 0, newly_unlisted = 0;
     if (keep_finalized_max)
         for (auto& [last, tex] : order)
-            if (keep_finalized(tex)) finalized_kept += tex->bytes, finalized_kept_n++;
+            if (keep_finalized(tex)) {
+                finalized_kept += tex->bytes, finalized_kept_n++;
+                if (keep_drawn && !keep_finalized_old(tex)) {
+                    bool frames = false, unlisted = false;
+                    old_misses(tex, &frames, &unlisted);
+                    newly_kept_n++, newly_kept_b += tex->bytes, newly_frames += frames, newly_unlisted += unlisted;
+                }
+            }
+    if (frame_no % 600 == 0) {   // (issue 47: what the eviction keeps and loses of what the GPU drew; only when there is any)
+        static int64_t was = -1;
+        const int64_t lost = st_lost[0] + st_lost[1] + st_lost[2] + st_lost[3];
+        const int64_t now = lost * 7 + st_lost_sampled * 3 + (int64_t)caught_ids.size() * 5 + (int64_t)newly_kept_n;
+        if ((lost || newly_kept_n || !caught_ids.empty()) && now != was) {
+            was = now;
+            logf("vk: drawn textures: kept by RX_VK_KEEP_DRAWN that the old rule lets go: %zu now (%llu KB; drawn over more than one "
+                 "frame %zu, storage not listed as its own %zu), %zu kept from an eviction so far; evicted with no other copy of their "
+                 "texels: %lld (finalized not recognised %lld, past the cap %lld, over 4 MB %lld; live, not written back %lld), made "
+                 "again since and sampled before any draw %lld, drawn first %lld", newly_kept_n,
+                 (unsigned long long)(newly_kept_b >> 10), newly_frames, newly_unlisted, caught_ids.size(), (long long)lost,
+                 (long long)st_lost[0].load(), (long long)st_lost[1].load(), (long long)st_lost[2].load(),
+                 (long long)st_lost[3].load(), (long long)st_lost_sampled.load(), (long long)st_lost_drawn.load());
+        }
+    }
     if (finalized_kept && frame_no % 600 == 0) {
         std::map<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>, std::pair<size_t, uint64_t>> kinds;   // (w, h, layers, NVN format)
         for (auto& [last, tex] : order)
@@ -3989,8 +4296,22 @@ void texture_frame(uint64_t completed) {
         static const bool keep_over_only = getenv("RX_VK_KEEP_RENDERED_OVER") != nullptr;
         const uint64_t keep_rendered = keep_rendered::presents(known, used, allowed, keep_over_only);
         const bool overwritten = shifted || drawn_over(tex);   // (above)
+        bool past_cap = false;
         if (finalized_kept && keep_finalized(tex)) {   // (above. Oldest first: beyond the cap the least recently used go)
-            if (finalized_kept <= keep_finalized_max) continue;
+            if (finalized_kept <= keep_finalized_max) {
+                if (keep_drawn && !sweep && !keep_finalized_old(tex) && caught_ids.size() < 100000 && caught_ids.insert(tex->id).second) {
+                    bool frames = false, unlisted = false;   // (issue 47: one the old rule evicted here)
+                    old_misses(tex, &frames, &unlisted);
+                    if (caught_ids.size() <= 60)
+                        logf("vk: texture #%u %#llx %ux%u x%u NVN %#x the GPU drew, finalized, unused for %llu frames: kept, not evicted "
+                             "(the old rule let it go: %s%s%s; %zu so far)", tex->id, (unsigned long long)tex->gpu, tex->width,
+                             tex->height, tex->layers, tex->nvn_format, (unsigned long long)(frame_no - last),
+                             frames ? "drawn over more than one frame" : "", frames && unlisted ? ", " : "",
+                             unlisted ? "its storage not listed as its own" : "", caught_ids.size());
+                }
+                continue;
+            }
+            past_cap = true;
             finalized_kept -= tex->bytes;
             static int logged;
             if (logged++ < 100)
@@ -4033,11 +4354,17 @@ void texture_frame(uint64_t completed) {
         // tiled pattern over the Deku Tree's planks and Hyrule Field's path, with a 16 GB card's textures at the 6 GB budget
         // (issue 386). RX_VK_EVICT_NO_FLUSH=1: not written back, as before)
         static const bool no_flush = getenv("RX_VK_EVICT_NO_FLUSH") != nullptr;
+        bool written_back = false;
         if (!no_flush && !overwritten && tex->gpu_written && !tex->released && flushable(*tex) &&
             flush_texture(*tex, tex->gpu, tex->gpu + tex->guest_size)) {
+            written_back = true;
             static std::atomic<int64_t> flushed{0};
             if (++flushed % 50 == 1) logf("vk: textures the GPU drew, written back into their memory before eviction: %lld so far", (long long)flushed.load());
         }
+        // (issue 47: its texels nowhere else, and nothing took its storage: noted, to be told if it is made again and sampled)
+        if (tex->gpu_written && !overwritten && !written_back &&
+            !(tex->released && (storage_taken(tex) || rewritten(tex))))
+            lost_note(*tex, frame_no, !tex->released ? 3 : past_cap ? 1 : tex->bytes > (4ull << 20) ? 2 : 0);
         if (shifted) n_dead++, b_dead += tex->bytes;
         watch_tex(tex, "evicted");
         if (!tex->gpu_written && tex->uploaded && !remade_skip_old()) {   // (above: made again, it is uploaded from memory)

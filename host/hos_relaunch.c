@@ -87,6 +87,14 @@ static void relaunch(void) {
 /* The window was closed (host/display.c's WM_CLOSE, host/posix/display_sdl.c's quit): the game exits, and starts again
    first when the menu asked for it */
 void hos_window_closed_exit(void) {
+    {   /* (relink, issue 32) a save being written goes to its end first: up to 3 s while a file open for writing was
+           written in the last second (host/nn_fs.c). The game's threads go on meanwhile */
+        int hos_fs_writing(void);
+        const int64_t t0 = hos_now_ns();
+        int waited = 0;
+        while (hos_fs_writing() && hos_now_ns() - t0 < 3000000000LL) waited = 1, hos_sleep_ns(10000000);
+        if (waited) hos_log("display: the window closed while the game wrote a file: waited %.0f ms for it", (hos_now_ns() - t0) / 1e6);
+    }
     const int again = relaunch_asked != 0;
     hos_log(again ? "display: window closed for a restart (the Insert menu's Restart now)" : "display: window closed, exiting");
     hos_log_flush();

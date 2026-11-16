@@ -42,12 +42,29 @@ static void mount(const char *name, const char *root, int writable) {
         WIN32_FIND_DATAA fd;
         snprintf(pattern, sizeof pattern, "%s\\System\\Resource\\ResourceSizeTable*", root);
         HANDLE f = FindFirstFileA(pattern, &fd);
+        /* (relink, issue 26) and said to the player: the game reads that table first and dies in its first second without it
+           (a null from its allocator), and a romfs from another PC port's install (a few packed .bin files) had none. Not
+           stopped here: only said, the game goes on as before */
+        const char *expected = "ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs";
+        char text[1024] = "";
         if (f == INVALID_HANDLE_VALUE) {
             hos_log("fs: the RomFS has no System\\Resource\\ResourceSizeTable file: the game files are incomplete");
+            snprintf(text, sizeof text, "The game files in %s are not the game's own RomFS: its System\\Resource folder has no "
+                     "ResourceSizeTable file, and the game will most likely close at once.\n\nA romfs folder taken from another PC "
+                     "port or tool holds the game in its own format and does not work with ReLink. Install again from your own dump "
+                     "of the game (the .nup file, or the romfs and exefs folders dumped from it).", root);
         } else {
             hos_log("fs: RomFS resource table %s (%lu bytes)", fd.cFileName, (unsigned long)fd.nFileSizeLow);
             FindClose(f);
+            if (_stricmp(fd.cFileName, expected)) {
+                hos_log("fs: that is not the supported version's (%s): the game files are from another version", expected);
+                snprintf(text, sizeof text, "The game files in %s are from another version of the game (%s; ReLink supports the "
+                         "one with %s), and the game may close or misbehave.\n\nInstall again from a dump of the game with its "
+                         "update applied, its romfs and exefs from the same dump.", root, fd.cFileName, expected);
+            }
         }
+        if (text[0] && !getenv("HOS_HEADLESS"))
+            MessageBoxA(NULL, text, "Project ReLink: game files", MB_OK | MB_ICONWARNING | MB_SETFOREGROUND);
     }
 #endif
 }
@@ -116,6 +133,16 @@ static void free_handle(uint64_t id) {
     AcquireSRWLockExclusive(&handle_lock);
     if (id && id <= 4096) handles[id - 1] = NULL;
     ReleaseSRWLockExclusive(&handle_lock);
+}
+
+/* (relink, issue 32) Whether the game is writing a file now: one is open for writing and was written in the last second.
+   The game's Commit is nothing here, so a save goes straight into its files; closing the window (or the Insert menu's Quit
+   game) waits for such a write to end before the process exits (host/hos_relaunch.c) */
+static volatile LONG writes_open;
+static volatile LONG64 last_write_ns;
+static void wrote_now(void) { InterlockedExchange64(&last_write_ns, hos_now_ns()); }
+int hos_fs_writing(void) {
+    return writes_open > 0 && hos_now_ns() - InterlockedExchangeAdd64(&last_write_ns, 0) < 1000000000LL;
 }
 
 /* ---- mounts --------------------------------------------------------------------------------------------------- */
@@ -262,6 +289,7 @@ HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
     Handle *fh = (Handle *)calloc(1, sizeof *fh);
     fh->h = h;
     fh->writable = want_write;
+    if (want_write) InterlockedIncrement(&writes_open);
     snprintf(fh->path, sizeof fh->path, "%s", g);
     G64(ARG(0)) = new_handle(fh);
     if (hos_trace || fs_trace()) hos_log("fs: OpenFile(%s)", g);
@@ -333,13 +361,16 @@ HLE(_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE) {
     ov.Offset = (DWORD)ARG(1);
     ov.OffsetHigh = (DWORD)(ARG(1) >> 32);
     DWORD put = 0;
+    wrote_now();
     WriteFile(fh->h, GP(ARG(2)), (DWORD)ARG(3), &put, &ov);
+    wrote_now();
     RET(put == ARG(3) ? 0 : 0x2EE202);
 }
 HLE(_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl) {
     Handle *fh = get_handle(c, ARG(0));
     LARGE_INTEGER sz;
     sz.QuadPart = (LONGLONG)ARG(1);
+    wrote_now();
     SetFilePointerEx(fh->h, sz, NULL, FILE_BEGIN);
     SetEndOfFile(fh->h);
     RET(0);
@@ -348,6 +379,7 @@ HLE(_ZN2nn2fs9FlushFileENS0_10FileHandleE) { FlushFileBuffers(get_handle(c, ARG(
 HLE(_ZN2nn2fs9CloseFileENS0_10FileHandleE) {
     Handle *fh = get_handle(c, ARG(0));
     CloseHandle(fh->h);
+    if (fh->writable) InterlockedExchangeAdd(&writes_open, -1);
     free_handle(ARG(0));
     free(fh);
 }
