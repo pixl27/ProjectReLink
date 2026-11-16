@@ -734,6 +734,24 @@ void framegen_wheel_scene(VkCommandBuffer cmd, VkImage image, VkFormat format, u
     wheel.copied.store(true, std::memory_order_relaxed);
 }
 
+// the backdrop's two images for a window picture of w x h (wheel.mu held): made while the wheel is closed too, so its first
+// opening does not wait for them
+static bool wheel_backdrop_images(VkCommandBuffer cmd, int w, int h) {
+    if (wheel.dimmed_w == (uint32_t)w && wheel.dimmed_h == (uint32_t)h) return true;
+    if (wheel.dimmed.image || wheel.blurred.image) wheel_idle(), drop_img(wheel.dimmed), drop_img(wheel.blurred);
+    wheel.dimmed_w = wheel.dimmed_h = 0;
+    if (!make_img(wheel.dimmed, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT) ||
+        !make_img(wheel.blurred, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) {
+        drop_img(wheel.dimmed), drop_img(wheel.blurred);
+        if (wheel.logged++ < 4) logf("vk: item wheel: its backdrop (%dx%d) was not made", w, h);
+        return false;
+    }
+    to_general(cmd, wheel.dimmed.image), to_general(cmd, wheel.blurred.image);
+    wheel.dimmed_w = w, wheel.dimmed_h = h;
+    logf("vk: item wheel: the backdrop is the scene before the HUD, blurred and dimmed (%dx%d)", w, h);
+    return true;
+}
+
 bool framegen_wheel_backdrop(VkCommandBuffer cmd, VkImage dst, VkFormat format, uint32_t sw, uint32_t sh, const int crop[4]) {
     if (!cmd || !dst || !sw || !sh || !framegen_wheel_on()) return false;
     int x0 = 0, y0 = 0, w = (int)sw, h = (int)sh;
@@ -741,7 +759,13 @@ bool framegen_wheel_backdrop(VkCommandBuffer cmd, VkImage dst, VkFormat format, 
     w = std::min(w, (int)sw - x0), h = std::min(h, (int)sh - y0);
     if (w <= 0 || h <= 0) return false;
     WheelPicture pic;
-    if (!wheel_picture((uint32_t)w, (uint32_t)h, &pic)) return false;   // (closed)
+    if (!wheel_picture((uint32_t)w, (uint32_t)h, &pic)) {   // (closed: its backdrop's images made ahead, once)
+        std::lock_guard lk(wheel.mu);
+        if (!wheel.failed && wheel.init && wheel.copied.load(std::memory_order_relaxed) && format == VK_FORMAT_R8G8B8A8_UNORM &&
+            wheel.w == (uint32_t)w && wheel.h == (uint32_t)h)
+            wheel_backdrop_images(cmd, w, h);
+        return false;
+    }
     std::lock_guard lk(wheel.mu);
     if (wheel.failed || !wheel.init || !wheel.copied.load(std::memory_order_relaxed)) {
         if (wheel.logged++ < 4) logf("vk: item wheel: no scene copied yet: not drawn");
@@ -753,19 +777,7 @@ bool framegen_wheel_backdrop(VkCommandBuffer cmd, VkImage dst, VkFormat format, 
             logf("vk: item wheel: not drawn (window picture %dx%d format %d, scene %ux%u)", w, h, (int)format, wheel.w, wheel.h);
         return false;
     }
-    if (wheel.dimmed_w != (uint32_t)w || wheel.dimmed_h != (uint32_t)h) {
-        if (wheel.dimmed.image || wheel.blurred.image) wheel_idle(), drop_img(wheel.dimmed), drop_img(wheel.blurred);
-        wheel.dimmed_w = wheel.dimmed_h = 0;
-        if (!make_img(wheel.dimmed, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT) ||
-            !make_img(wheel.blurred, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) {
-            drop_img(wheel.dimmed), drop_img(wheel.blurred);
-            if (wheel.logged++ < 4) logf("vk: item wheel: its backdrop (%dx%d) was not made", w, h);
-            return false;
-        }
-        to_general(cmd, wheel.dimmed.image), to_general(cmd, wheel.blurred.image);
-        wheel.dimmed_w = w, wheel.dimmed_h = h;
-        logf("vk: item wheel: the backdrop is the scene before the HUD, blurred and dimmed (%dx%d at %d,%d)", w, h, x0, y0);
-    }
+    if (!wheel_backdrop_images(cmd, w, h)) return false;
     if (!wheel_upload(cmd, pic)) {
         if (wheel.logged++ < 4) logf("vk: item wheel: its picture (%ux%u) was not uploaded", pic.w, pic.h);
         return false;

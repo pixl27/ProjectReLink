@@ -692,7 +692,9 @@ static void wheel_tick(Ctx *c, uint64_t screen, int opened) {
     MkwVkWheel next;
     memset(&next, 0, sizeof next);
     next.open = 1;
-    next.count = item_n ? MKWVK_WHEEL_SLOTS : 0;
+    /* (the slots shown from the row's first update, empty until its items are known: the session's first opening learns them
+       over a few frames, and the wheel waiting for them left the game's own row on screen meanwhile) */
+    next.count = MKWVK_WHEEL_SLOTS;
     next.page = page, next.pages = pages;
     next.cursor = next.pick = next.held = -1;
     for (int p = 0; p < pages && p < (int)sizeof next.page_kind; p++) next.page_kind[p] = (uint8_t)info[p].kind;

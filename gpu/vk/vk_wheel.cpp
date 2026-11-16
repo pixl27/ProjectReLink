@@ -16,6 +16,7 @@
 #include <cstring>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "vk_paths.h"
@@ -207,12 +208,38 @@ void icons_load() {
     fclose(f);
     logf("wheel: %d icons from %s", (int)icons.size(), path.c_str());
 }
+// The icons and names are read on a thread of their own (assets_start), from the first frame the Item wheel row is on: decoding
+// the icons takes about a second, and done at the first opening it held the present (the game's own row stayed on screen).
+// Until they are in, the wheel draws its slots with the names the host gives
+std::atomic<int> assets{0};   // (0 not started, 1 being read, 2 in)
+bool assets_ready() { return assets.load(std::memory_order_acquire) == 2; }
+void names_load();
+void assets_start() {
+    int idle = 0;
+    if (!assets.compare_exchange_strong(idle, 1, std::memory_order_acq_rel)) return;
+    try {
+        std::thread([] {
+            const auto t0 = std::chrono::steady_clock::now();
+            icons_load();
+            names_load();
+            assets.store(2, std::memory_order_release);
+            logf("wheel: icons and names read ahead in %d ms",
+                 (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+        }).detach();
+    } catch (const std::exception& e) {   // (no thread: read here, as before)
+        logf("wheel: the icons' thread did not start (%s): read now", e.what());
+        icons_load();
+        names_load();
+        assets.store(2, std::memory_order_release);
+    }
+}
 // the game's name of a wheel item: a second bottle of the same content is "<name>#2" (host/oot_wheel.c plain_name)
 std::string plain(const char* name) {
     const char* mark = std::strchr(name, '#');
     return mark ? std::string(name, mark - name) : std::string(name);
 }
 const Icon* icon_of(const char* name) {
+    if (!assets_ready()) return nullptr;
     const std::string n = plain(name);
     for (const Icon& ic : icons)
         if (ic.name == n) return &ic;
@@ -302,6 +329,7 @@ void names_load() {
     logf("wheel: %d names in %s from %s", (int)names.size(), lang.c_str(), path.c_str());
 }
 const char* name_of(const char* name, const char* label) {
+    if (!assets_ready()) return label;
     const std::string p = plain(name);
     for (const auto& n : names)
         if (n.first == p) return n.second.c_str();
@@ -314,8 +342,9 @@ const char* word(int which) {   // 0 Move, 1 Confirm, 2 Cancel
                           {"es-419", {"Mover", "Confirmar", "Cancelar"}}, {"fr", {"D\xc3\xa9placer", "Confirmer", "Annuler"}},
                           {"fr-CA", {"D\xc3\xa9placer", "Confirmer", "Annuler"}}, {"de", {"Verschieben", "Best\xc3\xa4tigen", "Abbrechen"}},
                           {"it", {"Sposta", "Conferma", "Annulla"}}, {"nl", {"Verplaatsen", "Bevestigen", "Annuleren"}}};
-    for (const W& e : t)
-        if (same_code(e.code, lang)) return e.w[which];
+    if (assets_ready())   // (lang: names_load's)
+        for (const W& e : t)
+            if (same_code(e.code, lang)) return e.w[which];
     static const char* en[3] = {"Move", "Confirm", "Cancel"};
     return en[which];
 }
@@ -462,6 +491,9 @@ constexpr float kBannerGap = 3, kBannerHalf = 3;   // (units: the gap above the 
 bool wheel_update(bool* changed) {
     *changed = false;
     if (!opts.item_wheel && !getenv("HOS_ITEM_WHEEL")) return false;
+    assets_start();   // (the first frame with the row on: the icons are in long before the first opening)
+    static bool drawn_ready = false;   // (they came in while the wheel is shown: drawn again with them)
+    if (!drawn_ready && assets_ready()) drawn_ready = true, *changed = true;
     // (the host's mic_name with MKWVK_WHEEL_QUERY answers the wheel's state: oot_wheel_state.h)
     const MkwVkWheel* src = host && host->mic_name ? (const MkwVkWheel*)(const void*)host->mic_name(MKWVK_WHEEL_QUERY) : nullptr;
     constexpr int64_t kSpreadNs = 160000000;
@@ -481,6 +513,21 @@ bool wheel_update(bool* changed) {
             if (s1 != drawn_seq) *changed = true, drawn_seq = s1;
             now = copy;
             shown = copy.open && copy.count > 0;
+            // (HOS_WHEEL_TRACE: how long after the host opened the row the wheel is first drawn, and with how many items)
+            static const bool trace = getenv("HOS_WHEEL_TRACE") != nullptr;
+            static std::chrono::steady_clock::time_point open_seen{};
+            static bool told = false;
+            if (trace) {
+                const auto t = std::chrono::steady_clock::now();
+                if (!copy.open) open_seen = {}, told = false;
+                else if (open_seen == std::chrono::steady_clock::time_point{}) open_seen = t;
+                if (shown && !told) {
+                    told = true;
+                    logf("wheel: drawn %d ms after the row opened (%d slots, icons %s)",
+                         (int)std::chrono::duration_cast<std::chrono::milliseconds>(t - open_seen).count(), (int)copy.count,
+                         assets_ready() ? "in" : "not in yet");
+                }
+            }
         }
     }
     if (!shown) {
@@ -498,8 +545,6 @@ bool wheel_update(bool* changed) {
 }
 
 void draw(Canvas& c, float mx, float my, float u, float pic_w) {
-    icons_load();
-    names_load();
     const MkwVkWheel& wh = now;
     auto lbl = [&](int i) { return name_of(wh.name[i], wh.label[i]); };
     const int n = std::min((int)wh.count, (int)MKWVK_WHEEL_SLOTS);
@@ -652,8 +697,13 @@ bool wheel_picture(uint32_t pw, uint32_t ph, WheelPicture* out) {
     static uint32_t last_w = 0, last_h = 0;
     if (changed || last_w != pw || last_h != ph || out8.empty()) {
         last_w = pw, last_h = ph;
+        const auto t0 = std::chrono::steady_clock::now();
         canvas.reset(w, h);
         draw(canvas, mx - left, my - top, u, (float)pw);
+        static int traced = 0;   // (HOS_WHEEL_TRACE: the first drawings' cost on the present's thread)
+        if (traced < 6 && getenv("HOS_WHEEL_TRACE"))
+            traced++, logf("wheel: picture %dx%d drawn in %d ms", w, h,
+                           (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         out8.resize((size_t)w * h * 4);
         for (size_t i = 0; i < out8.size(); i++) out8[i] = (uint8_t)std::lround(std::clamp(canvas.px[i], 0.0f, 1.0f) * 255);
         version++;
