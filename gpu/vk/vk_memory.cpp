@@ -2038,7 +2038,8 @@ bool take_capture(std::unique_ptr<Capture> c, uint64_t value, uint64_t completed
         const bool pending = log_wait && vk_timeline_completed() < c->late_value;
         const auto w0 = std::chrono::steady_clock::now();
         // (relink, 15/11) RX_VK_CAPTURE_WAIT_MAX_MS=<n>, default 20: the wait gives up after n ms (the pages are then copied as
-        // they are, as without the wait; 0: no limit, as before). Most waits are short (median 2.7 ms at the Market, hs2932); the
+        // they are, as without the wait; 0: the older vk_timeline_wait path, capped at 250 ms). Most waits are short (median
+        // 2.7 ms at the Market, hs2932); the
         // long ones are stalls: 140-220 ms in each arrival in Hyrule Castle, the GPU busy with the area's texture uploads
         // (hs2955-2958). MEASURED: Hyrule Castle's arrival at the player's 75 % (arrive_ab.ps1, 2 runs a side, castle_waitmax_1115):
         // time lost in frames of 40 ms and more 1039 / 1177 ms -> 835 / 867 (20 ms), 957 / 905 (30 ms); the longest frame 250 /
@@ -2059,18 +2060,21 @@ bool take_capture(std::unique_ptr<Capture> c, uint64_t value, uint64_t completed
         // 191 / 169 -> 219 / 225 ms). RX_VK_CAPTURE_WAIT_ADAPT=0: the fixed cap, as in 0.7.4
         static const bool adapt = !getenv("RX_VK_CAPTURE_WAIT_ADAPT") || atoi(getenv("RX_VK_CAPTURE_WAIT_ADAPT")) != 0;
         static std::atomic<int64_t> p90_us{(int64_t)wait_max_ms * 500};
+        uint32_t wait_cap_ms = 250;   // vk_timeline_wait below has the same legacy cap
+        bool wait_done = true;
         if (wait_max_ms > 0) {
             static std::atomic<int64_t> st_waits{0}, st_cut{0};
             const int64_t p90 = p90_us.load(std::memory_order_relaxed);
             static const int64_t k = getenv("RX_VK_CAPTURE_WAIT_K") ? std::clamp(atoi(getenv("RX_VK_CAPTURE_WAIT_K")), 1, 16) : 4;
             const int cap_ms = adapt ? (int)std::clamp<int64_t>(k * p90 / 1000, wait_max_ms, std::max(wait_max_ms, 250)) : wait_max_ms;
+            wait_cap_ms = (uint32_t)cap_ms;
             const bool must_wait = adapt && vk_timeline_completed() < c->late_value;
             const auto c0 = std::chrono::steady_clock::now();
-            const bool done = vk_timeline_wait_for(c->late_value, (uint32_t)cap_ms);
+            wait_done = vk_timeline_wait_for(c->late_value, wait_cap_ms);
             if (must_wait) {
-                const int64_t took = done ? std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - c0).count()
-                                          : (int64_t)cap_ms * 1000;
-                if (!done) p90_us.fetch_add(2000, std::memory_order_relaxed);
+                const int64_t took = wait_done ? std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - c0).count()
+                                               : (int64_t)cap_ms * 1000;
+                if (!wait_done) p90_us.fetch_add(2000, std::memory_order_relaxed);
                 else if (took > p90) p90_us.fetch_add(900, std::memory_order_relaxed);
                 else if (p90_us.fetch_sub(100, std::memory_order_relaxed) < 100) p90_us.store(0, std::memory_order_relaxed);
                 static std::atomic<bool> told{false};   // (once: a card slower than the cap, for the players' logs)
@@ -2078,13 +2082,14 @@ bool take_capture(std::unique_ptr<Capture> c, uint64_t value, uint64_t completed
                     logf("vk: captures' waits for late pages: the cap follows a slower GPU, now %d ms (RX_VK_CAPTURE_WAIT_MAX_MS %d)",
                          cap_ms, wait_max_ms);
             }
-            st_cut += !done;
+            st_cut += !wait_done;
             if (++st_waits % 1200 == 0)
                 logf("vk: captures' waits for late pages: %lld, %lld of them cut; the cap now %d ms (RX_VK_CAPTURE_WAIT_MAX_MS %d%s, "
                      "the waits' 90th percentile %.1f ms)", (long long)st_waits.load(), (long long)st_cut.load(), cap_ms,
                      wait_max_ms, adapt ? "" : ", fixed", p90_us.load() / 1000.0);
         } else {
             vk_timeline_wait(c->late_value);
+            wait_done = vk_timeline_completed() >= c->late_value;
         }
         if (log_wait) {   // (each wait over 1 ms: how long, which pages; 300 lines at most)
             const double wms1 = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - w0).count();
@@ -2095,9 +2100,10 @@ bool take_capture(std::unique_ptr<Capture> c, uint64_t value, uint64_t completed
                 for (size_t j = 0; j < c->late.size() && j < 4 && k < 120; j++)
                     k += snprintf(pg + k, sizeof pg - k, " %#llx", (unsigned long long)c->pages[c->late[j]] << 12);
                 pg[k] = 0;
-                logf("vk: late wait %.2f ms on %s thread (value %llu, done %llu now), %zu late pages:%s", wms1,
+                logf("vk: late wait %.2f ms on %s thread (value %llu, done %llu now): %s with %u ms cap, %zu late pages:%s", wms1,
                      vk_on_present_thread() ? "the presenting" : "another", (unsigned long long)c->late_value,
-                     (unsigned long long)vk_timeline_completed(), c->late.size(), pg);
+                     (unsigned long long)vk_timeline_completed(), wait_done ? "completed" : "CUT", wait_cap_ms,
+                     c->late.size(), pg);
             }
         }
         if (log_wait) {
