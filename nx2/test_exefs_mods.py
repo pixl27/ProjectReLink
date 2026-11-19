@@ -395,6 +395,48 @@ class Applied(Fixture):
         self.assertEqual({n: read(os.path.join(self.copy, n)) for n in os.listdir(self.copy)}, before)
 
 
+class CodeCave(Fixture):
+    """(Discord, 19/11) mods that put their own code in the rest of the .text's last page: applied, the .text that much longer"""
+    CAVE = b"\x1F\x20\x03\xD5\xC0\x03\x5F\xD6"   # (nop; ret)
+
+    def setUp(self):
+        super().setUp()
+        self.main = segments(text_size=0x1D40, seed=1)   # (.text ends 0x1d40, .rodata at 0x2000)
+        make_nso(os.path.join(self.exefs, "main"), self.main, MAIN_ID)
+        bid = MAIN_ID.hex()[:40]
+        # cave: a branch into the cave, and the cave's code at 0x1e00; past: from the page's last word into the .rodata
+        write(os.path.join(self.mods, "cave", "exefs", bid + ".ips"),
+              ips32([(0x100 + 0x40, b"\x70\x07\x00\x14"), (0x100 + 0x1E00, self.CAVE)]))
+        write(os.path.join(self.mods, "past", "exefs", bid + ".ips"), ips32([(0x100 + 0x1FFC, b"\x01\x02\x03\x04\x05")]))
+        self.r = self.prepare()
+
+    def test_cave_applied_and_the_page_end_kept(self):
+        text = "\n".join(self.r.lines)
+        self.assertIn("applied   cave/exefs/", text)
+        self.assertIn("left out  past/exefs/", text)
+        self.assertIn(".text's last page, and goes past its end (0x2000)", text)
+
+    def test_patched_text_reaches_the_cave(self):
+        import nso
+        path = os.path.join(self.work, exefs_mods.COPY, "main")
+        m = nso.Nso(path)
+        self.assertEqual([s[:2] for s in m.segments], [(0, 0x1E08), (0x2000, 0x800), (0x3000, 0x400)])
+        self.assertEqual(bytes(m.image[0x1D40:0x1E00]), bytes(0xC0))   # (zeros between the game's code and the cave)
+        self.assertEqual(bytes(m.image[0x1E00:0x1E08]), self.CAVE)
+        self.assertEqual(m.code_range(), (0, 0x1E08))
+        self.assertEqual(bytes(m.image[0x2000:0x2800]), self.main[1][1])
+        raw = read(path)
+        for i in range(3):
+            foff, _, size = struct.unpack_from("<3I", raw, 0x10 + 0x10 * i)
+            self.assertEqual(raw[0xA0 + 0x20 * i:0xC0 + 0x20 * i], hashlib.sha256(raw[foff:foff + size]).digest())
+
+    def test_description_counts_only_the_patch(self):
+        with open(self.r.description) as f:
+            desc = json.load(f)
+        (cave,) = desc["patches"]
+        self.assertEqual(cave["ranges"], [[0x40, 4], [0x1E00, 8]])
+
+
 def nso_bytes(path):
     return read(path)
 

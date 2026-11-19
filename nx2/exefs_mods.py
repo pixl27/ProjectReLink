@@ -15,7 +15,10 @@ Offsets. Both formats give positions in the module's NSO file as it is once deco
 segments at their memory offsets. A module image offset is therefore the patch's offset minus 0x100 (a pchtxt line's offset
 first gets its file's offset_shift added: "@flag offset_shift 0x100" makes offsets written as image offsets file positions).
 A patch writing outside the three segments (into the header, a gap between segments, or past the data into the bss), or
-across a segment's end, is left out whole, with a line: none of its records are applied.
+across a segment's end, is left out whole, with a line: none of its records are applied. One gap is not: the rest of the
+.text's last page (Discord, 19/11: Always-On Rupee Counter, Faster Dash, HUD of Time). The console maps the code a page at a
+time, so those bytes are there and executable, and mods put their own code in them (a "code cave"), as emulators let them:
+the .text is made that much longer (zeros up to the patch) and its code is translated with the rest.
 
 The patched modules are written, uncompressed, into <work>/exefs_mods (every other file of the exefs copied as it is), and
 <work>/exefs_mods.json says which bytes each patch changed: the lift (nx2/lift.py) reads it to say which of ReLink's own
@@ -35,6 +38,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HEADER = 0x100                       # (the NSO header before the first segment in a patch's offsets)
+PAGE = 0x1000                        # (the console maps a module's segments a page at a time)
 EXTENSIONS = (".ips", ".pchtxt")
 REPORT = "relink_exefs_mods.txt"
 DESCRIPTION = "exefs_mods.json"      # (in the work folder, beside the patched copy)
@@ -44,6 +48,10 @@ LIFT_STOP = "relink_exefs_stop.txt"    # (in <work>/sa/gen: why the lift stopped
 MAX_DEPTH = 4                        # (host/mods.c find_mods)
 FNV_OFFSET, FNV_PRIME = 0xcbf29ce484222325, 0x100000001b3
 SEGMENTS = (".text", ".rodata", ".data")
+
+
+def page_align(v):
+    return (v + PAGE - 1) // PAGE * PAGE
 
 
 class PatchError(ValueError):
@@ -342,14 +350,29 @@ class Module:
                 raise ValueError("%s segment %d: %d bytes, %d expected" % (path, i, len(d), size))
             self.segments.append((foff, moff, size))
             self.data.append(bytearray(d))
-        self.original = [bytes(d) for d in self.data]
+        self.original = [bytearray(d) for d in self.data]
+        # (the .text's last page, up to the .rodata: there on the console and executable, where code caves go)
+        text_off, text_size = self.segments[0][1], self.segments[0][2]
+        self.cave_end = max(text_off + text_size, min(page_align(text_off + text_size), self.segments[1][1]))
 
     def segment_of(self, offset, length):
-        """The segment index holding image bytes [offset, offset + length), or None"""
+        """The segment index holding image bytes [offset, offset + length), or None (the .text's: up to the end of its last
+        page, cave_end)"""
         for i, (_, moff, size) in enumerate(self.segments):
-            if moff <= offset and offset + length <= moff + size:
+            end = self.cave_end if i == 0 else moff + size
+            if moff <= offset and offset + length <= end:
                 return i
         return None
+
+    def grow(self, seg, end):
+        """The segment made long enough for image bytes up to end (the .text into its last page: zeros, the game's and the
+        patched copy alike, so only the patch's bytes count as changed)"""
+        foff, moff, size = self.segments[seg]
+        if end - moff > size:
+            more = end - moff - size
+            self.data[seg].extend(bytes(more))
+            self.original[seg].extend(bytes(more))
+            self.segments[seg] = (foff, moff, end - moff)
 
     def where(self, offset):
         """Words for an image offset outside the segments: which part of the module it falls in"""
@@ -357,7 +380,9 @@ class Module:
             return "the NSO header, before the code"
         for i, (_, moff, size) in enumerate(self.segments):
             if moff <= offset < moff + size:
-                return "%s, and goes past its end (%#x)" % (SEGMENTS[i], moff + size)
+                return "%s, and goes past its end (%#x)" % (SEGMENTS[i], self.cave_end if i == 0 else moff + size)
+        if self.segments[0][1] + self.segments[0][2] <= offset < self.cave_end:
+            return ".text's last page, and goes past its end (%#x)" % self.cave_end
         last = max(moff + size for _, moff, size in self.segments)
         if offset >= last:
             return "past the module's data (%#x: the bss, which the game clears at its start)" % last
@@ -372,6 +397,7 @@ class Module:
         body = bytearray(self.raw[HEADER:min(foff for foff, _, _ in self.segments)])
         for i, d in enumerate(self.data):
             struct.pack_into("<I", hdr, 0x10 + 0x10 * i, HEADER + len(body))
+            struct.pack_into("<I", hdr, 0x18 + 0x10 * i, len(d))   # (the .text longer with a code cave)
             struct.pack_into("<I", hdr, 0x60 + 4 * i, len(d))
             hdr[0xA0 + 0x20 * i:0xC0 + 0x20 * i] = hashlib.sha256(d).digest()
             body += d
@@ -497,6 +523,7 @@ def prepare(exefs, root, work, say=print):
                 if seg is None:
                     continue
                 base = m.segments[seg][1]
+                m.grow(seg, img + len(value))
                 for k, byte in enumerate(value):
                     o = img + k
                     was = owner.get((name, o))
