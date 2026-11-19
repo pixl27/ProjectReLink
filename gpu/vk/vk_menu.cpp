@@ -3376,8 +3376,28 @@ void item_reveal() {
     if (line >= item_scroll + kTeleportLines) item_scroll = line - kTeleportLines + 1;
     item_scroll = std::max(0, std::min(item_scroll, kItems + kItemSections - kTeleportLines));
 }
+// (relink, Discord 17/11: "The game freezes for a few seconds the first time I open the menu") What the menu's first
+// opening asked for on the render thread, asked ahead on a thread of its own, a few seconds into the game: NGX (whether the
+// Upscaler row can offer DLSS: NVIDIA's runtime loaded and started, seconds on some PCs) and the microphones (SDL's first
+// listing of the recording devices). The opening still asks again (cheap then: NGX is asked once, the list is the
+// system's as it is now)
+void warm_up() {
+    static int ticks;
+    if (ticks > 240) return;
+    if (++ticks != 240 || !dev.device) return;
+    std::thread([] {
+        const int64_t t0 = prof_now();
+        dlss_probe();
+        const int64_t t1 = prof_now();
+        if (can_mic()) host->mic_count();
+        logf("menu: made ready for its first opening (NVIDIA's DLSS asked %.0f ms, the microphones listed %.0f ms)",
+             (double)(t1 - t0) / 1e6, (double)(prof_now() - t1) / 1e6);
+    }).detach();
+}
+
 void menu_tick() {
     fullscreen_tick();
+    warm_up();
     {   // (relink) V-Sync changed: the swapchain made again at its next present, in the mode it now asks for (vk_main.cpp)
         static int applied = -1;
         if (applied < 0) applied = opts.vsync;
@@ -3502,9 +3522,18 @@ void menu_tick() {
         page = 0, listening = 0;
         // (the layout row shows the controls as they are: host/nn_hid.c keeps them, the ini's pad_ lines, and a saved
         // layout is not applied over them at start)
-        if (open_now.load()) opts.pad_layout = detect_pad_layout();
-        if (open_now.load()) dlss_probe();   // (whether the Upscaler row can offer DLSS here: NGX asked once)
-        if (open_now.load()) refresh_mics();   // (the microphones as they are now)
+        if (open_now.load()) {
+            const int64_t t0 = prof_now();
+            opts.pad_layout = detect_pad_layout();
+            const int64_t t1 = prof_now();
+            dlss_probe();   // (whether the Upscaler row can offer DLSS here: NGX asked once, warm_up asked it ahead)
+            const int64_t t2 = prof_now();
+            refresh_mics();   // (the microphones as they are now)
+            const int64_t t3 = prof_now();
+            if (t3 - t0 > 50000000LL)   // (an opening that held the game: what took the time)
+                logf("menu: the opening took %.0f ms (controls %.0f, DLSS %.0f, microphones %.0f)", (double)(t3 - t0) / 1e6,
+                     (double)(t1 - t0) / 1e6, (double)(t2 - t1) / 1e6, (double)(t3 - t2) / 1e6);
+        }
     }
     if (open_now.load() && page == 5) {   // (relink) the restart question: Later (the default) or Restart now
         if (mouse) {   // (a button under the cursor chosen, a click on it pressed; the wheel changes it, a right click is Later)
