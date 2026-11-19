@@ -6511,7 +6511,17 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     // out past the frame's 8 ms, every program the frame needs is asked for at once and the six workers build them side by side;
     // the draws come in as theirs are ready. A pass with no depth target (post-processing, the 2D of the HUD, blits: the ones whose
     // absence was a white or black picture) still waits without bound: RX_VK_PIPE_WAIT_FLAT=1 bounds those too, as before 01:20)
-    static const int wait_ms = getenv("RX_VK_PIPE_WAIT_MS") ? std::max(0, atoi(getenv("RX_VK_PIPE_WAIT_MS"))) : 8;
+    // (relink, 19/11, issues 29 and 54: the stutter while the camera turns. 2 ms, not 8. The graphics pipelines are made at their
+    // first draw in every run (lean pipelines), and turning the camera meets new ones every frame: the frame spent its whole 8 ms
+    // on them each time, and left the draws out after all. MEASURED on an RX 6600 XT (Windows, fast sync on), the Kokiri Forest
+    // save at 67 % with AMD FSR, the camera turned 3 s into a view not seen yet then 3 s back over it, frame times from
+    // HOS_PRESENT_LOG (5 runs at 8 ms, 4 at 2): time lost in frames over 25 ms into the new view 1057 -> 859 ms (its rate 27-38
+    // -> 39-41 fps), back over the view seen its frames over 25 ms 36 -> 18.8 (408 -> 352 ms lost, one run of the four with a
+    // 300 ms texture lookup right after a defragmentation pass, as one of the reference's); standing still unchanged (31 / 28 ms);
+    // the waits 4.6-5.6 -> 1.6-1.7 ms a frame; the exposure's steps (RX_VK_EXPOSURE_LOG=2) 0 in every run either way. The draws
+    // left out are the ones 8 left out (a 128x128 pass of two targets nearly all; the 1024x576 scene twice in three runs), now
+    // for a frame or two longer)
+    static const int wait_ms = getenv("RX_VK_PIPE_WAIT_MS") ? std::max(0, atoi(getenv("RX_VK_PIPE_WAIT_MS"))) : 2;
     static const bool wait_flat = getenv("RX_VK_PIPE_WAIT_FLAT") != nullptr;
     const bool bounded = wait_ms > 0 && persistent && (at.depth || wait_flat);
     static thread_local uint64_t wait_frame = ~0ull;
