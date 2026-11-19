@@ -189,10 +189,11 @@ bool memory_is_meter(uint64_t guest);
 ///   RX_VK_METER_HOLD  the game's read of those sums given the last result again when no new one has landed
 ///   RX_VK_LATE_SEQ    a capture's late pages wait for the submit that holds their write-back, not the submission's last
 ///   RX_VK_CAPTURE_WAIT_WHO (2 with it)  the presenting thread's captures do not wait
-/// On by default on every card (the maintainer's choice of 19/11; measured and watched on NVIDIA only: on AMD and Intel
-/// cards nobody has looked at it yet). RX_VK_FAST_SYNC=0 turns it off.
+/// Off by default again: 0.7.9.2 had it on for every card, and the ground and grass textures flickered with it, on NVIDIA
+/// too (issues 143, 142, 141; Discord, 19/11: an RTX 3050 Ti Laptop, gone with RX_VK_FAST_SYNC=0). RX_VK_FAST_SYNC=1 in
+/// relink_env.txt turns it on, faster where it shows nothing wrong; each part's own variable still decides that part.
 inline bool fast_sync_all() {
-    static const bool all = getenv("RX_VK_FAST_SYNC") ? atoi(getenv("RX_VK_FAST_SYNC")) != 0 : true;
+    static const bool all = getenv("RX_VK_FAST_SYNC") ? atoi(getenv("RX_VK_FAST_SYNC")) != 0 : false;
     return all;
 }
 inline bool fast_sync_part(const char* name) {
