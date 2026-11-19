@@ -872,7 +872,12 @@ void drop_fsr() {
 bool make_fsr(uint32_t rw, uint32_t rh, uint32_t dw, uint32_t dh, const Camera& cam) {
     State& s = st();
     const bool dynamic = opts.resolution == 0 && dw != rw;
-    const unsigned flags = (cam.infinite ? FSR_DEPTH_INFINITE : 0u) | (dynamic ? FSR_DYNAMIC : 0u);
+    // (relink: the FSR version row, opts.fsr_version 1: FSR 3.1 over the runtime's default (FSR 4 where it gives it). A change
+    // of row is a change of flags: a new upscaler. The colour given is gamma-encoded unless RX_VK_FSR_SRGB=0: FSR 4 is told at
+    // its creation)
+    static const bool perceptual = env_switch("RX_VK_FSR_SRGB") != 0;
+    const unsigned flags = (cam.infinite ? FSR_DEPTH_INFINITE : 0u) | (dynamic ? FSR_DYNAMIC : 0u) |
+                           (opts.fsr_version == 1 && fsr31_available() ? FSR_V31 : 0u) | (perceptual ? FSR_PERCEPTUAL : 0u);
     if (s.fsr && s.fsr_ow == dw && s.fsr_oh == dh && s.fsr_flags == flags && rw <= s.fsr_rw && rh <= s.fsr_rh) {
         s.fsr_iw = std::max(s.fsr_iw, rw), s.fsr_ih = std::max(s.fsr_ih, rh);
         return true;
@@ -901,9 +906,9 @@ bool make_fsr(uint32_t rw, uint32_t rh, uint32_t dw, uint32_t dh, const Camera& 
     // second value (dlss_math.h dlss_jitter_pixels), so only its length is taken)
     s.fsr_phases = fsr_jitter_phases(s.fsr, rw, dw);
     logf("vk: AMD FSR: upscaler %llu made (%s; frame %llu, %.1f ms of CPU): %ux%u (up to %ux%u) -> %ux%u, flags %#x, jitter "
-         "of %d phases, %s; camera planes %.4g to %.6g%s, vertical field of view %.1f degrees",
+         "of %d phases, FSR %s; camera planes %.4g to %.6g%s, vertical field of view %.1f degrees",
          (unsigned long long)s.fsr_made, why, (unsigned long long)texture_frame_no(), made_ms, rw, rh, mw, mh, dw, dh, flags,
-         s.fsr_phases, fsr_version(), cam.near_z, cam.far_z, cam.infinite ? " (no far plane)" : "", cam.fov_y * 57.29578f);
+         s.fsr_phases, fsr_context_version(s.fsr), cam.near_z, cam.far_z, cam.infinite ? " (no far plane)" : "", cam.fov_y * 57.29578f);
     s.last_frame = 0;   // (a new history)
     return true;
 }
@@ -1062,19 +1067,32 @@ int dlss_status(char* b, size_t n) {
     return mode;
 }
 
+/// (relink) A version name's major number ("4.1.2": 4); 0 when there is none
+static int major_of_version(const char* name) {
+    for (const char* p = name ? name : ""; *p; p++)
+        if (*p >= '0' && *p <= '9') return atoi(p);
+    return 0;
+}
+
 void dlss_idle() {
     State& s = st();
     if (!s.holding.load(std::memory_order_relaxed)) return;
     std::lock_guard lk(s.mu);
     const uint64_t now = texture_frame_no();
-    if (now - s.asked <= 120) return;   // (DLSS in use, or off for under 120 frames (2 s): kept, a row stepped through comes back at once)
+    // (DLSS in use, or off for under 120 frames (2 s): kept, a row stepped through comes back at once. (relink) FSR 4 still
+    // chosen in the Upscaler row and only not drawing (a cutscene, a menu, a scene the game does not upscale): kept 30 s.
+    // Its network takes 200 to 900 ms of CPU to make again (FSR 3.1: some 15 ms), a hitch each time play came back after
+    // a cutscene of over two seconds, in the castle town's test on an RX 6600 XT)
+    const bool fsr4_kept = s.fsr && is_fsr(dlss_mode()) && major_of_version(fsr_context_version(s.fsr)) >= 4;
+    const uint64_t idle = fsr4_kept ? 1800 : 120;
+    if (now - s.asked <= idle) return;
     if (s.fsr || s.feature_ow) {
         const char* name = s.fsr ? "AMD FSR" : "NVIDIA DLSS";
         drop_fsr();
         drop_feature();
-        logf("vk: %s: not used for 120 frames (the last at frame %llu, now %llu): its %s and images let go; "
-             "the next upscale with it makes them again", name, (unsigned long long)s.asked, (unsigned long long)now,
-             !strcmp(name, "AMD FSR") ? "upscaler" : "feature");
+        logf("vk: %s: not used for %llu frames (the last at frame %llu, now %llu): its %s and images let go; "
+             "the next upscale with it makes them again", name, (unsigned long long)idle, (unsigned long long)s.asked,
+             (unsigned long long)now, !strcmp(name, "AMD FSR") ? "upscaler" : "feature");
     }
     for (Image* im : {&s.color, &s.depth, &s.motion, &s.output}) drop_image(*im);
     for (auto& pb : s.pose_buffers)   // (the actor motion's poses and cameras)

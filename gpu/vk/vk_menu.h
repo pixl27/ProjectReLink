@@ -38,6 +38,8 @@ struct Options {
                           // SDK only). Saved as dlss
     int dlss_model = 0;   // DLSS's network, by its preset: 0 K (transformer), 1 M, 2 L (second-generation transformer), 3 NVIDIA's
                           // default (upscaler_rows.h model_preset; vk_dlss.cpp). RX_VK_DLSS_PRESET over it
+    int fsr_version = 0;  // (relink) AMD FSR's version: 0 Auto (the newest AMD's runtime makes on this GPU: FSR 4 on the RX 6000
+                          // series and later), 1 FSR 3.1 (vk_fsr.cpp; vk_dlss.cpp make_fsr). Saved as fsr_version
     int sharpness = 0;    // 0 to 100
     int realtime = 1;     // game time follows the clock (host/nn_vi.c); 0: per frame (slower frames, slower game)
     int handheld = 0;     // the game's handheld profile: ~4 fps, softer; read once, at the start (host/nn_applet.c)

@@ -93,7 +93,8 @@ sealed class Settings
     public int Fullscreen = 1, FrameGeneration = 0, FramePacing = 0, FrameRate = 0, Resolution = 1, Upscaling = 0, Sharpness = 0,
                VSync = 0,   // (the game's V-Sync row, saved as v-sync: 0 off, 1 on, FIFO)
                GameSpeed = 0, Handheld = 0, Ultrawide = 0, FpsCounter = 0,
-               Upscaler = 0;   // (the game's Upscaler row, saved as dlss: 0 the game's own, 1 NVIDIA DLSS, 2 NVIDIA DLAA, 3 AMD FSR, 4 AMD FSR native AA)
+               Upscaler = 0,   // (the game's Upscaler row, saved as dlss: 0 the game's own, 1 NVIDIA DLSS, 2 NVIDIA DLAA, 3 AMD FSR, 4 AMD FSR native AA)
+               FsrVersion = 0;   // (the game's FSR version row: 0 Auto, FSR 4 where the GPU runs it; 1 FSR 3.1)
     // the launcher's
     public bool Display60 = true, Audio = true, InvertY = false;
     /// The game built with NVIDIA DLSS: NVIDIA's DLSS SDK fetched from NVIDIA at each build, its license accepted by ticking it
@@ -182,6 +183,7 @@ sealed class Settings
         Ultrawide = Int(g, "ultrawide", 0, 0, 1);
         FpsCounter = Int(g, "fps_counter", 0, 0, 1);
         Upscaler = Int(g, "dlss", 0, 0, 4);
+        FsrVersion = Int(g, "fsr_version", 0, 0, 1);
         other.Clear();
         foreach (var (k, v) in g)
             if (!Known.Contains(k)) other[k] = v;
@@ -202,7 +204,7 @@ sealed class Settings
     static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
     {
         "fullscreen", "frame_generation", "frame_pacing", "v-sync", "frame_rate", "resolution", "upscaling", "sharpness", "game_speed",
-        "handheld_profile", "ultrawide", "fps_counter", "dlss",
+        "handheld_profile", "ultrawide", "fps_counter", "dlss", "fsr_version",
     };
 
     public void Save()
@@ -234,6 +236,7 @@ sealed class Settings
         Row("ultrawide", Ultrawide);
         Row("fps_counter", FpsCounter);
         Row("dlss", Upscaler);
+        Row("fsr_version", FsrVersion);
         foreach (var (k, v) in other) g.Append(k).Append('=').Append(v).Append('\n');
         File.WriteAllText(GameIni, g.ToString());
 

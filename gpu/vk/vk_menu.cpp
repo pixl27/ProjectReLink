@@ -150,9 +150,12 @@ namespace ur = upscaler_rows;
 int upscaler() { return dlss_mode(); }
 bool dlss_ok() { return dlss_why() == DLSS_OK; }
 bool fsr_ok() { return fsr_why() == FSR_OK; }
+/// (relink) FSR 4 runs: AMD's runtime makes it on this GPU and the FSR version row leaves it on Auto
+bool fsr4_runs() { return fsr4_available() && !(opts.fsr_version == 1 && fsr31_available()); }
 const char* tx_upscaler(int) {
     static const char* t[] = {"Game's own", "NVIDIA DLSS", "NVIDIA DLAA", "AMD FSR", "AMD FSR native AA"};
-    return t[std::clamp(upscaler(), 0, ur::kUpscalers - 1)];
+    static const char* t4[] = {"Game's own", "NVIDIA DLSS", "NVIDIA DLAA", "AMD FSR 4", "AMD FSR 4 native AA"};
+    return (fsr4_runs() ? t4 : t)[std::clamp(upscaler(), 0, ur::kUpscalers - 1)];
 }
 /// The Upscaler: the one shown (what runs, upscaler()), and with the game's own, why DLSS and DLAA, and FSR, are not offered
 const char* hn_upscaler(int v, int variant) {
@@ -166,6 +169,13 @@ const char* hn_upscaler(int v, int variant) {
         "that move by themselves can trail for now.",
         "AMD's FSR 3.1, the 3D at full size with its edges smoothed, on any GPU; slower. A little softer than the game's "
         "own. Things that move by themselves can trail for now.",
+    };
+    // (relink: FSR 4, AMD's network, where its runtime makes it on this GPU: the RX 6000 series and later)
+    static const char* const t4[] = {
+        "AMD's FSR 4, its network, from a smaller 3D. Sharper and steadier than FSR 3.1, at more GPU time on an RX 6000 or "
+        "7000. The FSR version row can go back to 3.1.",
+        "AMD's FSR 4, its network, the 3D at full size with its edges smoothed; the slowest of AMD's. The FSR version row "
+        "can go back to 3.1.",
     };
     static const char* const why[DLSS_WHY_COUNT] = {
         nullptr,
@@ -185,9 +195,9 @@ const char* hn_upscaler(int v, int variant) {
         "AMD FSR: libamd_fidelityfx_vk.so did not load (the log says why).",
         "AMD FSR: libamd_fidelityfx_vk.so has no upscaler for Vulkan.",
 #else
-        "AMD FSR: AMD's amd_fidelityfx_vk.dll is not in the game folder.",
-        "AMD FSR: amd_fidelityfx_vk.dll did not load (the log says why; it needs Microsoft's Visual C++ runtime).",
-        "AMD FSR: amd_fidelityfx_vk.dll has no upscaler for Vulkan.",
+        "AMD FSR: AMD's amd_fidelityfx_loader_vk.dll is not in the game folder.",
+        "AMD FSR: AMD's DLLs did not load (the log says why; they need Microsoft's Visual C++ runtime).",
+        "AMD FSR: AMD's DLLs have no upscaler for Vulkan.",
 #endif
         "AMD FSR: this GPU or its driver cannot run it.",
     };
@@ -195,9 +205,11 @@ const char* hn_upscaler(int v, int variant) {
     int w = 0, f = 0;
     if (variant < 0) v = std::clamp(upscaler(), 0, ur::kUpscalers - 1), w = (int)dlss_why(), f = (int)fsr_why();
     else if (v == ur::GAME) w = variant / FSR_WHY_COUNT, f = variant % FSR_WHY_COUNT;
+    else if ((v == ur::FSR || v == ur::FSR_AA) && variant == 1) return t4[v - ur::FSR];   // (relink: its FSR 4 line, for the height)
     else if (variant > 0) return nullptr;
     v = std::clamp(v, 0, ur::kUpscalers - 1);
     if (w >= DLSS_WHY_COUNT || f >= FSR_WHY_COUNT) return nullptr;
+    if ((v == ur::FSR || v == ur::FSR_AA) && variant < 0 && fsr4_runs()) return t4[v - ur::FSR];
     if (v != ur::GAME || (!why[w] && !fsr_why_text[f])) return t[v];
     static char b[DLSS_WHY_COUNT][FSR_WHY_COUNT][320];
     snprintf(b[w][f], sizeof b[w][f], "%s%s%s%s%s", t[0], why[w] ? " " : "", why[w] ? why[w] : "",
@@ -235,6 +247,28 @@ const char* hn_dlss_model(int v, int variant) {
     if (variant == 1) return unused;
     if (variant == 2) return env;
     return variant == 0 ? t[std::clamp(v, 0, ur::kModels - 1)] : nullptr;
+}
+/// (relink) The FSR version row (opts.fsr_version): Auto (the newest AMD's runtime makes here) or FSR 3.1
+const char* tx_fsr_version(int v) {
+    if (fsr_ok() && !fsr4_available()) {   // (FSR 3.1 is all there is here: the row says so)
+        static char b[48];
+        snprintf(b, sizeof b, "FSR %s", fsr_version());
+        return b;
+    }
+    return v == 1 ? "FSR 3.1" : "Auto (FSR 4)";
+}
+/// The FSR version: the value chosen; variant 1: another upscaler draws; variant 2: FSR 4 is not made on this GPU
+const char* hn_fsr_version(int v, int variant) {
+    static const char* const t[] = {
+        "FSR 4, AMD's network: sharper and steadier, at more GPU time (about 2 ms a frame at 1080p on an RX 6600).",
+        "FSR 3.1: lighter on the GPU, softer, and things that move can shimmer more.",
+    };
+    static const char* const unused = "Used by AMD FSR and its native AA: choose one in the Upscaler row.";
+    static const char* const only31 = "AMD's runtime makes FSR 4 on the RX 6000 series and later, with a recent driver: FSR 3.1 here.";
+    if (variant < 0) variant = !fsr_ok() || (upscaler() != ur::FSR && upscaler() != ur::FSR_AA) ? 1 : !fsr4_available() ? 2 : 0;
+    if (variant == 1) return unused;
+    if (variant == 2) return only31;
+    return variant == 0 ? t[std::clamp(v, 0, 1)] : nullptr;
 }
 const char* tx_percent(int v) {
     static char b[8];
@@ -323,7 +357,8 @@ const char* hn_resolution(int v, int variant) {
 bool row_fixed(const int* value) {
     return (value == &opts.reflex && !reflex_available()) || (value == &opts.dlss && ur::upscaler_fixed(dlss_ok(), fsr_ok())) ||
            (value == &opts.resolution && ur::resolution_fixed(upscaler())) || (value == &opts.upscale && !filter_needed()) ||
-           (value == &opts.dlss_model && ur::model_fixed(upscaler(), dlss_preset_env() != nullptr));
+           (value == &opts.dlss_model && ur::model_fixed(upscaler(), dlss_preset_env() != nullptr)) ||
+           (value == &opts.fsr_version && (!fsr31_available() || (upscaler() != ur::FSR && upscaler() != ur::FSR_AA)));
 }
 const char* tx_output_res(int v) {
     static char b[32];
@@ -582,6 +617,8 @@ Row rows[] = {
      hn_upscaler},
     {TAB_GRAPHICS, "DLSS model", &opts.dlss_model, 0, ur::kModels - 1, 1, tx_dlss_model,
      "Which of NVIDIA's DLSS networks draws the picture.", hn_dlss_model, false, true},
+    {TAB_GRAPHICS, "FSR version", &opts.fsr_version, 0, 1, 1, tx_fsr_version,
+     "Which of AMD's FSR draws the picture: FSR 4, its network, where this GPU runs it, or FSR 3.1.", hn_fsr_version, false, true},
     {TAB_GRAPHICS, "Render resolution", &opts.resolution, 0, ur::kValues - 1, 1, tx_resolution,
      "The share of the output the 3D is drawn at; the Upscaler fills in the rest.", hn_resolution},
     {TAB_GRAPHICS, "Window scaling filter", &opts.upscale, 0, 2, 1, tx_filter,
@@ -836,7 +873,8 @@ const char* row_group(int i, int* place) {
     static const struct { const char* name; const char* group; int place; } groups[] = {
         {"Fullscreen", "DISPLAY", 1}, {"HDR", "DISPLAY", 1}, {"GPU device", "DISPLAY", 1}, {"Output resolution", "DISPLAY", 1},
         {"Handheld profile", "DISPLAY", 1}, {"Ultrawide", "DISPLAY", 1}, {"Field of view", "DISPLAY", 1},
-        {"Upscaler", "UPSCALING", 2}, {"DLSS model", "UPSCALING", 2}, {"Render resolution", "UPSCALING", 2},
+        {"Upscaler", "UPSCALING", 2}, {"DLSS model", "UPSCALING", 2}, {"FSR version", "UPSCALING", 2},
+        {"Render resolution", "UPSCALING", 2},
         {"Window scaling filter", "UPSCALING", 2}, {"Sharpness", "UPSCALING", 2},
         {"Frame generation", "SMOOTHNESS", 3}, {"Frame pacing", "SMOOTHNESS", 3}, {"V-Sync", "SMOOTHNESS", 3}, {"Low latency", "SMOOTHNESS", 3},
         {"Robust buffers", "ADVANCED", 4},

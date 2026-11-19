@@ -85,8 +85,9 @@ screenshot: the game's picture at its output resolution, without the menu or the
 `screenshots` folder (a line over the game says where). These three keys can be changed in the menu's Gameplay tab
 (**Menu key**, **Screenshot key**, **Fullscreen key**: F1 to F12, Insert, Pause or Scroll Lock).
 
-**Upscaler** (since 0.7): what scales the 3D up to the screen. The game's own network by default; **AMD FSR 3.1** on any
-graphics card (AMD's library comes with ReLink); or **NVIDIA DLSS / DLAA** on an RTX card, after turning on **NVIDIA DLSS** on
+**Upscaler** (since 0.7): what scales the 3D up to the screen. The game's own network by default; **AMD FSR 4**, AMD's network,
+on a Radeon RX 6000 or newer with a recent driver, and **AMD FSR 3.1** on any graphics card (AMD's DLLs come with ReLink; the
+**FSR version** row chooses between them); or **NVIDIA DLSS / DLAA** on an RTX card, after turning on **NVIDIA DLSS** on
 the launcher's Display page: that builds the game again with NVIDIA's DLSS SDK, downloaded from NVIDIA under NVIDIA's license.
 With FSR or DLSS, set Sharpness to about 80 %. The frame rates below are measured without them.
 
@@ -347,8 +348,9 @@ d'installer quoi que ce soit.
 4. Appuyez sur **Install**. Comptez 10 à 45 minutes selon le processeur ; le PC reste utilisable.
 5. Appuyez sur **Play**. Le lanceur est en anglais par défaut ; le français se choisit dans sa page Game.
 
-**Upscaler** (depuis la 0.7) : ce qui agrandit la 3D jusqu'à l'écran. Le réseau du jeu par défaut ; **AMD FSR 3.1** sur toutes
-les cartes graphiques (la bibliothèque d'AMD est livrée avec ReLink) ; ou **NVIDIA DLSS / DLAA** sur une carte RTX, après avoir
+**Upscaler** (depuis la 0.7) : ce qui agrandit la 3D jusqu'à l'écran. Le réseau du jeu par défaut ; **AMD FSR 4**, le réseau
+d'AMD, sur une Radeon RX 6000 ou plus récente avec un pilote récent, et **AMD FSR 3.1** sur toutes les cartes graphiques (les DLL
+d'AMD sont livrées avec ReLink ; la ligne **FSR version** choisit entre les deux) ; ou **NVIDIA DLSS / DLAA** sur une carte RTX, après avoir
 activé **NVIDIA DLSS** dans la page Display du lanceur : le jeu est reconstruit avec le SDK DLSS, téléchargé chez NVIDIA sous
 la licence de NVIDIA. Avec FSR ou DLSS, mettez la netteté vers 80 %.
 

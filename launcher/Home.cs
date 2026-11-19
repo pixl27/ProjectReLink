@@ -22,7 +22,7 @@ public partial class MainWindow
 
     CheckBox Fullscreen = null!, Display60 = null!, FpsCounter = null!, Ultrawide = null!, FramePacing = null!, VSync = null!, Audio = null!, Handheld = null!, InvertY = null!,
              NvidiaDlss = null!;
-    WrapPanel ResolutionGroup = null!, UpscalerGroup = null!, UpscaleGroup = null!, FrameRateGroup = null!, SpeedGroup = null!, FramegenGroup = null!, UiLanguageGroup = null!;
+    WrapPanel ResolutionGroup = null!, UpscalerGroup = null!, FsrVersionGroup = null!, UpscaleGroup = null!, FrameRateGroup = null!, SpeedGroup = null!, FramegenGroup = null!, UiLanguageGroup = null!;
     Slider Sharpness = null!;
     TextBlock SharpnessText = null!, Display60Hint = null!, FolderText = null!;
     ComboBox LanguageBox = null!;
@@ -71,9 +71,13 @@ public partial class MainWindow
                     "Native is the sharpest. The percentages lighten the graphics card's work; the game scales the picture up afterwards."),
                   "Resolution", (1, L("Native", "Native")), (0, L("Automatique", "Automatic")), (2, "75 %"), (3, "67 %"), (5, "58 %"), (4, "50 %"));
         UpscalerGroup = ChoiceRow(RowsDisplay, L("Agrandissement de la 3D", "Upscaler"),
-                  L("Ce qui agrandit la 3D jusqu'à l'écran et lisse ses bords. AMD FSR marche sur toutes les cartes graphiques ; NVIDIA DLSS demande une carte RTX et la case NVIDIA DLSS ci-dessous. Avec FSR ou DLSS, mettez la netteté vers 80 %.",
-                    "What scales the 3D up to the screen and smooths its edges. AMD FSR works on every graphics card; NVIDIA DLSS needs an RTX card and the NVIDIA DLSS switch below. With FSR or DLSS, set Sharpness to about 80 %."),
+                  L("Ce qui agrandit la 3D jusqu'à l'écran et lisse ses bords. AMD FSR marche sur toutes les cartes graphiques (FSR 4 sur les Radeon RX 6000 et plus récentes) ; NVIDIA DLSS demande une carte RTX et la case NVIDIA DLSS ci-dessous. Avec FSR ou DLSS, mettez la netteté vers 80 %.",
+                    "What scales the 3D up to the screen and smooths its edges. AMD FSR works on every graphics card (FSR 4 on Radeon RX 6000 and newer); NVIDIA DLSS needs an RTX card and the NVIDIA DLSS switch below. With FSR or DLSS, set Sharpness to about 80 %."),
                   "Upscaler", (0, L("Celui du jeu", "The game's own")), (3, "AMD FSR"), (4, L("AMD FSR, AA natif", "AMD FSR native AA")), (1, "NVIDIA DLSS"), (2, "NVIDIA DLAA"));
+        FsrVersionGroup = ChoiceRow(RowsDisplay, L("Version d'AMD FSR", "AMD FSR version"),
+                  L("Auto : FSR 4, le réseau d'AMD, plus net et plus stable, là où la carte le fait tourner (Radeon RX 6000 et plus récentes, pilote récent), sinon FSR 3.1. FSR 3.1 : plus léger pour la carte graphique.",
+                    "Auto: FSR 4, AMD's network, sharper and steadier, where the card runs it (Radeon RX 6000 and newer, recent driver), else FSR 3.1. FSR 3.1: lighter on the graphics card."),
+                  "FsrVersion", (0, L("Auto (FSR 4)", "Auto (FSR 4)")), (1, "FSR 3.1"));
         UpscaleGroup = ChoiceRow(RowsDisplay, L("Filtre d'agrandissement de la fenêtre", "Window scaling filter"), L("Quand l'image est plus petite que la fenêtre.", "When the picture is smaller than the window."), "Upscale", (0, L("Simple", "Simple")), (1, "Catmull-Rom"), (2, "Lanczos"));
         SwitchRow(RowsDisplay, L("NVIDIA DLSS (cartes RTX)", "NVIDIA DLSS (RTX cards)"),
                   L("Le jeu est reconstruit avec le SDK DLSS, téléchargé chez NVIDIA. L'activer, c'est accepter la licence du SDK NVIDIA DLSS (github.com/NVIDIA/DLSS). Ensuite, choisissez DLSS ou DLAA dans le menu du jeu (touche Insert, Upscaler).",
@@ -319,7 +323,8 @@ public partial class MainWindow
     void UpdateHero()
     {
         var res = s.Resolution switch { 1 => L("Native", "Native"), 0 => L("Automatique", "Automatic"), 2 => "75 %", 3 => "67 %", 5 => "58 %", 4 => "50 %", _ => "" };
-        var up = s.Upscaler switch { 3 => "AMD FSR", 4 => L("AMD FSR, AA natif", "AMD FSR native AA"), 1 => "NVIDIA DLSS", 2 => "NVIDIA DLAA", _ => L("Celui du jeu", "The game's own") };
+        var fsr = s.FsrVersion == 1 ? "AMD FSR 3.1" : "AMD FSR";   // (Auto: FSR 4 where the card runs it, which the game knows)
+        var up = s.Upscaler switch { 3 => fsr, 4 => L($"{fsr}, AA natif", $"{fsr} native AA"), 1 => "NVIDIA DLSS", 2 => "NVIDIA DLAA", _ => L("Celui du jeu", "The game's own") };
         LooksText.Text = $"{(s.Fullscreen != 0 ? L("Plein écran", "Full screen") : L("Fenêtre", "Window"))} · {res} · {up}";
         var rate = s.FrameRate switch { 1 => L("FPS débloqués", "Unlocked fps"), 2 => L("30 fps réguliers", "Even 30 fps"), _ => "60 fps" };
         MovesText.Text = s.FrameGeneration >= 2 ? $"{rate} · ×{s.FrameGeneration}" : rate;
@@ -385,6 +390,7 @@ public partial class MainWindow
         });
         OnPick(ResolutionGroup, v => s.Resolution = v);
         OnPick(UpscalerGroup, v => s.Upscaler = v);
+        OnPick(FsrVersionGroup, v => s.FsrVersion = v);
         OnPick(UpscaleGroup, v => s.Upscaling = v);
         OnPick(FrameRateGroup, v => s.FrameRate = v);
         OnPick(SpeedGroup, v => s.GameSpeed = v);
@@ -416,6 +422,7 @@ public partial class MainWindow
         NvidiaDlss.IsChecked = s.NvidiaDlss;
         Pick(ResolutionGroup, s.Resolution);
         Pick(UpscalerGroup, s.Upscaler);
+        Pick(FsrVersionGroup, s.FsrVersion);
         Pick(UpscaleGroup, s.Upscaling);
         Pick(FrameRateGroup, s.FrameRate);
         Pick(FramegenGroup, s.FrameGeneration);
@@ -438,6 +445,7 @@ public partial class MainWindow
         // (NVIDIA DLSS and DLAA to choose only in a game built with them: the NVIDIA DLSS switch)
         foreach (var r in Radios(UpscalerGroup))
             if ((int)r.Tag is 1 or 2) r.Visibility = s.NvidiaDlss || s.Upscaler is 1 or 2 ? Visibility.Visible : Visibility.Collapsed;
+        FsrVersionGroup.IsEnabled = s.Upscaler is 3 or 4;   // (the FSR version: only while AMD FSR upscales)
         // (frame generation fills the display's own refresh: no switch to 60 Hz then)
         Display60.IsEnabled = display60Possible && s.FrameGeneration < 2;
         UpdateHero();

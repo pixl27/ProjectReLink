@@ -315,19 +315,24 @@ def sdl_libraries(dest):
     return n
 
 
-# (relink, 0.7) AMD FidelityFX Super Resolution 3.1 (gpu/vk/vk_dlss.cpp's FSR choice): AMD's prebuilt, signed Vulkan library from
-# the FidelityFX SDK v1.1.4 (MIT), with its license, beside the game (nx2/build.py copies them from third_party/ffx). Taken here
-# from AMD's own repository by size and SHA-256, as the SDL files above: (file, SHA-256, size, address)
+# (relink, 0.7; FSR 4 in 0.8) AMD FSR (gpu/vk/vk_dlss.cpp's FSR choice, gpu/vk/vk_fsr.cpp): AMD's prebuilt, signed Vulkan DLLs from
+# the FSR SDK v2.4.0 (MIT, its docs/license.md), the loader and its upscaler (FSR 4.1 where AMD's runtime runs it, FSR 3.1 on any
+# GPU), with the license, beside the game (nx2/build.py copies them from third_party/ffx). The license's text is the SDK's MIT
+# one, as v1.1.4 shipped it. Taken here from AMD's own repository by size and SHA-256, as the SDL files above:
+# (file, SHA-256, size, address)
+FFX_SIGNED = "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v2.4.0/Kits/FidelityFX/signedbin/"
 FFX = (
-    ("amd_fidelityfx_vk.dll", "a1624cc4238fef046f30c4d80ce3f47be63fc5f5373f49e3ee9edb9960f54c78", 9332432,
-     "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v1.1.4/PrebuiltSignedDLL/amd_fidelityfx_vk.dll"),
+    ("amd_fidelityfx_loader_vk.dll", "38a56a01fb3565c0757d9f5c1e4e69de4b65e5f2e5769b323b200dc1f142bab9", 39184,
+     FFX_SIGNED + "amd_fidelityfx_loader_vk.dll"),
+    ("amd_fidelityfx_upscaler_vk.dll", "4a7e895af6e0b615d40a84d59eb8c2b1054ad91cdd0c739567940270d51bdab7", 36135696,
+     FFX_SIGNED + "amd_fidelityfx_upscaler_vk.dll"),
     ("LICENSE-FidelityFX.txt", "82cf74fc23885107c7f69249ac3f1dac55898ff68320eb2c753984cae6b2d78a", 1115,
      "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v1.1.4/LICENSE.txt"),
 )
 
 
 def ffx_library(dest):
-    """AMD's FSR library and its license into dest (tools/third_party/ffx) where they are not there already; how many were added"""
+    """AMD's FSR DLLs and their license into dest (tools/third_party/ffx) where they are not there already; how many were added"""
     n = 0
     for name, sha, size, url in FFX:
         out = os.path.join(dest, name)
@@ -335,7 +340,7 @@ def ffx_library(dest):
             continue
         os.makedirs(dest, exist_ok=True)
         shutil.copyfile(fetch_part(sha, size, url), out)
-        print("%s (%d KB) from AMD's FidelityFX SDK v1.1.4" % (name, size >> 10))
+        print("%s (%d KB) from AMD's FSR SDK" % (name, size >> 10))
         n += 1
     return n
 

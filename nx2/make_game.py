@@ -47,7 +47,7 @@ import toolchain as _toolchain
 LINUX, CROSS = not _toolchain.windows(), _toolchain.windows() and os.name != "nt"
 # (SDL2.dll is sdl2-compat: it loads SDL3.dll from beside the exe. Left out of bin\ since v2.0.0, it said "Failed loading SDL3
 # library" three times and no controller worked: Discord #bug-reporting, 11-08)
-BESIDE = ["relink", "relink_vk.so", "libSDL2-2.0.so.0"] if LINUX else ["relink-game.exe", "relink_vk.dll", "SDL2.dll", "SDL3.dll", "wgpu_native.dll", "amd_fidelityfx_vk.dll", "LICENSE-FidelityFX.txt"]
+BESIDE = ["relink", "relink_vk.so", "libSDL2-2.0.so.0"] if LINUX else ["relink-game.exe", "relink_vk.dll", "SDL2.dll", "SDL3.dll", "wgpu_native.dll", "amd_fidelityfx_loader_vk.dll", "amd_fidelityfx_upscaler_vk.dll", "amd_fidelityfx_vk.dll", "LICENSE-FidelityFX.txt"]
 LANGUAGES = [("en-US", "English (US)"), ("en-GB", "English (UK)"), ("fr", "French (France)"), ("fr-CA", "French (Canada)"), ("de", "German"),
              ("it", "Italian"), ("es", "Spanish (Spain)"), ("es-419", "Spanish (Latin America)"), ("pt-BR", "Portuguese (Brazil)"), ("nl", "Dutch"),
              ("pl", "Polish"), ("ru", "Russian"), ("ja", "Japanese"), ("ko", "Korean"), ("zh-Hans", "Chinese (Simplified)"),

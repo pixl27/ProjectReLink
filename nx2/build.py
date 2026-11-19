@@ -1208,9 +1208,9 @@ def main():
         if os.path.exists(sdl3) and (not os.path.exists(sdl3_dst) or os.path.getsize(sdl3_dst) != os.path.getsize(sdl3)):
             import shutil
             shutil.copyfile(sdl3, sdl3_dst)
-        # (relink, 0.7) AMD's FSR library and its license beside it: gpu/vk's FSR choice loads it from there
-        # (scripts/release_parts.py takes them from AMD's FidelityFX SDK into third_party/ffx)
-        for name in ("amd_fidelityfx_vk.dll", "LICENSE-FidelityFX.txt", "vcrt/msvcp140.dll", "vcrt/vcruntime140.dll", "vcrt/vcruntime140_1.dll"):
+        # (relink, 0.7; FSR 4 in 0.8) AMD's FSR DLLs and their license beside it: gpu/vk's FSR choice loads them from there
+        # (scripts/release_parts.py takes them from AMD's FSR SDK into third_party/ffx)
+        for name in ("amd_fidelityfx_loader_vk.dll", "amd_fidelityfx_upscaler_vk.dll", "LICENSE-FidelityFX.txt", "vcrt/msvcp140.dll", "vcrt/vcruntime140.dll", "vcrt/vcruntime140_1.dll"):
             src = os.path.join(kit.HERE, "..", "third_party", "ffx", name)
             dst = os.path.join(out, name)
             if os.path.exists(src) and (not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(src)):
