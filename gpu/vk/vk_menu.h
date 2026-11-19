@@ -80,6 +80,8 @@ struct Options {
     int mic = 1;          // (relink) the ocarina's microphone: 0 Off, 1 the system's default, 2.. a device as host->mic_name lists it (host/nn_audio_in.c)
     int framerate = 0;    // 0: the game's 60 fps; 1: unlocked, up to the display's refresh, game time following the clock (host/nn_vi.c)
     int item_wheel = 0;   // (relink) R or L held shows the item row as a wheel (host/oot_wheel.c, vk_wheel.cpp); HOS_ITEM_WHEEL over it
+    int menu_dark = 0;    // (relink) the menu's look (Menu look, saved as menu_look): 0 light, 1 dark (vk_menu.cpp cart::set_look;
+                          // the launcher's look row writes it too: launcher/Settings.cs)
     int cycle_items = 0;  // (relink) a tap of R or L changes the ZR item: 0 off (the default: R and L as the game has them),
                           // 1 Last used (the item on ZR before this one), 2 Basic, 3 +Bombs, 4 +Tools (within the ZR item's
                           // group; host/oot_wheel.c cycle_level)

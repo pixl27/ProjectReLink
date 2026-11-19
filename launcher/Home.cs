@@ -22,7 +22,7 @@ public partial class MainWindow
 
     CheckBox Fullscreen = null!, Display60 = null!, FpsCounter = null!, Ultrawide = null!, FramePacing = null!, VSync = null!, Audio = null!, Handheld = null!, InvertY = null!,
              NvidiaDlss = null!;
-    WrapPanel ResolutionGroup = null!, UpscalerGroup = null!, UpscaleGroup = null!, FrameRateGroup = null!, SpeedGroup = null!, FramegenGroup = null!, UiLanguageGroup = null!;
+    WrapPanel ResolutionGroup = null!, UpscalerGroup = null!, UpscaleGroup = null!, FrameRateGroup = null!, SpeedGroup = null!, FramegenGroup = null!, UiLanguageGroup = null!, ThemeGroup = null!;
     Slider Sharpness = null!;
     TextBlock SharpnessText = null!, Display60Hint = null!, FolderText = null!;
     ComboBox LanguageBox = null!;
@@ -126,6 +126,9 @@ public partial class MainWindow
         UiLanguageGroup = ChoiceRow(RowsGame, L("Langue du lanceur", "Launcher language"),
                   L("Le changement se voit à la prochaine ouverture de ReLink.", "The change shows the next time ReLink opens."),
                   "UiLanguage", (0, "English"), (1, "Français"));
+        ThemeGroup = ChoiceRow(RowsGame, L("Apparence du lanceur", "Launcher look"),
+                  L("Le menu en jeu (Insert ou F1) la suit aussi. Le lanceur change à sa prochaine ouverture.", "The in-game menu (Insert or F1) follows it too. The launcher changes the next time it opens."),
+                  "Theme", (0, L("Clair", "Light")), (1, L("Sombre", "Dark")));
         SwitchRow(RowsGame, L("Son", "Sound"), null, out Audio, out _);
         SwitchRow(RowsGame, L("Profil portable", "Handheld profile"),
                   L("Les réglages graphiques du mode portable : plus léger, plus flou.", "The handheld mode's graphics settings: lighter, softer."), out Handheld, out _);
@@ -390,6 +393,7 @@ public partial class MainWindow
         OnPick(SpeedGroup, v => s.GameSpeed = v);
         OnPick(FramegenGroup, v => s.FrameGeneration = v);
         OnPick(UiLanguageGroup, v => s.UiLanguage = v == 1 ? "fr" : "en");
+        OnPick(ThemeGroup, v => { s.LauncherTheme = v == 1 ? Theme.Dark : Theme.Light; s.MenuLook = v; });   // (the in-game menu too)
         Sharpness.ValueChanged += (_, e) =>
         {
             SharpnessText.Text = $"{(int)e.NewValue} %";
@@ -420,6 +424,7 @@ public partial class MainWindow
         Pick(FrameRateGroup, s.FrameRate);
         Pick(FramegenGroup, s.FrameGeneration);
         Pick(UiLanguageGroup, s.UiLanguage == "fr" ? 1 : 0);
+        Pick(ThemeGroup, s.LauncherTheme == Theme.Dark ? 1 : 0);
         Sharpness.Value = s.Sharpness;
         SharpnessText.Text = $"{s.Sharpness} %";
         var items = (List<LangItem>)LanguageBox.ItemsSource;

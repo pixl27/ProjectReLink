@@ -95,6 +95,7 @@ const char* tx_framegen(int v) {
     return t[v];
 }
 const char* tx_onoff(int v) { return v ? "On" : "Off"; }
+const char* tx_menu_look(int v) { return v ? "Dark" : "Light"; }
 // (relink) Motion controls: the choice, and whether a connected controller has a gyroscope (host/pad_sdl.c). Either can be
 // chosen whatever is connected: a pad plugged in later is read when it comes
 const char* tx_gyro(int v) {
@@ -624,6 +625,9 @@ Row rows[] = {
      "Saves a picture of the game, without this menu, in the game folder's screenshots folder.", hn_hotkey, false, true},
     {TAB_GAMEPLAY, "Fullscreen key", &opts.key_full, 0, kHotkeyNone, 1, tx_hotkey,
      "Switches between the window and fullscreen. Alt+Enter does too.", hn_hotkey, false, true},
+    {TAB_GAMEPLAY, "Menu look", &opts.menu_dark, 0, 1, 1, tx_menu_look,   // (relink: cart::set_look; the launcher's look sets it too)
+     "The colours of this menu: the cream label, or the same cartridge in dark. The launcher's own look row sets it too.",
+     nullptr, false, true},
 
     // Controls (17 rows)
     {TAB_CONTROLS, "Controller in background", &opts.pad_background, 0, 1, 1, tx_onoff,
@@ -843,7 +847,7 @@ const char* row_group(int i, int* place) {
         {"Volume", "SOUND", 1}, {"Audio output", "SOUND", 1}, {"Microphone", "SOUND", 1},
         {"Item wheel", "ITEMS", 2}, {"Cycle items", "ITEMS", 2},
         {"Menu key", "KEYBOARD", 3}, {"Screenshot key", "KEYBOARD", 3}, {"Fullscreen key", "KEYBOARD", 3},
-        {"Quit game", "MORE", 4}, {"Cheats", "MORE", 4},
+        {"Menu look", "MORE", 4}, {"Quit game", "MORE", 4}, {"Cheats", "MORE", 4},
         {"Controller in background", "PAD", 0}, {"Rumble strength", "PAD", 0}, {"Left stick dead zone", "PAD", 0},
         {"Right stick dead zone", "PAD", 0}, {"Layout preset", "PAD", 0}, {"Button prompts", "PAD", 0}, {"Controls", "PAD", 0},
         {"Mouse camera", "MOUSE", 1}, {"Mouse sensitivity", "MOUSE", 1}, {"Invert mouse vertical", "MOUSE", 1},
@@ -1307,16 +1311,43 @@ void fill(HDC dc, int x, int y, int w, int h, COLORREF c) {
 }
 
 namespace cart {
-constexpr COLORREF kShell = RGB(0xB9, 0xB4, 0xAA), kGroove = RGB(0xA3, 0x9E, 0x93), kLabel = RGB(0xEC, 0xE6, 0xD8),
-                   kInk = RGB(0x2A, 0x27, 0x24), kSoft = RGB(0x6B, 0x65, 0x5C), kFaint = RGB(0x8A, 0x83, 0x76),
-                   kRule = RGB(0xE2, 0xDB, 0xCB), kOff = RGB(0xCF, 0xC7, 0xB6), kTrack = RGB(0xD6, 0xCD, 0xB9),
-                   kHelp = RGB(0x4A, 0x45, 0x3E), kTagInk = RGB(0x8A, 0x6A, 0x10), kTag = RGB(0xF3, 0xE3, 0xB5),
-                   kYellow = RGB(0xD4, 0xA5, 0x32), kBlue = RGB(0x3F, 0x5F, 0xB0), kGreen = RGB(0x3E, 0x8A, 0x4E);
 struct TabLook { COLORREF strip, on, tint, edge; };
-// (a tab's strip, the text on it, the selected row's tint and that row's edge: the strip half over the tint)
-constexpr TabLook kTabs[3] = {{RGB(0xC0, 0x47, 0x3D), RGB(255, 255, 255), RGB(0xF2, 0xD6, 0xD0), RGB(0xD9, 0x8E, 0x86)},
-                              {RGB(0x3E, 0x8A, 0x4E), RGB(255, 255, 255), RGB(0xD3, 0xE6, 0xD2), RGB(0x88, 0xB8, 0x90)},
-                              {RGB(0x3F, 0x5F, 0xB0), RGB(255, 255, 255), RGB(0xD5, 0xDC, 0xEF), RGB(0x8A, 0x9D, 0xD0)}};
+// (relink) The cartridge's colours in its two looks, the Menu look row (opts.menu_dark): light, the cream label, and dark, the
+// same cartridge in dark plastic, as the launcher's dark look (launcher/Theme.cs: the same colours). Never pure black: the
+// menu's bitmap is keyed on it (its see-through corners). The words on the yellow (OnYellow) stay dark in both.
+struct Palette {
+    COLORREF shell, groove, label, ink, soft, faint, rule, off, track, help, tag_ink, tag, tag_edge, yellow, blue, green;
+    // (a tab's strip, the text on it, the selected row's tint and that row's edge: the strip half over the tint)
+    TabLook tabs[3];
+};
+constexpr Palette kLight{RGB(0xB9, 0xB4, 0xAA), RGB(0xA3, 0x9E, 0x93), RGB(0xEC, 0xE6, 0xD8), RGB(0x2A, 0x27, 0x24), RGB(0x6B, 0x65, 0x5C),
+                         RGB(0x8A, 0x83, 0x76), RGB(0xE2, 0xDB, 0xCB), RGB(0xCF, 0xC7, 0xB6), RGB(0xD6, 0xCD, 0xB9), RGB(0x4A, 0x45, 0x3E),
+                         RGB(0x8A, 0x6A, 0x10), RGB(0xF3, 0xE3, 0xB5), RGB(0xE3, 0xC4, 0x74), RGB(0xD4, 0xA5, 0x32), RGB(0x3F, 0x5F, 0xB0),
+                         RGB(0x3E, 0x8A, 0x4E),
+                         {{RGB(0xC0, 0x47, 0x3D), RGB(255, 255, 255), RGB(0xF2, 0xD6, 0xD0), RGB(0xD9, 0x8E, 0x86)},
+                          {RGB(0x3E, 0x8A, 0x4E), RGB(255, 255, 255), RGB(0xD3, 0xE6, 0xD2), RGB(0x88, 0xB8, 0x90)},
+                          {RGB(0x3F, 0x5F, 0xB0), RGB(255, 255, 255), RGB(0xD5, 0xDC, 0xEF), RGB(0x8A, 0x9D, 0xD0)}}};
+// (measured, WCAG contrast on the label: the words 13.4, the soft words 7.4, the faint ones 4.6, the help 9.3; red, green and
+// blue as words 4.5, white on them 3.7; the light look's: 11.9, 4.6, 3.0, 7.6; 3.4 to 4.9; 4.2 to 6.0)
+constexpr Palette kDark{RGB(0x3A, 0x38, 0x42), RGB(0x4A, 0x47, 0x53), RGB(0x1E, 0x1D, 0x23), RGB(0xEC, 0xE6, 0xD8), RGB(0xB3, 0xAB, 0x9C),
+                        RGB(0x8C, 0x85, 0x79), RGB(0x33, 0x31, 0x3A), RGB(0x4A, 0x47, 0x52), RGB(0x3D, 0x3A, 0x45), RGB(0xC8, 0xC0, 0xB1),
+                        RGB(0xE3, 0xC4, 0x74), RGB(0x46, 0x3C, 0x22), RGB(0x8A, 0x72, 0x34), RGB(0xD4, 0xA5, 0x32), RGB(0x66, 0x82, 0xD0),
+                        RGB(0x45, 0x95, 0x55),
+                        {{RGB(0xD3, 0x62, 0x57), RGB(255, 255, 255), RGB(0x47, 0x29, 0x2A), RGB(0x8E, 0x4A, 0x44)},
+                         {RGB(0x45, 0x95, 0x55), RGB(255, 255, 255), RGB(0x24, 0x3B, 0x2A), RGB(0x4D, 0x7E, 0x57)},
+                         {RGB(0x66, 0x82, 0xD0), RGB(255, 255, 255), RGB(0x28, 0x30, 0x49), RGB(0x4F, 0x62, 0x99)}}};
+constexpr COLORREF kOnYellow = RGB(0x2A, 0x27, 0x24);
+// (the look in use: set_look, at each paint)
+COLORREF kShell, kGroove, kLabel, kInk, kSoft, kFaint, kRule, kOff, kTrack, kHelp, kTagInk, kTag, kTagEdge, kYellow, kBlue, kGreen;
+TabLook kTabs[3];
+void set_look(bool dark) {
+    const Palette& p = dark ? kDark : kLight;
+    kShell = p.shell, kGroove = p.groove, kLabel = p.label, kInk = p.ink, kSoft = p.soft, kFaint = p.faint, kRule = p.rule;
+    kOff = p.off, kTrack = p.track, kHelp = p.help, kTagInk = p.tag_ink, kTag = p.tag, kTagEdge = p.tag_edge;
+    kYellow = p.yellow, kBlue = p.blue, kGreen = p.green;
+    for (int i = 0; i < 3; i++) kTabs[i] = p.tabs[i];
+}
+const bool look_ready = (set_look(false), true);   // (light until the first paint reads the row)
 COLORREF mix(COLORREF a, COLORREF b, float t) {
     const auto ch = [t](int x, int y) { return (int)std::lround(x + (y - x) * t); };
     return RGB(ch(GetRValue(a), GetRValue(b)), ch(GetGValue(a), GetGValue(b)), ch(GetBValue(a), GetBValue(b)));
@@ -1785,7 +1816,7 @@ void paint_options(HDC dc, uint32_t w, uint32_t h) {
     HGDIOBJ old = SelectObject(dc, small);
     if (pending) {
         startup_gdi::round_rect(dc, lx + P(12), pend_top + P(3), lw - P(24), P(kOptPendH) - P(8), P(8), kTag);
-        SetTextColor(dc, RGB(0x6B, 0x52, 0x0C));
+        SetTextColor(dc, cart::kTagInk);
         const std::string line = restart_line(dc, lw - P(48)) + " (when the menu closes)";
         TextOutA(dc, lx + P(24), pend_top + P(3) + (P(kOptPendH) - P(8) - text_h(dc)) / 2, line.c_str(), (int)line.size());
     }
@@ -2780,7 +2811,7 @@ void paint_controls_cart(HDC dc, uint32_t w, uint32_t h) {
                 SelectObject(dc, cell_b);
                 const int pw = text_w(dc, v) + P(22), ph = P(24);
                 startup_gdi::round_rect(dc, x - P(10), mid - ph / 2, pw, ph, ph / 2, listening ? kYellow : look.strip);
-                SetTextColor(dc, listening ? kInk : look.on);
+                SetTextColor(dc, listening ? kOnYellow : look.on);
                 TextOutA(dc, x + P(1), mid - text_h(dc) / 2, v.c_str(), (int)v.size());
             } else {
                 SelectObject(dc, cell_f);
@@ -2850,6 +2881,7 @@ void controls_size(uint32_t w, uint32_t h, uint32_t* mw, uint32_t* mh) {
 }
 
 void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
+    cart::set_look(opts.menu_dark != 0);   // (relink: the Menu look row)
     if (page == 0) return paint_options(dc, w, h);   // (relink: the cartridge)
     if (page == 2) return paint_cheats(dc, w, h);
     if (page == 3 || page == 4) return paint_list(dc, w, h, page == 4);
@@ -2864,7 +2896,7 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
     // the Controls tab's blue for the controls, yellow for the restart question and red for Quit game's
     const int look = page == 5 ? (ask_quit ? 0 : -1) : page == 1 ? 2 : 1;
     const COLORREF strip = look < 0 ? cart::kYellow : cart::kTabs[look].strip, tint = look < 0 ? cart::kTag : cart::kTabs[look].tint,
-                   edge = look < 0 ? RGB(0xE3, 0xC4, 0x74) : cart::kTabs[look].edge, on = look < 0 ? cart::kInk : cart::kTabs[look].on;
+                   edge = look < 0 ? cart::kTagEdge : cart::kTabs[look].edge, on = look < 0 ? cart::kOnYellow : cart::kTabs[look].on;
     const char* heading = page == 6 ? "Travel" : page == 5 ? (ask_quit ? "Quit game" : "Restart needed") : page == 4 ? "Inventory" : page == 3 ? "Teleport"
                         : page == 2 ? "Cheats" : "Controls";
     cart_page(dc, (int)w, (int)h, s, heading, strip, on);
@@ -2940,6 +2972,7 @@ HFONT hard_font(int px, int weight) {
 /// (relink) The Travel page's notice over the game: a picture was saved
 void paint_notice(HDC dc, uint32_t w, uint32_t h, int s) {
     // (relink) a small label of the cartridge: the shell's edge, the cream, a green strip at its left (see-through corners)
+    cart::set_look(opts.menu_dark != 0);
     fill(dc, 0, 0, (int)w, (int)h, RGB(0, 0, 0));
     startup_gdi::round_rect(dc, 0, 0, (int)w, (int)h, 8 * s, cart::kShell);
     startup_gdi::round_rect(dc, 3 * s, 3 * s, (int)w - 6 * s, (int)h - 6 * s, 6 * s, cart::kLabel);

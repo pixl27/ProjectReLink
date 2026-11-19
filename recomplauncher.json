@@ -124,6 +124,15 @@
       "defaults": { "fps_counter": "0" }
     },
     {
+      "id": "menu_look", "label": "Menu look", "group": "Gameplay",
+      "help": "The colours of the in-game menu (Insert or F1): the cream label, or the same in dark.",
+      "choices": [
+        { "label": "Light", "set": { "menu_look": "0" } },
+        { "label": "Dark", "set": { "menu_look": "1" } }
+      ],
+      "defaults": { "menu_look": "0" }
+    },
+    {
       "id": "text_speed", "label": "Text speed", "group": "Gameplay",
       "help": "How fast the letters of dialogue and other messages appear.",
       "choices": [
