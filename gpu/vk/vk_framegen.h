@@ -13,10 +13,14 @@ bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t
 VkImage framegen_made_image(uint32_t* w, uint32_t* h);
 /// After that recording's submit (value): the display thread shows its frames
 void framegen_queue(uint64_t value);
-/// The window's present of an image (GENERAL, w x h; crop as above or null), vk_replay.cpp: the display thread's
-void present_image(VkImage src, uint32_t w, uint32_t h, const int crop[4], VkImageView view = VK_NULL_HANDLE);
+/// The window's present of an image (GENERAL, w x h; crop as above or null), vk_replay.cpp: the display thread's.
+/// must_sample: the image is to be read through view (its format is not the picture's), never blitted as it is
+void present_image(VkImage src, uint32_t w, uint32_t h, const int crop[4], VkImageView view = VK_NULL_HANDLE,
+                   bool must_sample = false);
 /// The Insert menu's upscaling of a frame to the window (dw x dh), recorded: the image to show, or null when it is off
-VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint32_t sw, uint32_t sh, const int crop[4], uint32_t dw, uint32_t dh);
+/// (force: made even with the upscaling and the sharpness off, as a plain copy through the view)
+VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint32_t sw, uint32_t sh, const int crop[4], uint32_t dw, uint32_t dh,
+                       bool force = false);
 /// (relink) The Gameplay tab's Item wheel row is on (off by default; HOS_ITEM_WHEEL over it). While it is
 /// false the two below record nothing and make nothing
 bool framegen_wheel_on();

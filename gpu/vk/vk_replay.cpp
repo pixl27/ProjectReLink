@@ -3469,6 +3469,7 @@ void do_present(const nvn_tex* t, const int crop[4]) {
     static const int shot_every = getenv("RX_VK_SHOT_EVERY") ? std::max(1, atoi(getenv("RX_VK_SHOT_EVERY"))) : 300;
     VkImage src = VK_NULL_HANDLE;
     VkImageView direct_view = VK_NULL_HANDLE;
+    bool must_sample = false;   // (the image found is another description's: read through the picture's own view)
     uint32_t sw = 0, sh = 0;
     bool shot = false, interpolated = false;
     VkImage made_src = VK_NULL_HANDLE;
@@ -3494,7 +3495,22 @@ void do_present(const nvn_tex* t, const int crop[4]) {
         // (relink) the item wheel open: the game's picture covered with its scene before the HUD, dimmed, and the wheel over it
         // (the game's own item row, its hints and the HUD gone from behind the wheel; before frame interpolation and shots read it)
         if (tex) framegen_wheel_backdrop(r.cmd, tex->image, tex->format, sw, sh, crop);
-        if (tex && !dev.offscreen && (opts.upscale || opts.sharpness)) {
+        // (relink, HDR) The game told the display is HDR makes its window textures RGB10A2 at the memory of its RGBA8 ones, and the
+        // image found for the picture can be the one made for the RGBA8 description (texture_for_present: one rendered at that
+        // storage). A blit reads an image by its own format, so the RGB10A2 picture blitted from an RGBA8 image came out in
+        // rainbow colours (Discord, 18-20/11: "HDR is broken", "with HDR on I need the sharpness on or it goes rainbow"; seen
+        // here with HOS_HDR=1, the sharpness at 0 and the window scaling filter off). The view has the picture's format: when the
+        // image's is another, the picture goes through the scaling pass's sampled copy, as with the sharpness on. Only for the
+        // RGB10A2 picture: an RGBA8 / RGBA8_SRGB pair blits right as it is (the bytes copied), and its sRGB view would darken it
+        if (tex && t && !dev.offscreen) {
+            const VkFormat want = vk_format(t->d.format).format;
+            must_sample = want == VK_FORMAT_A2B10G10R10_UNORM_PACK32 && tex->format != want;
+            static int logged_mismatch;
+            if (must_sample && logged_mismatch++ < 4)
+                logf("vk: present texture %#llx: its image is format %d, the picture %d: shown through its view, not blitted",
+                     (unsigned long long)t->gpu, (int)tex->format, (int)want);
+        }
+        if (tex && !dev.offscreen && (opts.upscale || opts.sharpness || must_sample)) {
             // Keep the sampled view with the same cached image as the direct present, before advancing its age.
             direct_view = texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample);
             tex->last_frame = texture_frame_no();
@@ -3817,7 +3833,7 @@ void do_present(const nvn_tex* t, const int crop[4]) {
     // (relink: presents_shown, host/nn_vi.c's pace for HOS_FPS_CAP: counted once the display took the frame, or at once
     // when nothing waits for a display: no window, or the made frames' own display thread)
     if (dev.offscreen || interpolated) { presents_shown.fetch_add(1, std::memory_order_release); return; }
-    present_image(src, sw, sh, crop, direct_view);
+    present_image(src, sw, sh, crop, direct_view, must_sample);
     presents_shown.fetch_add(1, std::memory_order_release);
 }
 
@@ -3976,8 +3992,9 @@ std::atomic<uint32_t> present_kind{0};   // (vk_framegen.cpp: 1 while a made fra
 // the swapchain had no image free, twice a frame with frame interpolation.
 std::mutex present_image_mu;
 
-static bool present_one(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkImageView view, bool first_of_frame);
-void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkImageView view) {
+static bool present_one(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkImageView view, bool first_of_frame,
+                        bool must_sample);
+void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkImageView view, bool must_sample) {
     std::lock_guard lk(present_image_mu);
     if (const uint64_t want = dev.swap_resize.exchange(0, std::memory_order_acquire)) {   // (the window was resized: main's resize)
         std::lock_guard qk(dev.present_mu);
@@ -3999,9 +4016,10 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
     // acquires of the repeats wait for the display, which is what paces the replay, and through presents_shown the game
     const int repeats = src && present_kind.load() == 0 ? low_cap_repeats() : 1;
     for (int rep = 0; rep < repeats; rep++)
-        if (!present_one(src, sw, sh, crop, view, rep == 0)) break;
+        if (!present_one(src, sw, sh, crop, view, rep == 0, must_sample)) break;
 }
-static bool present_one(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkImageView view, bool first_of_frame) {
+static bool present_one(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkImageView view, bool first_of_frame,
+                        bool must_sample) {
     Frame& f = frames[frame_index];
     const int log_slot = frame_index;
     frame_index = (frame_index + 1) % 3;
@@ -4058,7 +4076,7 @@ static bool present_one(VkImage src, uint32_t sw, uint32_t sh, const int crop[4]
     }
     checkpoint_note(f.cmd, (uint64_t)presents, 'P', "before the picture's blit or scaling (bars %d, rect %d,%d %ux%u)", has_bars ? 1 : 0,
                     (int)rect.x, (int)rect.y, (unsigned)rect.w, (unsigned)rect.h);
-    if (const VkImage scaled = src && view ? framegen_scale(f.cmd, view, src, sw, sh, crop, rect.w, rect.h) : VK_NULL_HANDLE) {
+    if (const VkImage scaled = src && view ? framegen_scale(f.cmd, view, src, sw, sh, crop, rect.w, rect.h, must_sample) : VK_NULL_HANDLE) {
         blit_crop_to_rect(f.cmd, scaled, rect.w, rect.h, nullptr, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, rect);
     } else if (src) {
         blit_crop_to_rect(f.cmd, src, sw, sh, crop, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, rect);
