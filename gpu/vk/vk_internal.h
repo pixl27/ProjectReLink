@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <mutex>
+#include <source_location>
 #include <string>
 #include <vector>
 #include <cstdlib>
@@ -153,15 +154,21 @@ extern thread_local bool replay_saw_exposure;
 extern std::atomic<int64_t> par_lock_wait_ns, par_locks;   // (contention: the time threads waited for it)
 std::recursive_mutex& par_mutex();
 int64_t par_now_ns();
+bool par_lock_profile_on();
+void par_lock_profile_note(const char* file, uint32_t line, int64_t wait_ns);
+void par_lock_profile_report();
 struct ParLock {
     bool on;
-    explicit ParLock(bool want = true) : on(want && par_active.load(std::memory_order_relaxed)) {
+    explicit ParLock(bool want = true, std::source_location at = std::source_location::current())
+        : on(want && par_active.load(std::memory_order_relaxed)) {
         if (!on) return;
         par_locks.fetch_add(1, std::memory_order_relaxed);
         if (par_mutex().try_lock()) return;
         const int64_t t0 = par_now_ns();
         par_mutex().lock();
-        par_lock_wait_ns.fetch_add(par_now_ns() - t0, std::memory_order_relaxed);
+        const int64_t waited = par_now_ns() - t0;
+        par_lock_wait_ns.fetch_add(waited, std::memory_order_relaxed);
+        if (par_lock_profile_on()) par_lock_profile_note(at.file_name(), at.line(), waited);
     }
     ~ParLock() {
         if (on) par_mutex().unlock();

@@ -1706,6 +1706,13 @@ int par_threads() {
     }();
     return n;
 }
+
+int par_profile_interval() {
+    static const int n = getenv("RX_VK_PAR_PROFILE_INTERVAL")
+                             ? std::clamp(atoi(getenv("RX_VK_PAR_PROFILE_INTERVAL")), 1, 240)
+                             : 240;
+    return n;
+}
 struct ParPool {
     std::mutex mu;
     std::condition_variable cv, done;
@@ -1807,6 +1814,108 @@ struct ParHistory {
     std::vector<uint64_t> exposure;
 };
 ParHistory par_hist;
+
+// RX_VK_LOG_CB_REUSE=1: every 300 frames, report how much of the command-record stream is hash-identical to the
+// stream at the same place in the preceding frame. This is a diagnostic, not a cache: hashing the complete stream
+// deliberately has a cost. A high work ratio would justify caching reusable Vulkan secondary command buffers;
+// a low one says parallel replay is the more promising way to amortise recording.
+struct CbReuseEntry {
+    uint64_t frame = UINT64_MAX;
+    uint64_t hash = 0;
+    size_t bytes = 0;
+};
+struct CbReuseHistory {
+    uint64_t frame = UINT64_MAX, frames = 0;
+    uint64_t buffers = 0, same_buffers = 0, bytes = 0, same_bytes = 0;
+    int64_t work = 0, same_work = 0;
+    std::vector<CbReuseEntry> entries;
+};
+CbReuseHistory cb_reuse_hist;
+std::mutex cb_reuse_mu;
+
+bool cb_reuse_on() {
+    static const bool on = getenv("RX_VK_LOG_CB_REUSE") != nullptr;
+    return on;
+}
+
+// The records are contiguous and 8-byte aligned (host/nvn_native.c). The cap makes a corrupt diagnostic input
+// bounded; replay's normal validation/error path still owns reporting corruption.
+bool cb_stream_fingerprint(const uint8_t* p, size_t& bytes, uint64_t& hash) {
+    constexpr size_t cap = 256u << 20;
+    constexpr size_t max_records = 1u << 24;
+    bytes = 0;
+    hash = 0x243f6a8885a308d3ull;
+    for (size_t record = 0; record < max_records && bytes < cap; record++) {
+        nvn_op_hdr h;
+        std::memcpy(&h, p, sizeof h);
+        if (h.size < sizeof h || (h.size & 7) || h.op >= NOP_COUNT_ || h.size > cap - bytes) return false;
+        for (uint32_t at = 0; at < h.size; at += 8) {
+            uint64_t word;
+            std::memcpy(&word, p + at, sizeof word);
+            hash ^= word + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+            hash *= 0x9ddfea08eb382d69ull;
+            hash ^= hash >> 47;
+        }
+        bytes += h.size;
+        p += h.size;
+        if (h.op == NOP_END) {
+            hash ^= bytes;
+            return true;
+        }
+    }
+    return false;
+}
+
+void cb_reuse_begin_frame(uint64_t frame) {
+    if (!cb_reuse_on() || cb_reuse_hist.frame == frame) return;
+    if (cb_reuse_hist.frame != UINT64_MAX && ++cb_reuse_hist.frames == 300) {
+        const double buffer_pct = cb_reuse_hist.buffers ? 100.0 * cb_reuse_hist.same_buffers / cb_reuse_hist.buffers : 0;
+        const double byte_pct = cb_reuse_hist.bytes ? 100.0 * cb_reuse_hist.same_bytes / cb_reuse_hist.bytes : 0;
+        const double work_pct = cb_reuse_hist.work ? 100.0 * cb_reuse_hist.same_work / cb_reuse_hist.work : 0;
+        logf("vk: command stream reuse (300 frames, hash-identical to the same place in the preceding frame): "
+             "%llu/%llu buffers (%.1f%%), %llu/%llu MB (%.1f%%), %lld/%lld draws + dispatches (%.1f%%)",
+             (unsigned long long)cb_reuse_hist.same_buffers, (unsigned long long)cb_reuse_hist.buffers, buffer_pct,
+             (unsigned long long)(cb_reuse_hist.same_bytes >> 20), (unsigned long long)(cb_reuse_hist.bytes >> 20), byte_pct,
+             (long long)cb_reuse_hist.same_work, (long long)cb_reuse_hist.work, work_pct);
+        cb_reuse_hist.frames = cb_reuse_hist.buffers = cb_reuse_hist.same_buffers = 0;
+        cb_reuse_hist.bytes = cb_reuse_hist.same_bytes = 0;
+        cb_reuse_hist.work = cb_reuse_hist.same_work = 0;
+    }
+    cb_reuse_hist.frame = frame;
+}
+
+struct CbReuseScope {
+    std::unique_lock<std::mutex> lock;
+    size_t place = 0, bytes = 0;
+    bool valid = false, same = false;
+    CbReuseScope(size_t place_, uint64_t frame, const uint8_t* stream) : place(place_) {
+        if (!cb_reuse_on()) return;
+        // Deferred main replay can call replay_handle concurrently. Serialising the opt-in probe keeps its history
+        // coherent; this diagnostic already hashes the complete stream and is not intended for performance runs.
+        lock = std::unique_lock(cb_reuse_mu);
+        cb_reuse_begin_frame(frame);
+        uint64_t hash;
+        if (!cb_stream_fingerprint(stream, bytes, hash)) return;
+        if (cb_reuse_hist.entries.size() <= place) cb_reuse_hist.entries.resize(place + 1);
+        CbReuseEntry& old = cb_reuse_hist.entries[place];
+        same = old.frame != UINT64_MAX && old.frame + 1 == frame && old.bytes == bytes && old.hash == hash;
+        old = {frame, hash, bytes};
+        valid = true;
+    }
+    ~CbReuseScope() {
+        if (!valid) return;
+        const int64_t work = place < par_hist.work.size() ? par_hist.work[place] : 0;
+        cb_reuse_hist.buffers++;
+        cb_reuse_hist.bytes += bytes;
+        cb_reuse_hist.work += work;
+        if (same) {
+            cb_reuse_hist.same_buffers++;
+            cb_reuse_hist.same_bytes += bytes;
+            cb_reuse_hist.same_work += work;
+        }
+    }
+};
+
 int64_t par_min_work() {
     // (relink, on the port: 500 made the forest's flyover 60.0 fps instead of 15-36 (hs351 / hs352), but the exposure then
     // stepped by 7-8% from frame to frame, the whole picture flickering: 2536 steps in 150 s (hs356) against 0 with 1500 (hs347,
@@ -1858,6 +1967,7 @@ const uint8_t* replay_handle(VkCommandBuffer& cmd, const uint8_t* h, bool may_st
     }
     const size_t place = par_hist.at++;
     if (par_hist.work.size() <= place) par_hist.work.resize(place + 1, 0), par_hist.exposure.resize(place + 1, 0);
+    CbReuseScope cb_reuse_scope(place, frame, h);
     // (opt-in, RX_VK_PARALLEL_EXPOSURE_SERIAL=1: it did not stop the flashes at 500 either, hs361)
     static const bool exposure_serial = getenv("RX_VK_PARALLEL_EXPOSURE_SERIAL") != nullptr;
     const bool exposure = exposure_serial && par_hist.exposure[place] && frame - par_hist.exposure[place] < 600;
@@ -2080,13 +2190,16 @@ const uint8_t* replay_handle(VkCommandBuffer& cmd, const uint8_t* h, bool may_st
     cmd = nr.cmd;
     rec_parts += (int)seg.size() + 1;
     tail_ms += ms_since(t_seg1, std::chrono::steady_clock::now());
-    if (++timed % 240 == 0) {
+    const int profile_interval = par_profile_interval();
+    if (++timed % profile_interval == 0) {
         logf("vk: parallel replay, a command buffer: dry pass %.2f ms, segments %.2f ms (%.1f of them), lock taken %.0f "
-             "times, waited for %.2f ms (all threads)", dry_ms / 240, seg_ms / 240, segs_n / 240, locks_n / 240, wait_ms / 240);
+             "times, waited for %.2f ms (all threads)", dry_ms / profile_interval, seg_ms / profile_interval,
+             segs_n / profile_interval, locks_n / profile_interval, wait_ms / profile_interval);
         logf("vk: parallel replay, a command buffer in detail: %.2f ms here before the threads have it, the first segment taken "
              "after %.2f ms, %.2f ms recorded in all (the longest segment %.2f ms), the last done at %.2f ms, the submits %.2f ms, "
-             "%.2f ms here after", setup_ms / 240, wake_ms / 240, rec_sum_ms / 240, rec_max_ms / 240, last_ms / 240, submit_ms / 240,
-             tail_ms / 240);
+             "%.2f ms here after", setup_ms / profile_interval, wake_ms / profile_interval, rec_sum_ms / profile_interval,
+             rec_max_ms / profile_interval, last_ms / profile_interval, submit_ms / profile_interval, tail_ms / profile_interval);
+        par_lock_profile_report();
         dry_ms = seg_ms = segs_n = wait_ms = locks_n = 0;
         setup_ms = wake_ms = rec_sum_ms = rec_max_ms = last_ms = submit_ms = tail_ms = 0;
     }
@@ -4836,6 +4949,66 @@ void fill_replay_table(MkwVkRenderer& t) {
 
 std::atomic<bool> par_active{false};
 std::atomic<int64_t> par_lock_wait_ns{0}, par_locks{0};
+namespace {
+struct ParLockProfileSite {
+    std::atomic<uint64_t> key{0};
+    std::atomic<int64_t> wait_ns{0}, waits{0};
+    std::atomic<const char*> file{nullptr};
+    std::atomic<uint32_t> line{0};
+};
+constexpr size_t kParLockProfileSites = 128;
+ParLockProfileSite par_lock_profile_sites[kParLockProfileSites];
+}
+
+bool par_lock_profile_on() {
+    static const bool on = getenv("RX_VK_PAR_LOCK_PROFILE") != nullptr;
+    return on;
+}
+
+void par_lock_profile_note(const char* file, uint32_t line, int64_t wait_ns) {
+    uint64_t key = ((uint64_t)(uintptr_t)file >> 3) ^ ((uint64_t)line * 0x9e3779b97f4a7c15ull);
+    if (!key) key = 1;
+    size_t slot = key % kParLockProfileSites;
+    for (size_t probe = 0; probe < kParLockProfileSites; probe++, slot = (slot + 1) % kParLockProfileSites) {
+        ParLockProfileSite& s = par_lock_profile_sites[slot];
+        uint64_t have = s.key.load(std::memory_order_acquire);
+        if (!have) {
+            uint64_t empty = 0;
+            if (s.key.compare_exchange_strong(empty, key, std::memory_order_acq_rel)) {
+                s.file.store(file, std::memory_order_release);
+                s.line.store(line, std::memory_order_release);
+                have = key;
+            } else {
+                have = empty;
+            }
+        }
+        if (have != key) continue;
+        s.wait_ns.fetch_add(wait_ns, std::memory_order_relaxed);
+        s.waits.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+}
+
+void par_lock_profile_report() {
+    if (!par_lock_profile_on()) return;
+    struct Row { const char* file; uint32_t line; int64_t wait_ns, waits; };
+    std::vector<Row> rows;
+    for (ParLockProfileSite& s : par_lock_profile_sites) {
+        const int64_t wait_ns = s.wait_ns.exchange(0, std::memory_order_relaxed);
+        const int64_t waits = s.waits.exchange(0, std::memory_order_relaxed);
+        if (wait_ns) rows.push_back({s.file.load(std::memory_order_acquire), s.line.load(std::memory_order_acquire),
+                                    wait_ns, waits});
+    }
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.wait_ns > b.wait_ns; });
+    for (size_t i = 0; i < std::min<size_t>(rows.size(), 12); i++) {
+        const Row& r = rows[i];
+        const char* base = r.file ? std::strrchr(r.file, '/') : nullptr;
+        base = base ? base + 1 : r.file ? r.file : "?";
+        logf("vk: parallel lock site %s:%u: %.2f ms waited in %lld contended acquisitions", base, r.line,
+             r.wait_ns / 1e6, (long long)r.waits);
+    }
+}
+
 std::recursive_mutex& par_mutex() {
     return par_mu;
 }
