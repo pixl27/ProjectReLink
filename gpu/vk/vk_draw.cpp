@@ -8351,6 +8351,18 @@ void eager_compute(const nvn_prog& prog) {
     const uint8_t types[8]{};
     const Program* cp = program_pick(*s, ProgramKind::Compute, types);   // (compute: translated right there, under the shaders' lock)
     if (!cp || cp->failed || !cp->ready.load(std::memory_order_acquire) || !cp->compute || taau_key(cp->key)) return;
+    /* An explicit linear movie policy never dispatches non-gameplay matrix
+       networks. Their translation still classifies them, but making their
+       cold Vulkan pipelines can take seconds and only competes with the
+       fallback that the first movie frame actually uses. */
+    if (!cp->stages.empty() && movie_upscale_policy::use_linear(movie_upscale_mode(), false, movie_keep_all_networks(),
+                                                                 cp->stages[0].info.uses_cooperative_matrix,
+                                                                 gameplay_network(cp->key))) {
+        static std::atomic<bool> told{false};
+        if (!told.exchange(true, std::memory_order_relaxed))
+            logf("vk: movie network pipelines are not made (RX_VK_MOVIE_UPSCALE=linear)");
+        return;
+    }
     make_compute_pipeline(const_cast<Program&>(*cp), true);
     static std::atomic<int> told{0};
     if (const int64_t n = st_eager_compute.load(); n && n % 25 == 0 && told++ < 40)
