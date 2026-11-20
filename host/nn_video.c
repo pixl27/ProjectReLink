@@ -21,6 +21,7 @@
 #endif
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
+#include "video_nv12.h"
 
 #define RESULT_NO_OUTPUT 0x2a1ca   /* (a failure: "no picture yet"; the library polls again) */
 #define POOL_MAGIC 0x4c4f4f50u     /* 'POOL' */
@@ -305,17 +306,24 @@ static void dec_finalize(Ctx *c) {
 static void queue_frame(Dec *d, const AVFrame *f) {
     const int w = f->width, h = f->height;
     if (w <= 0 || h <= 0) return;
-    if (f->format != AV_PIX_FMT_NV12 && (!d->sws || d->sws_w != w || d->sws_h != h || d->sws_fmt != f->format)) {
+    const int nv12 = f->format == AV_PIX_FMT_NV12;
+    /* dav1d normally returns OoT's 8-bit AV1 movies as planar 4:2:0. The
+       title reads NV12, so keep that lossless representation and let the
+       existing pool_rgba() path do the expensive conversion only if a caller
+       later asks for RGBA. Formats with alpha or greater precision retain the
+       old eager conversion. */
+    const int planar_420 = f->format == AV_PIX_FMT_YUV420P || f->format == AV_PIX_FMT_YUVA420P;
+    const int lazy_rgba = nv12 || f->format == AV_PIX_FMT_YUV420P;
+    if (!lazy_rgba && (!d->sws || d->sws_w != w || d->sws_h != h || d->sws_fmt != f->format)) {
         if (d->sws) sws_freeContext(d->sws);
         d->sws = sws_getContext(w, h, (enum AVPixelFormat)f->format, w, h, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
         d->sws_w = w, d->sws_h = h, d->sws_fmt = f->format;
     }
     Picture p = {0};
     p.w = w, p.h = h, p.pts = f->pts;
-    const int nv12 = f->format == AV_PIX_FMT_NV12;   /* (relink: Media Foundation's pictures, kept as NV12 alone) */
-    p.rgba = nv12 ? NULL : (uint8_t *)malloc((size_t)w * h * 4);
-    p.nv12 = nv12 ? (uint8_t *)malloc((size_t)w * h * 3 / 2) : (uint8_t *)calloc(1, (size_t)w * h * 3 / 2);
-    if (!p.nv12 || (!nv12 && !p.rgba)) {   /* (out of memory: this frame is dropped, not written through NULL; issue 342) */
+    p.rgba = lazy_rgba ? NULL : (uint8_t *)malloc((size_t)w * h * 4);
+    p.nv12 = lazy_rgba ? (uint8_t *)malloc((size_t)w * h * 3 / 2) : (uint8_t *)calloc(1, (size_t)w * h * 3 / 2);
+    if (!p.nv12 || (!lazy_rgba && !p.rgba)) {   /* (out of memory: this frame is dropped, not written through NULL; issue 342) */
         static volatile LONG told;
         if (InterlockedIncrement(&told) <= 4) hos_log("video: no memory for a %dx%d frame: dropped", w, h);
         free(p.rgba), free(p.nv12);
@@ -328,15 +336,8 @@ static void queue_frame(Dec *d, const AVFrame *f) {
         for (int y = 0; y < h; y++) memcpy(p.nv12 + (size_t)y * w, f->data[0] + (size_t)y * f->linesize[0], (size_t)w);
         for (int y = 0; y < h / 2; y++)
             memcpy(p.nv12 + (size_t)w * h + (size_t)y * w, f->data[1] + (size_t)y * f->linesize[1], (size_t)w);
-    } else if (f->format == AV_PIX_FMT_YUV420P || f->format == AV_PIX_FMT_YUVA420P) {   /* (planar 4:2:0 -> NV12) */
-        for (int y = 0; y < h; y++) memcpy(p.nv12 + (size_t)y * w, f->data[0] + (size_t)y * f->linesize[0], (size_t)w);
-        uint8_t *uv = p.nv12 + (size_t)w * h;
-        for (int y = 0; y < h / 2; y++)
-            for (int x = 0; x < w / 2; x++) {
-                uv[(size_t)y * w + 2 * x] = f->data[1][(size_t)y * f->linesize[1] + x];
-                uv[(size_t)y * w + 2 * x + 1] = f->data[2][(size_t)y * f->linesize[2] + x];
-            }
-    }
+    } else if (planar_420)
+        video_yuv420p_to_nv12(p.nv12, w, h, f->data[0], f->linesize[0], f->data[1], f->linesize[1], f->data[2], f->linesize[2]);
     if (d->qn == MAX_QUEUE) {
         picture_free(&d->queue[d->qhead]);
         d->qhead = (d->qhead + 1) % MAX_QUEUE, d->qn--;
