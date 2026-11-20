@@ -19,7 +19,7 @@ both builds: the two lifts share their chunk boundaries, so every chunk without 
 and is not compiled twice.
 
 Usage:  python -I nx2/build.py [--jobs 1] [--only 0,7] [--opt O1] [--no-polls] [--dll] [--lib] [--standalone]
-  --only: just these code_NNN.c chunks (to measure); --dll: link relink_game.dll; --lib: archive relink_game.lib
+  --only: just these code_NNN.c chunks (to measure; "all": every game chunk and hot piece, nothing else); --dll: link relink_game.dll; --lib: archive relink_game.lib
   RELINK_TIMES=<build_times.json>: make_game.py's record of the earlier builds. With it, this run says which files it
   really rebuilds and how long each took before (@@plan, @@file, @@eta), which the builder windows show as a countdown.
 """
@@ -417,7 +417,16 @@ def mem_need(src):
         # (each function from the newline before its definition, as this was first measured)
         starts = [m.start() - 1 for m in lifted_c.HEAD_BYTES.finditer(text)] + [len(text)]
         largest = max([b - a for a, b in zip(starts, starts[1:])] or [0])
-        return int(150 + 58 * len(text) / (1 << 20) + 250 * largest / (1 << 20))
+        mb, big = len(text) / (1 << 20), largest / (1 << 20)
+        # (20/11, measured again on a whole compile, i7-9700 16 GB, clang 23.1.5: every chunk's peak beside this estimate) The
+        # chunks with a function of 1 MB or more (giant_flags) took twice the old estimate: code_016_2.c 1548 MB for 754, code_018.c
+        # 2779 for 2049. Their compilers outgrew what the gate kept for them, the gate let others start, and the free memory fell to
+        # 48 MB (Windows paging every compiler). They now get the old estimate x1.4 and 1.6 GB at least (all 21 at or over their
+        # peak); the other chunks 0.1 GB + 45 MB per MB of C + 450 MB per MB of the largest function (204 chunks: 350 MB at their
+        # peak on average, 501 estimated, 567 before)
+        if largest >= GIANT_FN_BYTES > 0:
+            return max(1600, int(1.4 * (150 + 58 * mb + 250 * big)))
+        return int(100 + 45 * mb + 450 * big)
     return 1000 if src.endswith(".cpp") else 400
 
 
@@ -856,7 +865,9 @@ def main():
                    flags(eden_gen, os.path.join(eden_out, "rt64"), a.opt, not a.no_polls), deps)
     migrate_stamps(gen, obj_dir, fl, deps)
     chunks = sorted(f for f in os.listdir(gen) if f.startswith("code_") and f.endswith(".c"))
-    if a.only:
+    if a.only == "all":   # (every game chunk, the hot pieces too, and nothing else: the whole compile, to measure it)
+        pass
+    elif a.only:
         want = {"code_%03d.c" % int(n) for n in a.only.split(",")}
         chunks = [c for c in chunks if c in want]
     srcs = [os.path.join(gen, c) for c in chunks]

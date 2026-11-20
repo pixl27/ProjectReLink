@@ -103,6 +103,44 @@ static class Native
         return ch >= 32 ? char.ToUpperInvariant((char)ch).ToString() : us.ToString();
     }
 
+    // ---- the memory: what the compile has room for, and the big programs that take it ----
+    [StructLayout(LayoutKind.Sequential)]
+    struct MEMORYSTATUSEX { public uint len, load; public ulong total, avail, pageTotal, pageAvail, virtTotal, virtAvail, extAvail; }
+    [DllImport("kernel32.dll")] static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX m);
+
+    /// The physical memory available now, in MB (-1 when unknown)
+    public static long AvailableMB()
+    {
+        var m = new MEMORYSTATUSEX { len = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
+        return GlobalMemoryStatusEx(ref m) ? (long)(m.avail >> 20) : -1;
+    }
+
+    /// Programs a player can close during the compile, by their process name, with the name a player knows them by
+    static readonly Dictionary<string, string> Closable = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["chrome"] = "Chrome", ["msedge"] = "Edge", ["firefox"] = "Firefox", ["opera"] = "Opera", ["brave"] = "Brave",
+        ["vivaldi"] = "Vivaldi", ["Discord"] = "Discord", ["steamwebhelper"] = "Steam", ["Spotify"] = "Spotify",
+        ["Teams"] = "Teams", ["ms-teams"] = "Teams", ["slack"] = "Slack", ["EpicGamesLauncher"] = "Epic Games",
+        ["Battle.net"] = "Battle.net", ["obs64"] = "OBS", ["WhatsApp"] = "WhatsApp",
+    };
+
+    /// The closable programs holding the most memory now (500 MB or more each), biggest first: their names and MB
+    public static List<(string Name, long MB)> BigPrograms()
+    {
+        var sums = new Dictionary<string, long>();
+        foreach (var p in System.Diagnostics.Process.GetProcesses())
+        {
+            try
+            {
+                if (Closable.TryGetValue(p.ProcessName, out var name))
+                    sums[name] = sums.GetValueOrDefault(name) + (p.WorkingSet64 >> 20);
+            }
+            catch (Exception) { }
+            finally { p.Dispose(); }
+        }
+        return sums.Where(kv => kv.Value >= 500).OrderByDescending(kv => kv.Value).Select(kv => (kv.Key, kv.Value)).ToList();
+    }
+
     // ---- XInput: which pads are connected ----
     [StructLayout(LayoutKind.Sequential)]
     struct XINPUT_STATE { public uint packet; public ushort buttons; public byte lt, rt; public short lx, ly, rx, ry; }

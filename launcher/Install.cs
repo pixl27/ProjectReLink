@@ -530,10 +530,39 @@ public partial class MainWindow
             var left = compileEta >= 0 ? TimeLeft(compileEta)
                 : compiled > 0.03 ? TimeLeft(compileClock.Elapsed.TotalSeconds / compiled * (1 - compiled) + 60)
                 : L("Estimation en cours.", "Estimating.");
-            BuildNote.Text = left + tail;
+            BuildNote.Text = left + tail + MemoryHint();
             return;
         }
         BuildNote.Text = (updating ? L("Mise à jour en cours.", "Updating.") : L("Compter 10 à 45 minutes en tout.", "Allow 10 to 45 minutes in all.")) + tail;
+    }
+
+    string memoryHint = "";
+    DateTime memoryHintAt;
+
+    /// (20/11) During a long compile, when memory is short: the big programs the player could close. The compile starts each
+    /// compiler when the free memory holds it (nx2/build.py MemoryGate); measured on a 16 GB PC with a browser, Claude and
+    /// Discord open (~10 GB), 4.5 compilers ran on average of 8 and the free memory fell to 48 MB, and the build's model gives
+    /// ~20% less time with 7 GB for the compilers instead of 4. Read every 5 s; nothing when the compile is small (an update).
+    string MemoryHint()
+    {
+        if (filesChanged >= 0 && filesChanged < 20) return "";
+        if (DateTime.Now - memoryHintAt < TimeSpan.FromSeconds(5)) return memoryHint;
+        memoryHintAt = DateTime.Now;
+        memoryHint = "";
+        try
+        {
+            var avail = Native.AvailableMB();
+            var big = Native.BigPrograms().Take(3).ToList();
+            var held = big.Sum(b => b.MB);
+            if (avail < 0 || avail >= 4096 || held < 1024) return memoryHint;
+            var names = big.Count == 1 ? big[0].Name
+                : string.Join(", ", big.Take(big.Count - 1).Select(b => b.Name)) + L(" et ", " and ") + big[^1].Name;
+            var gb = (held / 1024.0).ToString("0.0");
+            memoryHint = "\n" + L($"Astuce : fermer {names} libère {gb} Go de mémoire, et la compilation ira plus vite.",
+                                  $"Tip: closing {names} frees {gb} GB of memory, and the compile goes faster.");
+        }
+        catch (Exception) { }
+        return memoryHint;
     }
 
     static string TimeLeft(double seconds)
