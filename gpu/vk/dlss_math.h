@@ -4,6 +4,7 @@
 
 #ifdef __cplusplus
 #include <cmath>
+#include <limits>
 #include <utility>
 #endif
 
@@ -52,6 +53,29 @@ static inline int dlss_jitter_phases(unsigned render_w, unsigned render_h, unsig
 
 #ifdef __cplusplus
 namespace mkwvk::dlss_math {
+
+struct CameraProjection {
+    float near_z = 0.0f;
+    float far_z = 0.0f;
+    float fov_y = 0.0f;
+    bool infinite = false;
+};
+
+/// The camera values represented by the perspective projection's y scale and z row. The game's projection maps an
+/// OpenGL -1..1 clip depth to the depth buffer's 0..1 range; FSR takes the equivalent non-inverted 0..1 camera values.
+/// An infinite non-inverted projection must use max-float as its far plane, which is part of FSR's dispatch contract.
+inline bool camera_projection(float p11, float a, float b, CameraProjection& out) {
+    if (!(p11 > 0.0f) || !std::isfinite(p11)) return false;
+    const float near_z = b / (a - 1.0f);
+    const bool infinite = std::fabs(a + 1.0f) < 1e-6f;
+    const float far_z = infinite ? std::numeric_limits<float>::max() : b / (a + 1.0f);
+    const float fov_y = 2.0f * std::atan(1.0f / p11);
+    if (!std::isfinite(near_z) || !(near_z > 0.0f) || !std::isfinite(far_z) || !(far_z > near_z) ||
+        !std::isfinite(fov_y) || !(fov_y > 0.0f))
+        return false;
+    out = {near_z, far_z, fov_y, infinite};
+    return true;
+}
 
 /// This frame's clip space to the frame before's: previous * inverse(current), both row major (clip = M * position); false
 /// when current is singular or the result is not finite

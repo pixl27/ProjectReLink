@@ -31,6 +31,9 @@ void fsr_device_extensions(std::vector<const char*>& want, const std::vector<VkE
 void fsr_start();
 /// The runtime's upscaler, as it names its version ("" before fsr_start or without one)
 const char* fsr_version();
+/// FFX's opt-in RCAS strength from RX_VK_FSR_SHARPNESS, clamped to [0, 1]. The final-picture scaler uses this to avoid
+/// applying the menu's separate sharpness pass over the HUD as well while FSR's RCAS is active.
+float fsr_rcas_sharpness();
 
 /// An upscaler for these sizes (FFX's context). Its creation flags: FSR_DEPTH_INFINITE (the projection has no far plane),
 /// FSR_DYNAMIC (the render size changes from frame to frame: the Render resolution row's Auto)
@@ -62,7 +65,6 @@ struct FsrFrame {
     float frame_ms = 16.7f;
     float near_z = 0, far_z = 0, fov_y = 0;   // (the camera's planes, in its units, and its vertical field of view in radians)
     float meters = 1.0f;        // (a view-space unit in metres)
-    bool perceptual = false;    // (the colour is gamma-encoded, not linear: FFX's sRGB input flag)
 };
 /// Records the upscale into cmd: 0 when done, else FFX's return code (FfxApiReturnCodes)
 uint32_t fsr_dispatch(FsrContext* c, VkCommandBuffer cmd, const FsrFrame& f);

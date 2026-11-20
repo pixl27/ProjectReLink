@@ -11,7 +11,8 @@
 //  - the scene's camera is taken from the draws into the scene's colour target: their vertex stage's uniform buffer 3
 //    holds the target's size at 0x120, this frame's view-projection at 0x30 (row major, clip = M * position; the projection's w row ends -1, 0 at 0xa8). The largest such target in a frame is
 //    the scene (reflections and half-size passes have the same layout). The scene's depth is that draw's depth target.
-//  - shaders/dlss_prep.comp makes DLSS's inputs at the render size: the colour as the network samples it (LDR), the
+//  - shaders/dlss_prep.comp makes the upscaler's inputs at the render size: DLSS gets the perceptual colour the game's
+//    network samples; FSR gets that colour squared back to linear, as AMD requires. It also makes the
 //    depth, and motion vectors from the depth reprojected through the two cameras. The game has no motion vectors of its
 //    own (no velocity target: the scene pass draws into one B10G11R11 target, and its upscale network samples the colour alone),
 //    so that is the camera's motion, and what moves by itself would ghost. The scene camera's sub-pixel jitter
@@ -22,8 +23,8 @@
 //    copied on the GPU from where the game has them into two buffers that take turns; a pixel is the draw's where its depth is
 //    the scene's (within RX_VK_DLSS_ACTOR_TOL steps, default 64). What moves without bones (particles, water, foliage moved in
 //    its vertex shader, mesh-shader draws) keeps the camera's motion. RX_VK_DLSS_ACTORS=0: camera motion alone.
-//  - DLSS (NGX, Vulkan) scales them to the output's size; shaders/dlss_out.comp squares that back to linear colour
-//    into the network's output.
+//  - DLSS (NGX, Vulkan) scales them to the output's size; shaders/dlss_out.comp squares its perceptual output back to
+//    linear colour. FSR's output is already linear and is copied unchanged into the network's output.
 // Anything unexpected (no camera this frame, other sizes, DLSS not there or failing) leaves the network to run, the
 // reason in the log when it changes.
 //
@@ -41,10 +42,9 @@
 // NVIDIA's NGX SDK is not part of ReLink (NVIDIA's license): a local build fetches it (scripts/ngx_sdk.py) and builds with
 // RELINK_NGX_SDK, which compiles this file with RELINK_NGX. Without it the NGX parts (under RELINK_NGX) are left out and
 // DLSS and DLAA are not offered; FSR still is.
-// AMD FSR (RX_VK_DLSS=3, or 4 for its native anti-aliasing, the 3D at full size as with DLAA): the same inputs, given to FFX's
-// upscaler with the camera's planes and field of view read from its projection. RX_VK_FSR_SRGB=0: its colour said to be
-// linear (by default FFX is told it is gamma-encoded, as it is). RX_VK_FSR_JITTER=flip: the jitter given with the other sign
-// (a test of the sign).
+// AMD FSR (RX_VK_DLSS=3, or 4 for its native anti-aliasing, the 3D at full size as with DLAA): linear colour, and the same
+// depth and motion, given to FFX's upscaler with the camera's planes and field of view read from its projection.
+// RX_VK_FSR_JITTER=flip: the jitter given with the other sign (a test of the sign).
 // NGX's core is the driver's (Windows: _nvngx.dll, which NVIDIA's loader finds in the driver's own folder; Linux:
 // libnvidia-ngx.so). It is never put beside the game: a copy there would be loaded in place of the driver's.
 #include "vk_dlss.h"
@@ -84,6 +84,24 @@
 namespace mkwvk {
 
 namespace {
+struct PrepPush {
+    float reproject[16];
+    float jitter[2];
+    int32_t size[2];
+    int32_t flags;
+};
+struct OutPush {
+    int32_t size[2];
+    int32_t linear_color;
+};
+static_assert(sizeof(PrepPush) == 84);
+static_assert(sizeof(OutPush) == 12);
+
+constexpr int32_t kPrepMotion = 1;
+constexpr int32_t kPrepShowMotion = 2;
+constexpr int32_t kPrepMotionOnly = 4;
+constexpr int32_t kPrepLinearColor = 8;
+
 int env_switch(const char* name) {   // (-1: unset)
     const char* e = getenv(name);
     return e && *e ? atoi(e) : -1;
@@ -516,9 +534,11 @@ bool make_pipelines() {
     if (!dev.push_descriptor || !vkCmdPushDescriptorSetKHR) return false;
     const VkDescriptorType S = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, I = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     const VkDescriptorType prep_types[5] = {S, S, I, I, I}, out_types[2] = {S, I};
-    if (!s.prep && !make_pipeline(DLSS_PREP_COMP_SPV, sizeof DLSS_PREP_COMP_SPV, prep_types, 5, 84, s.prep_set, s.prep_layout, s.prep))
+    if (!s.prep && !make_pipeline(DLSS_PREP_COMP_SPV, sizeof DLSS_PREP_COMP_SPV, prep_types, 5, sizeof(PrepPush), s.prep_set,
+                                  s.prep_layout, s.prep))
         return false;
-    if (!s.out && !make_pipeline(DLSS_OUT_COMP_SPV, sizeof DLSS_OUT_COMP_SPV, out_types, 2, 8, s.out_set, s.out_layout, s.out))
+    if (!s.out && !make_pipeline(DLSS_OUT_COMP_SPV, sizeof DLSS_OUT_COMP_SPV, out_types, 2, sizeof(OutPush), s.out_set,
+                                 s.out_layout, s.out))
         return false;
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     si.magFilter = si.minFilter = VK_FILTER_NEAREST;
@@ -982,13 +1002,10 @@ void dlss_note_scene_draw(const Texture* color0, uint32_t width, uint32_t height
     // b = -2 f n / (f - n), so n = b / (a - 1) and f = b / (a + 1), none when a is -1. The depth buffer then holds
     // (z / w + 1) / 2, which is what a 0-to-1 projection with the same planes writes: the depth FSR expects. Row 1's second
     // value is the cotangent of half the vertical field of view. Values that do not make a camera keep the last ones
-    const float p11 = c[0x84 / 4], a = c[0x98 / 4], bb = c[0x9c / 4];
-    const float n_z = bb / (a - 1.0f);
-    const bool infinite = std::fabs(a + 1.0f) < 1e-6f;
-    const float f_z = infinite ? 0.0f : bb / (a + 1.0f);
-    if (p11 > 0.0f && std::isfinite(n_z) && n_z > 0.0f && (infinite || (std::isfinite(f_z) && f_z > n_z))) {
-        k.near_z = n_z, k.far_z = infinite ? 1e30f : f_z, k.infinite = infinite;
-        k.fov_y = 2.0f * std::atan(1.0f / p11);
+    dlss_math::CameraProjection projection;
+    if (dlss_math::camera_projection(c[0x84 / 4], c[0x98 / 4], c[0x9c / 4], projection)) {
+        k.near_z = projection.near_z, k.far_z = projection.far_z, k.infinite = projection.infinite;
+        k.fov_y = projection.fov_y;
     }
     k.width = width, k.height = height, k.depth = depth, k.depth_gen = texture_destroy_generation(), k.frame = now;
     k.valid = true;
@@ -1247,13 +1264,8 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
 
     const uint64_t now = texture_frame_no();
     const uint64_t last = s.last_frame;
-    const bool reset = !last || now - last > 2;
-    struct {
-        float reproject[16];
-        float jitter[2];
-        int32_t size[2];
-        int32_t flags;
-    } pc{};
+    bool reset = !last || now - last > 2;
+    PrepPush pc{};
     static const bool show_motion = getenv("RX_VK_DLSS_DEBUG") && !strcmp(getenv("RX_VK_DLSS_DEBUG"), "motion");
     // (the motion without the jitter: from this frame's jittered clip space to the frame before's without its jitter.
     // A jitter moves clip x by jitter * w: taken off the previous matrix's first two rows)
@@ -1262,8 +1274,10 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
     std::memcpy(previous, s.last_vp, sizeof previous);
     dlss_math::unjitter(previous, s.last_jitter);
     const bool motion = !reset && dlss_math::reprojection(cam.current, previous, pc.reproject);
+    if (!reset && !motion) reset = true;   // (an invalid camera transform cannot safely reuse a temporal history)
     pc.jitter[0] = cam.jitter[0], pc.jitter[1] = cam.jitter[1];
-    pc.size[0] = (int32_t)rw, pc.size[1] = (int32_t)rh, pc.flags = (motion ? 1 : 0) | (show_motion ? 2 : 0);
+    pc.size[0] = (int32_t)rw, pc.size[1] = (int32_t)rh;
+    pc.flags = (motion ? kPrepMotion : 0) | (show_motion ? kPrepShowMotion : 0) | (fsr ? kPrepLinearColor : 0);
 
     full_barrier(cmd);   // (the scene's colour and depth, written before)
     {
@@ -1288,7 +1302,7 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
     const int actors = actor_motion(cmd, cam, previous, rw, rh, dview, motion);
     if (actors) full_barrier(cmd);
     if (show_motion && actors) {   // (RX_VK_DLSS_DEBUG=motion: the motion as it is now, the actors' in it)
-        pc.flags = 4;
+        pc.flags = kPrepMotionOnly | (fsr ? kPrepLinearColor : 0);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s.prep);
         const VkDescriptorImageInfo info[5] = {{s.point, in_view, VK_IMAGE_LAYOUT_GENERAL},
                                                {s.point, dview, VK_IMAGE_LAYOUT_GENERAL},
@@ -1338,8 +1352,6 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
         f.far_z = cam.near_z > 0 ? cam.far_z : 100000.0f;
         f.fov_y = cam.fov_y > 0 ? cam.fov_y : 0.8f;
         f.meters = kFsrMeters;
-        static const bool linear = env_switch("RX_VK_FSR_SRGB") == 0;
-        f.perceptual = !linear;   // (dlss_prep.comp's colour is the network's input: the square root of the tonemapped colour)
         const uint32_t r = fsr_dispatch(s.fsr, cmd, f);
         note_work();   // (FFX's own commands, which vk_work.h does not see)
         layouts(cmd, inputs, 3, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
@@ -1371,7 +1383,7 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
     }
     full_barrier(cmd);
     {
-        const int32_t opc[2] = {(int32_t)ow, (int32_t)oh};
+        const OutPush opc{{(int32_t)ow, (int32_t)oh}, fsr ? 1 : 0};
         const VkDescriptorImageInfo info[2] = {{native ? s.linear : s.point, s.output.view, VK_IMAGE_LAYOUT_GENERAL},
                                                {VK_NULL_HANDLE, out_view, VK_IMAGE_LAYOUT_GENERAL}};
         VkWriteDescriptorSet w[2]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
@@ -1381,7 +1393,7 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
         w[1].pImageInfo = &info[1];
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s.out);
         vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s.out_layout, 0, 2, w);
-        vkCmdPushConstants(cmd, s.out_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof opc, opc);
+        vkCmdPushConstants(cmd, s.out_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof opc, &opc);
         vkCmdDispatch(cmd, (ow + 7) / 8, (oh + 7) / 8, 1);
     }
     s.last_frame = now;

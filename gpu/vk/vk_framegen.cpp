@@ -20,6 +20,9 @@
 #include <thread>
 
 #include "vk_framegen.h"
+#include "upscaler_rows.h"
+#include "vk_dlss.h"
+#include "vk_fsr.h"
 #include "vk_menu.h"
 #include "vk_texture.h"
 #include "vk_wheel.h"   // (relink: the item wheel's picture, laid over its backdrop)
@@ -97,6 +100,11 @@ int64_t now_ns() {
 }
 
 int multiplier() { return std::clamp(opts.framegen, 1, kMaxMult); }   // (the Insert menu; 1: the game's frames alone)
+
+bool fsr_rcas_active() {
+    const int mode = dlss_mode();
+    return fsr_rcas_sharpness() > 0.0f && (mode == upscaler_rows::FSR || mode == upscaler_rows::FSR_AA);
+}
 
 /// A compute pipeline over bindings of these types (push descriptors), push constants of push bytes
 bool make_pipe(Pipe& p, const uint32_t* code, size_t bytes, std::initializer_list<VkDescriptorType> types, uint32_t push,
@@ -576,7 +584,8 @@ bool framegen_on() {
 }
 
 VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint32_t sw, uint32_t sh, const int crop[4], uint32_t dw, uint32_t dh) {
-    if (!opts.upscale && !opts.sharpness) return VK_NULL_HANDLE;
+    const bool rcas = fsr_rcas_active();
+    if (!opts.upscale && (!opts.sharpness || rcas)) return VK_NULL_HANDLE;
     if (!src || !image || !sw || !sh || !dw || !dh) return VK_NULL_HANDLE;
     if (crop && crop[2] > 0 && crop[3] > 0 &&
         (crop[0] < 0 || crop[1] < 0 || (uint32_t)crop[0] >= sw || (uint32_t)crop[1] >= sh)) return VK_NULL_HANDLE;
@@ -622,14 +631,17 @@ VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint
         scale.scaled_w = dw, scale.scaled_h = dh;
         to_general(cmd, scale.scaled.image);
     }
-    const struct { int mode; float sharp; } pc{opts.upscale, opts.sharpness / 100.0f};
+    // FSR's opt-in RCAS has already sharpened the 3D before the game composed its HUD. Do not stack the menu's final-picture
+    // sharpness over that result: it would sharpen the HUD too and make the image-quality arm incomparable.
+    const struct { int mode; float sharp; } pc{opts.upscale, rcas ? 0.0f : opts.sharpness / 100.0f};
     pass(cmd, scale.pipe, {{src, scale.linear}, {scale.scaled.view, VK_NULL_HANDLE}}, dw, dh, &pc, sizeof pc);
     static const bool report = getenv("RX_VK_UPSCALE_LOG") != nullptr;
     static bool reported = false;
     if (report && !reported) {
         reported = true;
-        logf("vk: upscale dispatched: mode %d, sharpness %d, source %ux%u, crop request %d,%d %dx%d, destination %ux%u",
-             opts.upscale, opts.sharpness, sw, sh, crop ? crop[0] : 0, crop ? crop[1] : 0,
+        logf("vk: upscale dispatched: mode %d, sharpness %d%s, source %ux%u, crop request %d,%d %dx%d, destination %ux%u",
+             opts.upscale, rcas ? 0 : opts.sharpness, rcas ? " (FSR RCAS owns the 3D)" : "", sw, sh,
+             crop ? crop[0] : 0, crop ? crop[1] : 0,
              crop ? crop[2] : (int)sw, crop ? crop[3] : (int)sh, dw, dh);
     }
     return scale.scaled.image;

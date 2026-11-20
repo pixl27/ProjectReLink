@@ -8,10 +8,14 @@
 // The log's start says which, in one line.
 // RX_VK_FSR=0: the runtime not loaded, FSR not offered. RX_VK_FSR_DEBUG=1: the runtime checks what it is given (FFX's debug
 // checking), its messages in our log.
+// RX_VK_FSR_SHARPNESS=<0..1>: FFX's RCAS after reconstruction, before the HUD; off when unset or 0. The menu's Sharpness
+// is a separate final-picture pass which also sharpens the HUD.
 #include "vk_fsr.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -38,6 +42,17 @@ namespace {
 std::atomic<int> g_why{FSR_NOT_STARTED};
 std::string g_version;
 }  // namespace
+
+float fsr_rcas_sharpness() {
+    static const float value = [] {
+        const char* e = getenv("RX_VK_FSR_SHARPNESS");
+        if (!e || !*e) return 0.0f;
+        char* end = nullptr;
+        const float v = strtof(e, &end);
+        return end != e && std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f;
+    }();
+    return value;
+}
 
 // (acquire: fsr_start's thread writes the entry points and g_version before it stores FSR_OK)
 FsrWhy fsr_why() { return (FsrWhy)g_why.load(std::memory_order_acquire); }
@@ -214,9 +229,9 @@ FsrContext* fsr_create(uint32_t max_render_w, uint32_t max_render_h, uint32_t ou
     c->backend.vkDeviceProcAddr = vkGetDeviceProcAddr;
     c->desc.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
     c->desc.header.pNext = &c->backend.header;
-    // (the colour vk_dlss.cpp gives is the game's tonemapped LDR colour: no HDR, no auto-exposure (FFX then takes an
-    // exposure of 1). Its depth is not reversed (0 near, 1 far: dlss_prep.comp writes the depth buffer as it is). Its motion
-    // vectors are at the render size and without the jitter (dlss_prep.comp takes it off): neither flag)
+    // (the colour vk_dlss.cpp gives is the game's tonemapped linear LDR colour: no HDR, no auto-exposure (FFX then takes
+    // an exposure of 1). Its depth is not reversed (0 near, 1 far: dlss_prep.comp writes the depth buffer as it is). Its
+    // motion vectors are at the render size and without the jitter (dlss_prep.comp takes it off): neither flag)
     static const bool debug = env_on("RX_VK_FSR_DEBUG");
     c->desc.flags = (flags & FSR_DEPTH_INFINITE ? FFX_UPSCALE_ENABLE_DEPTH_INFINITE : 0u) |
                     (flags & FSR_DYNAMIC ? FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION : 0u) |
@@ -290,14 +305,19 @@ uint32_t fsr_dispatch(FsrContext* c, VkCommandBuffer cmd, const FsrFrame& f) {
     d.motionVectorScale = {f.motion_scale[0], f.motion_scale[1]};
     d.renderSize = {f.render_w, f.render_h};
     d.upscaleSize = {f.out_w, f.out_h};
-    d.enableSharpening = false;   // (the game's own Sharpness row sharpens the finished picture)
-    d.sharpness = 0.0f;
+    // (normally the game's Sharpness row acts on the finished picture, including the HUD.  An explicit FSR value uses
+    // FFX's own RCAS here instead, while this image is still the 3D alone)
+    d.sharpness = fsr_rcas_sharpness();
+    d.enableSharpening = d.sharpness > 0.0f;
+    static std::atomic<bool> told_sharpness{false};
+    if (d.enableSharpening && !told_sharpness.exchange(true))
+        logf("vk: AMD FSR: RCAS sharpens the 3D before the HUD at %.0f%% (RX_VK_FSR_SHARPNESS)", d.sharpness * 100.0f);
     d.frameTimeDelta = f.frame_ms;
     d.preExposure = 1.0f;
     d.reset = f.reset;
     d.cameraNear = f.near_z, d.cameraFar = f.far_z, d.cameraFovAngleVertical = f.fov_y;
     d.viewSpaceToMetersFactor = f.meters;
-    d.flags = f.perceptual ? FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB : 0u;
+    d.flags = 0;   // (vk_dlss.cpp converts the game's perceptual network input to the linear colour FSR 3.1 requires)
     return api.dispatch(&c->ctx, &d.header);
 }
 
