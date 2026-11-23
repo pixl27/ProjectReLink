@@ -1,4 +1,4 @@
-# Hookshot
+# Red Tunic
 
 **Hookshot** is the port's name (as Skybound is TOTKPort's and BlueShell is mkw-recomp's); the game builds as
 `hookshot.exe` + `hookshot_vk.dll` (`hookshot` + `hookshot_vk.so` on Linux).

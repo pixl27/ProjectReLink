@@ -3,7 +3,7 @@
 ## Report a bug
 
 Search [Common issues](common-issues.md) and the [issue tracker](https://github.com/NotRexed/Hookshot/issues), then
-use the [issue forms](https://github.com/NotRexed/Hookshot/issues/new/choose). Follow the
+use the [issue forms](https://github.com/spacefarergames/RedTunic/issues/new/choose). Follow the
 [contribution rules](../CONTRIBUTING.md#before-you-open-an-issue-or-a-pr) for the required details and allowed files.
 If a report already covers your problem, add your details there.
 

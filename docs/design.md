@@ -1,4 +1,4 @@
-# Hookshot: design
+# Red Tunic: design
 
 A native x86-64 Windows and Linux build of the game's Switch 2 remake: its AArch64
 code translated to C ahead of time from the user's own decrypted dump and compiled with clang, the Horizon OS and

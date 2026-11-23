@@ -84,7 +84,7 @@ advice. AMD-on-Windows reports have a separate [tracker, #996](https://github.co
 
 [The response to #1923](https://github.com/NotRexed/Hookshot/issues/1923#issuecomment-6778840222) pointed to
 [#1655](https://github.com/NotRexed/Hookshot/issues/1655) for play and ocarina controls disagreeing with the selected
-layout. Include the controller, Hookshot bindings, and the game's own control settings if adding a report.
+layout. Include the controller, Red Tunic bindings, and the game's own control settings if adding a report.
 
 ## Textures look low resolution or corrupted on AMD
 

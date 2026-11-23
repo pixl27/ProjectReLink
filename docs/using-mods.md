@@ -1,13 +1,13 @@
 # Mods
 
-Hookshot loads mods that replace or add the game's files (textures, models, texts, sounds and other data), mods that
+Red Tunic loads mods that replace or add the game's files (textures, models, texts, sounds and other data), mods that
 patch the game's code (ExeFS patches), and Atmosphere cheats. This page covers installing them, turning them off,
 their order and checking that they loaded.
 
 ## Before you start
 
 - **Back up your saves.** A mod can change what gets saved, and removing it later doesn't undo progress made with it.
-  Hookshot Builder's **Mods + Editor** page keeps a backup each time its save editor saves.
+  Red Tunic Builder's **Mods + Editor** page keeps a backup each time its save editor saves.
 - **Stop the game.** Mods are found when the game starts: add, remove, rename or edit them with the game closed, then
   start it again. The Builder's Mods page sees a new mod by itself (or press **Reload**).
 
@@ -37,9 +37,9 @@ of its own.
 
 ## Code patches (ExeFS)
 
-Hookshot compiles the game's code ahead of time, so a mod's `exefs` patches (`.pchtxt`, `.ips`) are applied when the
+Red Tunic compiles the game's code ahead of time, so a mod's `exefs` patches (`.pchtxt`, `.ips`) are applied when the
 game is built. After adding a mod with patches, changing one, or turning such a mod on or off, build the same folder
-again: Hookshot Builder's **Mods + Editor** page shows a **Rebuild** button then (a mix of patches built before is kept,
+again: Red Tunic Builder's **Mods + Editor** page shows a **Rebuild** button then (a mix of patches built before is kept,
 and **Apply** brings it back without building). `exefs_patches.txt` in the game folder lists what the build applied.
 Only patches for this game's code build are used.
 
@@ -57,7 +57,7 @@ switches in `hookshot_mods.txt` in the game folder. Files that only one mod has 
 
 ## Mods that make files bigger
 
-The game sets aside a fixed amount of memory for each of its files, in a resource size table. Hookshot makes that
+The game sets aside a fixed amount of memory for each of its files, in a resource size table. Red Tunic makes that
 table at each start with mods: the game's own, with every mod's table merged in and every file a mod serves raised to
 fit, so mods that each make files bigger (HD textures, longer parameter files) load together. The button prompts'
 entries are kept in it, so your controller's icons keep working.

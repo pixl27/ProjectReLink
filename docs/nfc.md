@@ -1,6 +1,6 @@
 # NFC tags
 
-The game reads figures' NFC tags through the console's `nn::nfp` library. Hookshot gives it that library on tags of the
+The game reads figures' NFC tags through the console's `nn::nfp` library. Red Tunic gives it that library on tags of the
 player's own: files in a folder, and, with a Nintendo Switch 2 Pro Controller over USB, real tags on the controller.
 `host/nn_nfp.c` is all of it; the Insert menu's NFC tab (`gpu/vk/vk_menu.cpp`) is its front.
 
@@ -26,8 +26,8 @@ whose name starts with `key_` is left out.
 
 A file is a figure's tag when its capability container says NTAG215 (`F1 10 FF EE` at 0x0C) and its model ends in `02`
 (0x5B). The tag's ID (bytes 0 to 2 and 4 to 7) and the figure's model (0x54 to 0x5B) are plain on a tag and are all that
-is read. The rest of a real tag (its owner, its counters, the games' application areas) is encrypted with keys Hookshot
-does not have and does not need: a tag is never written back, so what a game keeps on it is kept in a file of Hookshot's
+is read. The rest of a real tag (its owner, its counters, the games' application areas) is encrypted with keys Red Tunic
+does not have and does not need: a tag is never written back, so what a game keeps on it is kept in a file of Red Tunic's
 own instead, `user/nfc/<the tag's ID>.area` beside the saves, and a tag is always shown as registered.
 
 ## In the game

@@ -11,7 +11,7 @@ const dist = path.join(site, 'dist');
 await verifyCompatibilitySources(path.join(site, '..'));
 const origin = siteConfig.origin;
 const base = siteConfig.base;
-const bug = 'https://github.com/NotRexed/Hookshot/issues/new/choose';
+const bug = 'https://github.com/spacefarergames/RedTunic/issues/new/choose';
 const files = [];
 async function walk(dir) {
   for (const item of await readdir(dir, { withFileTypes: true })) {
@@ -65,8 +65,8 @@ for (const file of files) {
     } catch { errors.push(`${route}: missing target: ${raw}`); }
   }
 }
-const original = await readFile(path.join(site, '../assets/hookshot.png'));
-assert(original.equals(await readFile(path.join(dist, 'assets/hookshot.png'))), 'Original README logo changed');
+const original = await readFile(path.join(site, '../assets/red-tunic.png'));
+assert(original.equals(await readFile(path.join(dist, 'assets/red-tunic.png'))), 'Original README logo changed');
 assert((await readFile(path.join(dist, 'index.html'), 'utf8')).includes('class="adventure-hero"'), 'Custom landing page missing');
 assert((await readdir(path.join(dist, 'pagefind'))).some((f) => f === 'pagefind.js'), 'Search index missing');
 if (errors.length) {

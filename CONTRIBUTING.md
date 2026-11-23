@@ -1,6 +1,6 @@
-# Contributing to Hookshot
+# Contributing to Red Tunic
 
-Hookshot is a static recompilation of the Switch 2 *The Legend of Zelda: Ocarina of Time* remake: the game's AArch64
+Red Tunic is based on upstream Hookshot. It is a static recompilation of the Switch 2 *The Legend of Zelda: Ocarina of Time* remake: the game's AArch64
 code is lifted to C, the Horizon OS and NVN2 are implemented natively, and the GPU work is replayed on Vulkan. No
 emulator is involved, and the game is built on your PC from your own copy.
 
@@ -51,7 +51,7 @@ break. Claim in Discord #dev-work before you start.
 - One topic per issue or pull request. Do not mix a fix with a refactor or a batch of unrelated changes.
 - Report the version you actually ran: the release name, or the first line of `hookshot_log.txt`.
 - Test without ReShade, shader-cache tools, overlays and frame-generation injectors when you report a graphics or
-  performance problem. They change what Hookshot does.
+  performance problem. They change what Red Tunic does.
 
 ## Development setup
 
@@ -75,7 +75,7 @@ before it starts.
    folder. Without it the build falls back to emsdk's clang at `C:\emsdk` with Visual Studio's C++ tools and the
    Windows SDK (`HOOKSHOT_MSVC=1` forces that route).
 
-3. Copy the pieces a clone does not carry from the `tools` folder Hookshot Builder installs. Run `HookshotBuilder.exe`
+3. Copy the pieces a clone does not carry from the `tools` folder Red Tunic Builder installs. Run `HookshotBuilder.exe`
    from the latest release once (releases no longer carry a `HookshotBuilder.zip`): the folder is
    `%LOCALAPPDATA%\HookshotBuilder\versions\<version>\HookshotBuilder\tools`.
 
@@ -142,7 +142,7 @@ Never share a game folder built with the SDK. A change to the pinned release upd
 `scripts/ngx_sdk.py` (and `tests/test_ngx_sdk.py`), and the release named in the builder's license text
 (`builder/HookshotBuilder/MainWindow.xaml.cs`).
 
-### Hookshot Builder
+### Red Tunic Builder
 
 The builder is a .NET 8 WPF app. Open `builder/HookshotBuilder.sln` in Visual Studio 2022 with the .NET desktop
 workload, or build it from a developer prompt:
@@ -331,7 +331,7 @@ the trailers that describe it; if you wrote the change yourself, there is nothin
 
 ## Licensing
 
-Hookshot is free software under the [GNU General Public License, version 3 or later](LICENSE). By submitting a change
+Red Tunic is free software under the [GNU General Public License, version 3 or later](LICENSE). By submitting a change
 you agree to license it under those terms. Only send code you can license that way. Do not paste code from a project
 with an incompatible license, and do not paste decompiled game code or anything generated from the dump into a PR.
 

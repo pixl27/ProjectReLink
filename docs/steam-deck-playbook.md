@@ -1,6 +1,6 @@
 # Playing on the Steam Deck
 
-Hookshot runs on the Steam Deck LCD and OLED (the same GPU in both). This page is what
+Red Tunic runs on the Steam Deck LCD and OLED (the same GPU in both). This page is what
 a Deck player should know that the [install guide](../readme.md#on-linux) does not say:
 what the build costs on handheld hardware, which settings this machine picks and why
 that is right, and the two switches that measurably help on Deck.
@@ -9,7 +9,7 @@ that is right, and the two switches that measurably help on Deck.
 
 ## Installing
 
-Hookshot Builder's AppImage works in Desktop mode: download the `.AppImage`, enable
+Red Tunic Builder's AppImage works in Desktop mode: download the `.AppImage`, enable
 **Allow executing file as program** in its Properties, and build from your own dump as
 usual. Building on the Deck's own CPU takes well over the ~15 minutes a 12-core desktop
 needs: budget overnight, and keep the Deck plugged in and awake (Desktop mode, display

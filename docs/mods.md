@@ -1,6 +1,6 @@
 # RomFS mods: the existing file contract
 
-This is the file-replacement path Hookshot already implements, the first tier proposed in
+This is the file-replacement path Red Tunic already implements, the first tier proposed in
 a mod-loader proposal. It is not a new manifest format or a promise of
 chest tables, item/check events, native modules or Archipelago support. The example below uses invented text files,
 not a dump, a seed or a playable mod.
@@ -9,7 +9,7 @@ not a dump, a seed or a playable mod.
 
 A mod is a folder with a `romfs` subfolder. Paths below it replace or add to the game's RomFS; the game still has to
 understand their contents. There is no file-extension allowlist or format validator. A file mod does not supply host
-code or callbacks. An `exefs` folder is noticed and logged, but its patches are not applied: Hookshot compiles the
+code or callbacks. An `exefs` folder is noticed and logged, but its patches are not applied: Red Tunic compiles the
 game's instructions ahead of time. Scripts, native libraries and a manifest beside `romfs` are not executed or read
 as a mod interface. This is not a security sandbox or a guarantee that a mod cannot damage a save.
 
@@ -60,7 +60,7 @@ orders, two versions and malformed tables. A successful fixture does not certify
 ## An example exercised without the game
 
 The JSON block is a readable recipe: each key is a relative file path and each value is its UTF-8 contents. It is
-**test input, not a manifest understood by Hookshot**. `tests/test_mods_size_table.py` copies these exact authored
+**test input, not a manifest understood by Red Tunic**. `tests/test_mods_size_table.py` copies these exact authored
 files into a temporary folder, runs the real `host/mods.c` and `host/prompts.c` through the existing Linux filesystem
 fixture, and reads the selected files. The fixture never starts the game or touches a player's folders.
 

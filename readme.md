@@ -49,6 +49,8 @@ A user report on an AMD Ryzen 5 system describes smooth Hyrule Field gameplay at
 
 ## Install and play
 
+### What you need
+
 Use 64-bit Windows 10 or 11, or a supported x86-64 Linux distribution, a Vulkan-capable GPU, and your own copy of the supported game build (program `0400486024DEC000`, update `v131072`, build `e0f3ccfa`). Build from a `.nup` or extracted `romfs` and `exefs` folders. Keep the game dump, keys, generated code, shaders and saves on your PC.
 
 Clone the [Red Tunic source](https://github.com/spacefarergames/RedTunic), then see [Build from source](#build-from-source) for dependencies and commands. After building, launch the generated game executable from the output folder. The existing runtime filenames, including `hookshot_options.ini` and `hookshot_env.txt`, are used for config compatibility. Use **Graphics → Quality preset → Auto (this PC)** for the AMD profile. At 1920 × 1080 output, keep the fixed two-thirds render scale for 720p internal rendering.

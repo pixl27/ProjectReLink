@@ -15,8 +15,12 @@ pages.set('docs/README.md', '');
 
 const assetDir = path.join(site, 'public/assets');
 await mkdir(assetDir, { recursive: true });
-await copyFile(path.join(root, 'assets/hookshot.png'), path.join(assetDir, 'hookshot.png'));
-const publicAssets = new Set(['assets/hookshot.png']);
+await copyFile(path.join(root, 'assets/red-tunic.png'), path.join(assetDir, 'red-tunic.png'));
+const publicAssets = new Set(['assets/red-tunic.png']);
+for (const name of ['red-tunic-builder-build.png', 'red-tunic-builder-ready.png']) {
+  await copyFile(path.join(root, 'docs/images', name), path.join(assetDir, name));
+}
+const screenshots = new Set(['docs/images/red-tunic-builder-build.png', 'docs/images/red-tunic-builder-ready.png']);
 function urlFor(value, source) {
   if (!value || /^(?:[a-z]+:|\/\/|#)/i.test(value)) return value;
   const hashAt = value.indexOf('#');
@@ -24,8 +28,9 @@ function urlFor(value, source) {
   const pathname = hashAt < 0 ? value : value.slice(0, hashAt);
   const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(source), pathname));
   if (pages.has(resolved)) return base + (pages.get(resolved) ? `${pages.get(resolved)}/` : '') + fragment;
+  if (screenshots.has(resolved)) return base + 'assets/' + path.posix.basename(resolved) + fragment;
   if (publicAssets.has(resolved)) return base + resolved + fragment;
-  return `https://github.com/NotRexed/Hookshot/blob/main/${resolved}${fragment}`;
+  return `https://github.com/spacefarergames/RedTunic/blob/main/${resolved}${fragment}`;
 }
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });

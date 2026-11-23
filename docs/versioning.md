@@ -1,6 +1,6 @@
 # Versioning and releases
 
-Hookshot follows [Semantic Versioning 2.0.0](https://semver.org/). Releases are made with
+Red Tunic follows [Semantic Versioning 2.0.0](https://semver.org/). Releases are made with
 [release-please](https://github.com/googleapis/release-please): the version and the changelog come from the
 [Conventional Commit](https://www.conventionalcommits.org/) titles of the pull requests merged into `main`.
 
@@ -17,7 +17,7 @@ the Release workflow's record job, once a version is published. The release pull
 the `v` belongs to the tag, not to the version. Build metadata is not used in tags.
 
 One version covers the whole project: the game (`hookshot.exe` / `hookshot`), the Vulkan back end, the lift pipeline
-and its scripts, Hookshot Builder and the Linux AppImage. They are built from the same commit and released together,
+and its scripts, Red Tunic Builder and the Linux AppImage. They are built from the same commit and released together,
 so they never carry different versions.
 
 The "public" surface the rules protect is the command line of `make_game.py` and the builder, the `RX_` and `HOS_`

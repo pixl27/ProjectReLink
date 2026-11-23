@@ -1,6 +1,6 @@
 # Settings
 
-Everything you can change is in Hookshot's in-game menu: graphics, sound, gameplay and controls. Pick a starting point
+Everything you can change is in Red Tunic's in-game menu: graphics, sound, gameplay and controls. Pick a starting point
 below, then look up any single setting in the list at the bottom.
 
 ## Open the menu
@@ -51,7 +51,7 @@ Output resolution starts at the game's own 2560x1440, or at your screen's size w
   faster and input delay goes up a little. **Auto** matches your display's refresh rate. On an NVIDIA RTX 40 card or
   newer, with DLSS, DLAA or FSR as the upscaler, NVIDIA DLSS Frame Generation makes the frames; otherwise AMD FSR 3.1
   frame generation does, on any GPU. With DLSS FG the row goes up to what NVIDIA's runtime makes on your card: 6x on an
-  RTX 50, 2x on an RTX 40. **Frame generation by** chooses: DLSS FG, FSR 3.1 FG, or Built-in FG (Hookshot's
+  RTX 50, 2x on an RTX 40. **Frame generation by** chooses: DLSS FG, FSR 3.1 FG, or Built-in FG (Red Tunic's
   own, made from the finished picture alone). **NVIDIA Reflex** and **AMD Anti-Lag 2** cut the added delay; they only appear on
   cards that support them.
 - **DLSS and DLAA look softer** than the game's own upscaler: set **Sharpness** to around 80% with them.
@@ -88,4 +88,4 @@ Change one setting at a time and compare the same area. Follow the README's
 [performance-reporting instructions](../readme.md#low-fps-or-stutter) so the comparison includes useful log details.
 ## Controls
 Use the [controls reference](../readme.md#controls) for shortcuts and bindings. When reporting a mismatch, include
-both Hookshot's selected layout and the game's own control settings.
+both Red Tunic's selected layout and the game's own control settings.

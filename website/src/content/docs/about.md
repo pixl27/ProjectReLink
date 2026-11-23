@@ -1,12 +1,12 @@
 ---
 title: About this preview
-description: A community documentation preview for Hookshot, built with Astro Starlight.
+description: A community documentation preview for Red Tunic, built with Astro Starlight.
 ---
 
 This is a community documentation proposal for Hookshot. The upstream maintainers decide whether to adopt and host it.
-A [live preview](https://bibigurl-yum.github.io/Hookshot/) is maintained on bibigurl-yum's fork.
+A [live preview](https://bibigurl-yum.github.io/RedTunic/) is maintained on bibigurl-yum's fork.
 
-The site uses the original Hookshot logo from the project's README.
+The site uses the original Red Tunic logo from the project's README.
 
 ## No game files here
 
@@ -26,15 +26,15 @@ and the release notes. Issue examples identify the original reports; follow thei
 A report closed as a duplicate does not mean the bug is fixed.
 
 The site builds from the Markdown files in the repository. See the
-[website instructions](https://github.com/NotRexed/Hookshot/blob/main/website/README.md)
+[website instructions](https://github.com/spacefarergames/RedTunic/blob/main/website/README.md)
 for editing and publishing.
 
 ## Project links
 
-- [Hookshot by NotRexed](https://github.com/NotRexed/Hookshot)
-- [Preview source](https://github.com/bibigurl-yum/Hookshot/tree/docs/starlight-preview)
-- [Stable releases](https://github.com/NotRexed/Hookshot/releases/latest)
-- [Report a bug](https://github.com/NotRexed/Hookshot/issues/new/choose)
+- [Red Tunic by NotRexed](https://github.com/spacefarergames/RedTunic)
+- [Preview source](https://github.com/bibigurl-yum/RedTunic/tree/docs/starlight-preview)
+- [Stable releases](https://github.com/spacefarergames/RedTunic/releases/latest)
+- [Report a bug](https://github.com/spacefarergames/RedTunic/issues/new/choose)
 
-Hookshot is an independent project, not affiliated with or endorsed by Nintendo. The game, characters and names
+Red Tunic is an independent project, not affiliated with or endorsed by Nintendo. The game, characters and names
 belong to their respective owners.

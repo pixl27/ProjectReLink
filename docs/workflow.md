@@ -1,6 +1,6 @@
 # Workflow: from report to release
 
-How work moves through Hookshot, and how to decide what to work on next. It is written for people and for AI agents
+How work moves through Red Tunic, and how to decide what to work on next. It is written for people and for AI agents
 alike (agents: [AGENTS.md](../AGENTS.md) sends you here). [CONTRIBUTING.md](../CONTRIBUTING.md) still holds the rules
 that never bend, above all that no game files or anything made from them leave your PC.
 

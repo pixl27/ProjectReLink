@@ -8,7 +8,7 @@ the README explains [where other files go](../readme.md#where-the-files-go).
 
 ## Stable and development builds
 
-The [release page](https://github.com/NotRexed/Hookshot/releases) identifies stable and prerelease builds.
+The [release page](https://github.com/spacefarergames/RedTunic/releases) identifies stable and prerelease builds.
 Read [the versioning guide](versioning.md) and [development-build instructions](../readme.md#latest-development-build)
 before switching tracks. Record the exact version when reporting a problem.
 
@@ -18,7 +18,7 @@ Use the [save transfer guide](saves.md) for supported sources, backups, and tran
 
 ## If the game stops while it writes a setting
 
-Hookshot writes `language.txt` and `mouse_sens.txt` beside themselves and moves each into place only when
+Red Tunic writes `language.txt` and `mouse_sens.txt` beside themselves and moves each into place only when
 it is whole, so a crash, a kill or a power cut while one is written leaves it as it was or as the new one, never half of
 each. The one-time copy of an older `hookshot_options.ini` from the game folder into the user folder, the note
 `saves-moved.txt` and the files the Linux move of the saves copies between drives are written the same way. A stop in

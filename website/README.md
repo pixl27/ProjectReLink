@@ -1,6 +1,6 @@
-# Hookshot documentation site
+# Red Tunic documentation site
 
-An optional Astro Starlight site using the original `assets/hookshot.png` logo. The game build does not depend on Node
+An optional Astro Starlight site using the original `assets/red-tunic.png` logo. The game build does not depend on Node
 or this site. Adopting the website, its dependencies, and hosting remains the upstream maintainer's decision.
 
 ## Typography
@@ -25,7 +25,7 @@ npm run check
 npm run preview
 ```
 
-Open the printed local URL with `/Hookshot/`. For live editing use `npm run dev`; restart it when imported Markdown
+Open the printed local URL with `/RedTunic/`. For live editing use `npm run dev`; restart it when imported Markdown
 changes. The checks validate published routes, local links and anchors, edit-link targets, logo bytes, search output,
 compatibility source review, and the calculator and release-fetch behavior.
 
@@ -35,17 +35,17 @@ compatibility source review, and the calculator and release-fetch behavior.
 
 | Variable | Default |
 |---|---|
-| `DOCS_SITE_URL` | `https://notrexed.github.io` |
-| `DOCS_SOURCE_REPOSITORY` | `NotRexed/Hookshot` |
+| `DOCS_SITE_URL` | `https://spacefarergames.github.io` |
+| `DOCS_SOURCE_REPOSITORY` | `spacefarergames/RedTunic` |
 | `DOCS_SOURCE_BRANCH` | `main` |
 
-The project path is `/Hookshot/`. Set the same environment for build and check when overriding hosting.
+The project path is `/RedTunic/`. Set the same environment for build and check when overriding hosting.
 Handwritten pages inherit the configured edit base; imported pages link to their original Markdown source.
 These defaults do not enable an upstream site or change Pages settings.
 
 For bibigurl-yum's preview, `npm run build:preview` builds and checks with the fork's host and
 `docs/starlight-preview` edit branch. The `Refresh documentation progress` Action publishes **only `dist/`**
-through GitHub Pages artifacts. The preview is at https://bibigurl-yum.github.io/Hookshot/.
+through GitHub Pages artifacts. The preview is at https://bibigurl-yum.github.io/RedTunic/.
 The older `preview/starlight-pages` branch is retained as a rollback snapshot; pushing it no longer deploys
 while Pages uses GitHub Actions.
 
@@ -118,7 +118,7 @@ Activation requires Pages source **GitHub Actions** and allowing `main` in the `
 branch policy. The fork is enabled explicitly; other repositories must set the Actions repository variable
 `DOCS_PROGRESS_ENABLED=true`. Every run must originate from the default branch. It has no PR-triggered deployment.
 
-After this PR is approved and merged into `NotRexed/Hookshot:main`, maintainers can activate the same Action:
+After this PR is approved and merged into `spacefarergames/RedTunic:main`, maintainers can activate the same Action:
 
 1. Set Pages source to **GitHub Actions** and allow `main` in the `github-pages` environment.
 2. Set the Actions repository variable `DOCS_PROGRESS_ENABLED` to `true`.
@@ -126,7 +126,7 @@ After this PR is approved and merged into `NotRexed/Hookshot:main`, maintainers 
 
 Outside the preview fork, the workflow builds the repository's default branch and derives the site URL and edit
 links from that repository. `DOCS_SITE_URL` can override the hosting origin for an adopted custom domain;
-`/Hookshot/` remains the configured base path. No personal access token is required. Merging the workflow alone
+`/RedTunic/` remains the configured base path. No personal access token is required. Merging the workflow alone
 does not opt upstream into publishing. Disable the workflow or remove its opt-in variable to stop upstream refreshes.
 
 The browser polls the published feed every five minutes while visible. The scheduled collection interval is

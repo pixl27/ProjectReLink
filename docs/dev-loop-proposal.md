@@ -223,7 +223,7 @@ For a development checkout with a kept work folder, run through `make_game.py`:
   - [workflow.md](workflow.md) and [worklist.md](worklist.md) for what to work on.
 - **About 45 topic notes in `docs/`,** most paired with a test, and no index.
 - **[cpu-profile.md](cpu-profile.md) already has generated sections between markers** (`<!-- MEASURED:... -->`), a precedent for generated docs.
-- **Profiles are already named.** `scripts/cpu_report.py` names Hookshot's own functions from the linker maps and `scripts/cpu_functions.json`. Game code is passed in with `--guest-map` and kept local.
+- **Profiles are already named.** `scripts/cpu_report.py` names Red Tunic's own functions from the linker maps and `scripts/cpu_functions.json`. Game code is passed in with `--guest-map` and kept local.
 - **Most source files open with a comment saying what they are,** and every `scripts/*.py` opens with a docstring. Nothing checks either.
 - **Generated files don't all say where they come from** (§2.3). AGENTS.md says the shaders' tests show the regenerate command, so the commands are spread across tests.
 - **The local layer.** `work/` (lifted C, `functions.txt`, `image.bin`, a build's linker maps, runs) is made from the game and never leaves the PC. AGENTS.md's new "Team updates" section keeps `work/` content out of chat posts, but nothing yet says what an agent may *read*. For an agent, reading a file sends it to the model's provider.

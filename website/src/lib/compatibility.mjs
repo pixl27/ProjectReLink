@@ -1,11 +1,11 @@
-// Requirements checked against NotRexed/Hookshot's README on 2026-11-10.
+// Requirements checked against the Red Tunic README.
 // Keep hardware requirements separate from performance and stability claims.
 export function checkCompatibility(input) {
   const rows = [];
   const add = (level, title, text) => rows.push({ level, title, text });
-  if (input.game === 'supported') add('pass', 'Game version', 'The selected version matches program 0400486024DEC000, update v131072, build e0f3ccfa. Hookshot Builder must still validate your copy.');
+  if (input.game === 'supported') add('pass', 'Game version', 'The selected version matches program 0400486024DEC000, update v131072, build e0f3ccfa. Red Tunic Builder must still validate your copy.');
   else if (input.game === 'other') add('block', 'Game version', 'Other game versions are not supported. Use your own copy with the supported update and build.');
-  else add('unknown', 'Game version', 'Check your copy in Hookshot Builder. The supported version is program 0400486024DEC000, update v131072, build e0f3ccfa.');
+  else add('unknown', 'Game version', 'Check your copy in Red Tunic Builder. The supported version is program 0400486024DEC000, update v131072, build e0f3ccfa.');
 
   if (input.os === 'windows') add('pass', 'Operating system', '64-bit Windows 10 and 11 are listed as supported.');
   else if (input.os === 'linux-appimage' || input.os === 'linux-source') {
@@ -22,16 +22,16 @@ export function checkCompatibility(input) {
 
   const families = {
     nvidia: ['pass', 'GeForce RTX 20 series and newer are in the documented GPU range. NVIDIA is the most tested vendor.'],
-    amd: ['warning', 'Radeon RX 6000 series and newer are in the documented GPU range. Some AMD cards have known crashes and rendering problems.'],
+    amd: ['warning', 'Red Tunic targets AMD integrated graphics, including Ryzen 5 5625U. Check your Vulkan driver and test the Auto preset.'],
     intel: ['warning', 'Intel Arc is in the documented GPU range, but reports are limited and include black screens and crashes.'],
     deck: ['warning', 'Steam Deck reports include freezes and missing geometry. Check the Linux/Steam Deck issue tracker before building.'],
-    legacy: ['block', 'Cards without mesh shaders are not supported. The compute fallback can leave parts of the picture missing.'],
+    legacy: ['warning', 'Red Tunic uses a compute fallback on GPUs without mesh shaders. Check Vulkan support and test rendering on your card.'],
   };
   const gpu = families[input.gpu];
-  add(gpu?.[0] ?? 'unknown', 'Graphics card', gpu?.[1] ?? 'Check your GPU specifications and driver for Vulkan 1.3 and mesh shaders. An unlisted model is not automatically incompatible.');
-  if (input.driver === 'yes') add('pass', 'Driver capabilities', 'You confirmed an up-to-date driver with Vulkan 1.3 and mesh shaders. This tool cannot verify the installed driver.');
-  else if (input.driver === 'no') add('block', 'Driver capabilities', 'The supported rendering path needs Vulkan 1.3 and mesh shaders. Update the driver and check again; a driver update cannot add missing hardware features.');
-  else add('unknown', 'Driver capabilities', 'Confirm Vulkan 1.3 and mesh-shader support with your installed driver. On Linux, vulkaninfo should list VK_EXT_mesh_shader.');
+  add(gpu?.[0] ?? 'unknown', 'Graphics card', gpu?.[1] ?? 'Check your GPU specifications and driver for Vulkan 1.3. An unlisted model is not automatically incompatible.');
+  if (input.driver === 'yes') add('pass', 'Driver capabilities', 'You confirmed an up-to-date driver with Vulkan 1.3. This tool cannot verify the installed driver.');
+  else if (input.driver === 'no') add('block', 'Driver capabilities', 'Red Tunic needs a Vulkan 1.3-capable Vulkan driver.');
+  else add('unknown', 'Driver capabilities', 'Confirm Vulkan 1.3 support with your installed driver.');
 
   for (const [key, title, target, low, pass] of [
     ['ram', 'System memory', 16, 'Below the documented 16 GB RAM requirement. A run uses about 10 GB, with the OS and other apps needing memory too.', 'Meets the documented 16 GB RAM requirement.'],

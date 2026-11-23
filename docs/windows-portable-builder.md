@@ -1,4 +1,4 @@
-# Portable Hookshot Builder on Windows
+# Portable Red Tunic Builder on Windows
 
 Put the release's `HookshotBuilder.exe` setup in a writable folder on your SSD, then run:
 

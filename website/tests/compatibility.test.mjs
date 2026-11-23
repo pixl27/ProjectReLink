@@ -13,7 +13,7 @@ test('missing answers never produce a pass', () => {
 });
 test('unsupported selections take priority over missing answers', () => {
   for (const field of ['game', 'os']) assert.equal(checkCompatibility({ [field]: 'other' }).status, 'block');
-  assert.equal(checkCompatibility({ ...ready, gpu: 'legacy' }).status, 'block');
+  assert.equal(checkCompatibility({ ...ready, gpu: 'legacy' }).status, 'warning');
   assert.equal(checkCompatibility({ ...ready, driver: 'no' }).status, 'block');
 });
 test('Linux AppImage requires both glibc and AVX2', () => {

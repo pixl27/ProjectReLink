@@ -9,7 +9,7 @@ This covers new font/logo textures, individual dirty rectangles and the fallback
 update rectangle, for RGBA and Alpha8 expansion. The existing image layouts,
 descriptor publication, retry behavior and staging retirement remain unchanged.
 The bundled ImGui backend maintains its own vertex/index upload caches; this
-corrects Hookshot's separate texture-upload path.
+corrects Red Tunic's separate texture-upload path.
 
 `tests/test_ui_texture_upload.py` executes production pixels/upload/retirement code
 with the pinned ImGui/Vulkan types. A CPU/GPU cache model covers coherent and
