@@ -113,7 +113,7 @@ def unicode_output():
         if stream.isatty():
             stream.reconfigure(errors="replace")
         else:
-            stream.reconfigure(encoding="utf-8", errors="replace")
+            stream.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 
 def main(argv=None):

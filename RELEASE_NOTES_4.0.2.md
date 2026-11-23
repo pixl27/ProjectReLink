@@ -39,6 +39,8 @@ The merged Windows Vulkan renderer compiled. The portable Builder archive and di
 
 The Windows integration test run reported 801 passes, 55 failures and 132 skips. Several targeted failures were addressed after that run started. The complete suite has yet to pass.
 
+A local Ryzen 5 5625U rebuild completed and presented the intro on Windows 11 using native Vulkan and AMD driver 26.5.2. This startup check covered the intro. Gameplay performance comparisons remain pending.
+
 Local game executables, dump data, saves and compiled caches remain on the player's machine.
 
 [Source](https://github.com/spacefarergames/RedTunic) · [Downloads](https://github.com/spacefarergames/RedTunic/releases)
