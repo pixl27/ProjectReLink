@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 244" role="img" aria-labelledby="title desc">
+  <title id="title">Red Tunic on Radeon Vega</title>
+  <desc id="desc">A local native x64 build renders a 720p Vulkan scene and outputs at 1080p.</desc>
+  <rect width="960" height="244" rx="22" fill="#261722"/>
+  <path d="M34 28h56m-56 8h27" stroke="#ff6876" stroke-width="3" stroke-linecap="round"/>
+  <g font-family="system-ui, sans-serif" fill="#fff6f4">
+    <text x="34" y="86" font-size="35" font-weight="700">Red Tunic on Radeon Vega</text>
+    <g fill="#33232f" stroke="#a55a69">
+      <rect x="34" y="110" width="260" height="98" rx="14"/>
+      <rect x="350" y="110" width="260" height="98" rx="14"/>
+      <rect x="666" y="110" width="260" height="98" rx="14"/>
+    </g>
+    <g font-size="23" font-weight="700">
+      <text x="53" y="152">Native x64 build</text>
+      <text x="369" y="152">720p Vulkan scene</text>
+      <text x="685" y="152">1080p output</text>
+    </g>
+    <g font-size="17" fill="#ffd1d5">
+      <text x="53" y="181">Built from your own copy</text>
+      <text x="369" y="181">Exact ASTC decode reuse</text>
+      <text x="685" y="181">Game upscaler and HUD</text>
+    </g>
+  </g>
+  <path d="M307 160h27m-9-9 9 9-9 9M623 160h27m-9-9 9 9-9 9" fill="none" stroke="#ff6876" stroke-width="3"/>
+</svg>

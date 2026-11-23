@@ -55,6 +55,7 @@
 #include "texture_tiles.h"
 #include "vk_paths.h"
 
+#include <array>
 #include <span>
 
 #include "video_core/textures/astc.h"
@@ -2558,6 +2559,55 @@ void reuse_released(const nvn_tex* t) {
         x->freed_listed = true;
     }
 }
+// Rekarina 1.2.10 (ff6548e8), runtime/vk_texture.c, caches conversions by
+// their encoded content. On Vega keep a small in-memory cache of exact RGBA8
+// instead: it avoids re-decoding without BC compression or disk traffic.
+struct AstcCpuCacheEntry {
+    std::array<uint32_t, 5> shape{};
+    std::vector<uint8_t> blocks, rgba;
+};
+
+using AstcCpuDecoder = decltype(&Tegra::Texture::ASTC::DecompressSerial);
+
+void decode_astc_vega_cached(AstcCpuDecoder decode, std::span<const uint8_t> blocks,
+                            uint32_t w, uint32_t h, uint32_t d, uint32_t bw, uint32_t bh,
+                            std::span<uint8_t> out) {
+    constexpr size_t min_bytes = 256 * 1024, max_bytes = 4 * 1024 * 1024;
+    if (out.size() < min_bytes || out.size() > max_bytes) {
+        decode(blocks, w, h, d, bw, bh, out);
+        return;
+    }
+    static std::mutex mu;
+    static std::array<AstcCpuCacheEntry, 16> cache;
+    static std::array<uint64_t, 512> recent{};
+    const std::array<uint32_t, 5> shape{w, h, d, bw, bh};
+    const uint64_t hash = astc_reuse::xxh64(blocks.data(), blocks.size(), 0);
+    auto& slot = cache[hash % cache.size()];
+    bool seen;
+    {
+        std::lock_guard lock(mu);
+        if (slot.shape == shape && slot.blocks.size() == blocks.size() &&
+            !std::memcmp(slot.blocks.data(), blocks.data(), blocks.size())) {
+            std::memcpy(out.data(), slot.rgba.data(), out.size());
+            return;
+        }
+        auto& last = recent[hash % recent.size()];
+        seen = last == hash;
+        last = hash;
+    }
+    if (!seen) {
+        decode(blocks, w, h, d, bw, bh, out);
+        return;
+    }
+    // The Vulkan staging slice may be write-combined. Decode into ordinary
+    // memory on a miss so retaining the result does not read back from it.
+    AstcCpuCacheEntry entry{shape, {blocks.begin(), blocks.end()}, std::vector<uint8_t>(out.size())};
+    decode(blocks, w, h, d, bw, bh, entry.rgba);
+    std::memcpy(out.data(), entry.rgba.data(), out.size());
+    std::lock_guard lock(mu);
+    slot = std::move(entry);
+}
+
 /// A new decoded ASTC texture's blocks hashed (its first upload, whole), and the image of a finalized one with the same blocks
 /// and shape copied into it: true when it was. One uploaded again keeps no hash, and is not listed when finalized
 bool reuse_upload(Texture& tex, uint64_t total) {
@@ -2898,13 +2948,16 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                     // Large CPU-decoded levels blocked the Vega replay thread for over 100 ms each.
                     // Both entry points decode with the same block routine and write identical RGBA8.
                     constexpr uint64_t parallel_astc_min_bytes = 64 * 1024;
-                    const auto decode = block_bytes >= parallel_astc_min_bytes &&
-                                        policy_rule::windows_vega_compat(dev.facts)
+                    const bool vega = policy_rule::windows_vega_compat(dev.facts);
+                    const auto decode = block_bytes >= parallel_astc_min_bytes && vega
                                             ? Tegra::Texture::ASTC::Decompress
                                             : Tegra::Texture::ASTC::DecompressSerial;
-                    decode(std::span<const uint8_t>(blocks, block_bytes), g.w, px_h, g.d,
-                           (u32)tex.block_w, (u32)tex.block_h,
-                           std::span<uint8_t>(out, (size_t)g.w * px_h * g.d * 4));
+                    const std::span<const uint8_t> encoded(blocks, block_bytes);
+                    const std::span<uint8_t> decoded(out, out_bytes);
+                    if (vega)
+                        decode_astc_vega_cached(decode, encoded, g.w, px_h, g.d, tex.block_w, tex.block_h, decoded);
+                    else
+                        decode(encoded, g.w, px_h, g.d, tex.block_w, tex.block_h, decoded);
                 } else if (widen_from) {
                     widen_rows(out, blocks, (size_t)g.tw * th * g.td, src_bpb, out_bpb, widen_alpha(src_vf));
                 }
@@ -4352,17 +4405,26 @@ void texture_ahead_frame(int64_t draws) {
     static const int64_t budget_ns = (int64_t)((getenv("RX_VK_TEX_AHEAD_MS") ? atof(getenv("RX_VK_TEX_AHEAD_MS")) : 12.0) * 1e6);
     ahead_allow_ns = texture_ahead::allowance_ns(draws, budget_ns);
     ahead_spent_ns = 0;
-    std::lock_guard lk(ahead_mu);
+    std::unique_lock lk(ahead_mu);
     ahead_n.stale += ahead_queue.trim(ahead_now_ms());
-    static uint64_t frames = 0;
-    if (++frames % 300) return;
-    if (ahead_dirty) {
+    static uint64_t frames = 0, last_save = 0;
+    ++frames;
+    // Following Rekarina's streaming notes, keep disk I/O out of gameplay
+    // and don't hold the registration lock across a filesystem write.
+    if (ahead_dirty && draws < texture_ahead::kLightDraws && frames - last_save >= 300) {
+        auto drawn = ahead_drawn;
         ahead_dirty = false;
-        if (!texture_ahead::save_drawn(cache_path("hookshot_textures_drawn.bin").c_str(), ahead_drawn)) {
+        last_save = frames;
+        lk.unlock();
+        const bool ok = texture_ahead::save_drawn(cache_path("hookshot_textures_drawn.bin").c_str(), drawn);
+        lk.lock();
+        if (!ok) {
+            ahead_dirty = true;
             static bool told = false;
             if (!told) told = true, logf("vk: textures ahead: the list of textures drawn could not be written (cache/)");
         }
     }
+    if (frames % 300) return;
     static AheadCounts last{};
     if (std::memcmp(&last, &ahead_n, sizeof last)) {
         logf("vk: textures ahead: %lld prepared so far (%.0f MB of images, %.0f ms); a draw's first uploads: %lld new to the list, "

@@ -13,6 +13,40 @@ RUN_ALL_ARGS = ["--cxx", "g++"]
 
 ROOT = Path(__file__).resolve().parents[1]
 
+CPU_CACHE_PROBE = r"""
+#include "astc_reuse.h"
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <mutex>
+#include <span>
+#include <vector>
+static unsigned decodes = 0;
+void decode(std::span<const uint8_t> blocks, uint32_t w, uint32_t, uint32_t, uint32_t, uint32_t,
+            std::span<uint8_t> out) {
+    ++decodes;
+    std::fill(out.begin(), out.end(), blocks.front() + w);
+}
+using AstcCpuDecoder = decltype(&decode);
+%s
+int main() {
+    std::vector<uint8_t> encoded(16384, 7), decoded(256 * 1024);
+    auto run = [&](uint32_t width) {
+        decode_astc_vega_cached(decode, encoded, width, 256, 1, 8, 8, decoded);
+        assert(std::all_of(decoded.begin(), decoded.end(), [&](uint8_t v) { return v == uint8_t(encoded.front() + width); }));
+    };
+    run(256);
+    run(256);
+    run(256);
+    assert(decodes == 2);
+    run(257);
+    assert(decodes == 3);
+    encoded.front() = 8;
+    run(257);
+    assert(decodes == 4);
+}
+"""
+
 
 def check_source():
     src = (ROOT / "gpu/vk/vk_texture.cpp").read_text(encoding="utf-8")
@@ -40,6 +74,14 @@ def main():
         exe = Path(tmp) / "astc-reuse"
         subprocess.run([args.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror",
                         str(ROOT / "tests/test_astc_reuse.cpp"), "-o", str(exe)], check=True)
+        subprocess.run([str(exe)], check=True)
+        src = (ROOT / "gpu/vk/vk_texture.cpp").read_text(encoding="utf-8")
+        cache = block(src, "struct AstcCpuCacheEntry {") + ";\n"
+        cache += block(src, "void decode_astc_vega_cached(")
+        probe = Path(tmp) / "cpu-cache.cpp"
+        probe.write_text(CPU_CACHE_PROBE % cache, encoding="utf-8")
+        subprocess.run([args.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror",
+                        "-I", str(ROOT / "gpu/vk"), str(probe), "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
 
 

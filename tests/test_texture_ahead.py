@@ -81,6 +81,10 @@ def check_source():
         if needle not in run:
             fail.append("texture_ahead_run no longer has: " + needle)
     frame = block(tex, "void texture_ahead_frame(int64_t draws)")
+    gate = frame.index("draws < texture_ahead::kLightDraws")
+    write = frame.index("texture_ahead::save_drawn(")
+    if not gate < frame.index("lk.unlock()") < write < frame.index("lk.lock()"):
+        fail.append("texture ahead must save only during light frames and outside the registration lock")
     for needle in ("texture_ahead::allowance_ns(draws, ", "ahead_queue.trim(", "texture_ahead::save_drawn("):
         if needle not in frame:
             fail.append("texture_ahead_frame no longer has: " + needle)

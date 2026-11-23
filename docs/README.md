@@ -16,6 +16,7 @@ and Linux. These docs cover installation, settings, saves, troubleshooting and d
 |---|---|
 | Build and launch for the first time | [Getting started](getting-started.md) |
 | Understand resolution, upscaling and frame generation | [Graphics and controls](graphics-and-controls.md) |
+| Learn how the Windows Vega path works | [Red Tunic on Radeon Vega](red-tunic-vega.md) |
 | Find an answer to a familiar problem | [Common issues and answers](common-issues.md) |
 | Update an installation or keep your progress | [Updates and saves](updates-and-saves.md) |
 | Transfer a save from another compatible port | [Save transfer guide](saves.md) |

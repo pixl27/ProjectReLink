@@ -1,10 +1,16 @@
 <p align="center"><img src="assets/red-tunic.png" alt="Red Tunic logo" width="200"></p>
 
-# Red Tunic 4.0.5
+# Red Tunic 4.0.6
 
 Red Tunic is an unofficial native PC recompilation of the Nintendo Switch 2 remake of *The Legend of Zelda: Ocarina of Time*. It builds locally from your own copy of the game. Red Tunic is based on Hookshot and focuses on integrated AMD Radeon graphics, starting with the Ryzen 5 5625U with 16 GB of shared memory.
 
 [Project and source updates](https://github.com/spacefarergames/RedTunic) · [Releases](https://github.com/spacefarergames/RedTunic/releases) · [Technical documentation](docs/README.md)
+
+![Red Tunic Vega path from native x64 through 720p Vulkan to 1080p output](assets/red-tunic-vega-path.svg)
+
+## Built around integrated Radeon
+
+Red Tunic's reference system is a Ryzen 5 5625U with Radeon Vega and 16 GB of shared RAM. Its Windows Vega path keeps the 720p internal preset and focuses on texture correctness, predictable memory use and fewer long upload stalls. Read the [Vega rendering guide](docs/red-tunic-vega.md) and [measured test runs](docs/tested-configurations.md).
 
 ## Updating
 
@@ -14,9 +20,9 @@ Get new Windows Builder archives from [Red Tunic Releases](https://github.com/sp
 
 For development snapshots, use the source at the latest commit you want to test and record its commit ID with your results.
 
-## Changes in 4.0.5
+## Changes in 4.0.6
 
-The Windows Radeon Vega 0x15E7 renderer decodes more streamed ASTC textures in parallel on the CPU and can retain recently used textures while system memory has room. See the [4.0.5 release notes](RELEASE_NOTES_4.0.5.md).
+Windows Radeon Vega 0x15E7 now reuses exact decoded ASTC pixels while keeping the parallel decoder for large uploads. Texture prediction saves its list during light frames. See the [4.0.6 release notes](RELEASE_NOTES_4.0.6.md).
 
 ## Changes in 4.0.3
 
@@ -49,11 +55,16 @@ Version 4.0.2 integrates Hookshot through commit `38b90dfe` (fetched 23 November
 
 ## Project status
 
-Red Tunic 4.0.0 reached the intro and exited cleanly in a headless Windows 11 smoke test on a Ryzen 5 5625U with integrated Radeon graphics. The log reported native Vulkan and selected the 720p internal rendering preset at 1080p output. The smoke test did not cover gameplay or the loading-screen visuals. See [tested configurations](docs/tested-configurations.md) for the upstream test history.
+The Windows reference system has rendered the Water Temple and a lakeside gameplay route on Radeon Vega. The 720p internal preset is tested at 1080p output. Results on other hardware, scenes and settings can differ.
 
-### Hyrule Field benchmark notes
+| Measured on the reference PC | Average FPS | Frames over 250 ms | Frames over 500 ms |
+| --- | ---: | ---: | ---: |
+| Local 4.0.5 optimization test, baseline → patched | 8.30 → 13.44 | 34 → 8 | 9 → 0 |
+| Exact ASTC cache and light-frame writes, baseline → patched | 9.66 → 10.27 | 16 → 15 | 2 → 2 |
 
-A user report on an AMD Ryzen 5 system describes smooth Hyrule Field gameplay at **30–60 FPS** with grass, foliage and shadow density set to Low, and **about 50% less stutter**. The report did not include a comparison build, test route or frame-time capture, so the figures are preliminary.
+Each row is one 360-frame camera-turn comparison at the same settings within that pair. See [tested configurations](docs/tested-configurations.md) for the build, driver and test setup.
+
+A separate player report described **30–60 FPS** in Hyrule Field with grass, foliage and shadow density set to Low, and **about 50% less stutter**. It did not include a comparison build or frame-time capture.
 
 ## Install and play
 
@@ -65,7 +76,7 @@ Clone the [Red Tunic source](https://github.com/spacefarergames/RedTunic), then 
 
 ### On Windows
 
-1. Download `RedTunic-v4.0.5-Windows-x64.zip` and its SHA-256 file from [Red Tunic Releases](https://github.com/spacefarergames/RedTunic/releases). Use `Get-FileHash .\RedTunic-v4.0.5-Windows-x64.zip -Algorithm SHA256` to verify the archive.
+1. Download `RedTunic-v4.0.6-Windows-x64.zip` and its SHA-256 file from [Red Tunic Releases](https://github.com/spacefarergames/RedTunic/releases). Use `Get-FileHash .\RedTunic-v4.0.6-Windows-x64.zip -Algorithm SHA256` to verify the archive.
 2. Extract the entire archive into a short path such as `C:\RedTunicBuilder` and open `HookshotBuilder.exe`. The archive includes the Windows build tools and the Builder runtime.
 3. Select your own supported `.nup` or extracted game folders, choose a separate game output folder, and build. Open the generated `hookshot.exe` in that folder to play.
 
