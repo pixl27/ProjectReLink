@@ -457,7 +457,23 @@ REG_REF = re.compile(r"c->x\[(\d+)\]")
 # (a write of a guest register: its address taken (LDP's outputs), ++ / --, = and the compound assignments)
 REG_WRITE = re.compile(r"(?:(?:&|\+\+\s*|--\s*)c->x\[(\d+)\])|(?:c->x\[(\d+)\]\s*(?:(?:[-+*/%&|^]|<<|>>)?=(?!=)|\+\+|--))")
 SCRATCH = 0xFE00   # x9-x15: dead at calls and returns
+# (hookshot) A64_LOCAL_VREGS=1, with A64_LOCAL_REGS: the vector registers a function names become locals too (uint64_t
+# vN_[2], the context's own type, so every helper takes them as it took c->vreg[N]). In the masks they are the bits from
+# 32 up. An instruction that names one counts as writing it (the text does not tell a read from a write). The guest's ABI:
+# v16-v31 are dead at calls and returns (never written back there, never read again after), v0-v15 are written back
+# before a call or a return and read again after a call (v8-v15 keep their low halves across one; reading them again
+# takes whatever the callee left in the rest, as the console would); around tail calls, indirect jumps, SVCs and traps,
+# everything, as for the general registers.
+VREG_REF = re.compile(r"c->vreg\[(\d+)\]")
+VSHIFT = 32
+VLOW = 0xFFFF << VSHIFT          # v0-v15
+VSCRATCH = 0xFFFF0000 << VSHIFT  # v16-v31
+VALL = VLOW | VSCRATCH
 _reg_writes = {}
+
+
+def local_vregs():
+    return os.environ.get("A64_LOCAL_VREGS", "") not in ("", "0")
 
 
 def reg_writes(text):
@@ -467,6 +483,9 @@ def reg_writes(text):
         m = 0
         for a, b in REG_WRITE.findall(text):
             m |= 1 << int(a or b)
+        if local_vregs():
+            for n in VREG_REF.findall(text):
+                m |= 1 << (VSHIFT + int(n))
         _reg_writes[text] = m
     return m
 
@@ -490,6 +509,20 @@ def local_regs():
     return int(v) if v.isdigit() else 0
 
 
+_local_hot = None
+
+
+def local_regs_here(name):
+    """(hookshot) A64_LOCAL_REGS_HOT=1: only the hot functions (A64_HOT_FUNCS) get local registers, so the other chunks' text,
+    and their objects, stay as they are"""
+    global _local_hot
+    if os.environ.get("A64_LOCAL_REGS_HOT", "") in ("", "0"):
+        return True
+    if _local_hot is None:
+        _local_hot = hot_functions()
+    return name in _local_hot
+
+
 def localize_regs(text, local, dirty):
     """Expand the context marks (see SYNC_CALL): with `local`, the registers become locals first, and each mark writes
     back what may have changed since the last one (dirty: per instruction index, the masks before and after it) or
@@ -510,30 +543,39 @@ def localize_regs(text, local, dirty):
     regs = sorted(top + ([31] if 31 in uses else []))
     chosen = set(regs)
     text = REG_REF.sub(lambda m: "x%s_" % m.group(1) if int(m.group(1)) in chosen else m.group(0), text)
+    vregs = sorted({int(n) for n in VREG_REF.findall(text)}) if local_vregs() else []
+    if vregs:
+        text = VREG_REF.sub(r"v\1_", text)
 
     def store(mask):
-        return "".join("c->x[%d] = x%d_; " % (n, n) for n in regs if mask >> n & 1)
+        return ("".join("c->x[%d] = x%d_; " % (n, n) for n in regs if mask >> n & 1) +
+                "".join("c->vreg[%d][0] = v%d_[0]; c->vreg[%d][1] = v%d_[1]; " % (n, n, n, n)
+                        for n in vregs if mask >> (VSHIFT + n) & 1))
 
     def load(mask):
-        return "".join("x%d_ = c->x[%d]; " % (n, n) for n in regs if mask >> n & 1)
+        return ("".join("x%d_ = c->x[%d]; " % (n, n) for n in regs if mask >> n & 1) +
+                "".join("v%d_[0] = c->vreg[%d][0]; v%d_[1] = c->vreg[%d][1]; " % (n, n, n, n)
+                        for n in vregs if mask >> (VSHIFT + n) & 1))
 
     def expand(m):
         kind, i = m.group(1), int(m.group(2))
         before, after = dirty[0][i], dirty[1][i]
         if kind == "C":   # a call: what it may read (x30 is set just before it)
-            return store((before | 1 << 30) & ~SCRATCH)
+            return store((before | 1 << 30) & ~SCRATCH & ~VSCRATCH)
         if kind == "R":
-            return store(before & ~SCRATCH)
+            return store(before & ~SCRATCH & ~VSCRATCH)
         if kind == "A":
             return store(before) + fstore
         if kind == "T":
             return store(after) + fstore
-        if kind == "B":   # after a call: x0-x18 and x30 (x19-x29 and SP come back as they were)
-            return load(0x4007FFFF)
-        return load(0xFFFFFFFF) + fload
+        if kind == "B":   # after a call: x0-x18 and x30 (x19-x29 and SP come back as they were); v0-v15
+            return load(0x4007FFFF | VLOW)
+        return load(0xFFFFFFFF | VALL) + fload
     text = SYNC_MARK.sub(expand, text)
     head, _, rest = text.partition("\n")
     decl = ("\n    uint64_t " + ", ".join("x%d_ = c->x[%d]" % (n, n) for n in regs) + ";") if regs else ""
+    if vregs:
+        decl += "\n    uint64_t " + ", ".join("v%d_[2] = { c->vreg[%d][0], c->vreg[%d][1] }" % (n, n, n) for n in vregs) + ";"
     return head + decl + fdecl + "\n" + rest
 
 
@@ -1289,9 +1331,172 @@ static inline __attribute__((always_inline)) int a64_fpx_easy_mul32(Ctx *c, uint
 HOT_FPX = re.compile(r"\ba64_fpx_(?!hot_|fz_)(\w+)\(c,")
 
 
+# (hookshot) A64_NATIVE_FP (default on; 0: as before): the hot functions' floating point on the host's own instructions.
+# The exact fast paths above keep Arm's result AND its cumulative FPSR flags, so every operation tests the gate, the
+# operands' and the result's ranges on integer copies of the values (about fifteen instructions and four branches for one
+# multiply), and the game reads FPSR nowhere in its hot code. The native helpers (a64_hot_fp.inc, native_header below)
+# compute with one host instruction and keep the result unless it is a NaN, which goes to the exact wrapper: Arm's NaN
+# rules and default NaN stay. Flush-to-zero is the host's (MXCSR FTZ and DAZ, set from the guest's FPCR by the host:
+# hos_fpcr_sync, called after every MSR FPCR below), and the gate is FPCR alone (anything but FZ set: the exact wrapper).
+# What differs from the exact paths: FPSR's flags are not raised by a native operation, and a result that rounds up to
+# exactly the smallest normal is kept where Arm flushes it. Measured 2026-11-18 (the Lost Woods' arrival, standing): the
+# actor threads run 47.4 % -> 29.5 % of the time.
+# Only names change in the hot text (the helpers' calls), so a play profile made before still fits the hot functions.
+# The helpers are in a file of their own that only the hot pieces include: the other files' object keys do not move.
+NATIVE_FP = os.environ.get("A64_NATIVE_FP", "1") != "0"
+NATIVE_INC = "a64_hot_fp.inc"
+HOT_VFPX = re.compile(r"\ba64_vfpx_(add32|sub32|mul32)\(c,")
+HOT_CONV = re.compile(r"\brecomp_(fp_to_int|fixed_to_fp)\(")
+FPCR_SET = re.compile(r"(c->fpcr = \(c->x\[\d+\] & 0xffffffffULL\) \| \(c->fpcr & RECOMP_FPX_INHIBIT\);)")
+FPCR_SYNC = r"\1 { extern void hos_fpcr_sync(Ctx *A64_NOESC); hos_fpcr_sync(c); }"
+
+NATIVE_HEAD = r"""/* Generated by a64_lift.py (A64_NATIVE_FP): the hot functions' floating point on the host's instructions.
+   Included by the hot pieces only, after a64.h. See NATIVE_FP in a64_lift.py for what it keeps and what it does not. */
+#ifndef A64_HOT_FP_INC
+#define A64_HOT_FP_INC
+#define A64_NAT_INL static inline __attribute__((always_inline))
+/* the gate: the guest's FPCR at its default apart from FZ (round to nearest, no default NaN); FPSR is not looked at */
+#define A64_NAT_OPEN(c) RECOMP_LIKELY(!((c)->fpcr & RECOMP_FPX_FPCR_MASK))
+"""
+# scalar helpers: (fast, exact) -> (the C type's letter, the native expression over x0.., needs a hardware FMA)
+NATIVE_SCALAR = {
+    ("add32", "add32"): ("f", "x0 + x1", False), ("sub32", "sub32"): ("f", "x0 - x1", False),
+    ("mul32", "fma32"): ("f", "x0 * x1", False), ("div32", "div32"): ("f", "x0 / x1", False),
+    ("sqrt32", "sqrt32"): ("f", "_mm_cvtss_f32(_mm_sqrt_ss(_mm_set_ss(x0)))", False),
+    ("fma32", "fma32"): ("f", "__builtin_fmaf(x0, x1, x2)", True),
+    ("add64", "add64"): ("d", "x0 + x1", False), ("sub64", "sub64"): ("d", "x0 - x1", False),
+    ("mul64", "fma64"): ("d", "x0 * x1", False), ("div64", "div64"): ("d", "x0 / x1", False),
+    ("sqrt64", "sqrt64"): ("d", "_mm_cvtsd_f64(_mm_sqrt_sd(_mm_setzero_pd(), _mm_set_sd(x0)))", False),
+    ("fma64", "fma64"): ("d", "__builtin_fma(x0, x1, x2)", True),
+}
+NATIVE_VEC = r"""
+/* 2/4-lane single-precision add, subtract, multiply. A NaN lane is Arm's when exactly one of its operands was a NaN (that
+   operand, quieted, on both architectures); a lane with two NaN operands, or a NaN made here (Arm's default NaN is
+   positive, the host's negative), takes the exact helper */
+/* (the exact helper is reached with copies of the operands, by value: a register kept in a local of the function,
+   A64_LOCAL_VREGS, never has its address handed to code out of line, and so can live in a vector register) */
+#define A64_NAT_VEC(name, op, lanes) \
+static __attribute__((noinline, cold)) __m128i a64_vfpx_slow_##name(Ctx *c, __m128i a, __m128i b, int k) { \
+    uint64_t d[2] = {0, 0}, n[2], m[2]; \
+    _mm_storeu_si128((__m128i *)n, a); _mm_storeu_si128((__m128i *)m, b); \
+    a64_vfpx_##name(c, d, n, m, k); \
+    return _mm_loadu_si128((const __m128i *)d); } \
+A64_NAT_INL void a64_vfpx_nat_##name(Ctx *c, uint64_t *d, const uint64_t *n, const uint64_t *m, int k) { \
+    const __m128i ai = _mm_loadu_si128((const __m128i *)n), bi = _mm_loadu_si128((const __m128i *)m); \
+    __m128i ri; \
+    if (A64_NAT_OPEN(c)) { \
+        const __m128 a = _mm_castsi128_ps(ai), b = _mm_castsi128_ps(bi); \
+        const __m128 r = op(a, b); \
+        const __m128 odd = _mm_andnot_ps(_mm_xor_ps(_mm_cmpunord_ps(a, a), _mm_cmpunord_ps(b, b)), _mm_cmpunord_ps(r, r)); \
+        if (RECOMP_LIKELY(!(_mm_movemask_ps(odd) & (lanes)))) { \
+            ri = (lanes) == 15 ? _mm_castps_si128(r) : _mm_move_epi64(_mm_castps_si128(r)); \
+            goto done; } } \
+    ri = a64_vfpx_slow_##name(c, ai, bi, k); \
+    done: _mm_storeu_si128((__m128i *)d, ri); }
+"""
+NATIVE_CONV = r"""
+/* FCVTZS / FCVTZU: the host's truncating conversion; its "indefinite" answer (a NaN, or out of range) takes the exact body,
+   which saturates. A subnormal truncates to 0 with or without FZ */
+A64_NAT_INL uint64_t a64_nat_fp_to_int(uint64_t bits, unsigned fp_bits, unsigned int_bits, unsigned is_signed, unsigned rmode,
+                                       uint64_t fpcr, uint64_t *fpsr) {
+#if RECOMP_FPX_HOST == 2
+    if (rmode == 3 && is_signed) {
+        if (fp_bits == 32 && int_bits == 32) {
+            const int32_t r = _mm_cvttss_si32(_mm_set_ss(recomp_fpx_f(bits)));
+            if (RECOMP_LIKELY(r != INT32_MIN)) return (uint32_t)r;
+        } else if (fp_bits == 32 && int_bits == 64) {
+            const int64_t r = _mm_cvttss_si64(_mm_set_ss(recomp_fpx_f(bits)));
+            if (RECOMP_LIKELY(r != INT64_MIN)) return (uint64_t)r;
+        } else if (fp_bits == 64 && int_bits == 64) {
+            const int64_t r = _mm_cvttsd_si64(_mm_set_sd(recomp_fpx_d(bits)));
+            if (RECOMP_LIKELY(r != INT64_MIN)) return (uint64_t)r;
+        } else if (fp_bits == 64 && int_bits == 32) {
+            const int32_t r = _mm_cvttsd_si32(_mm_set_sd(recomp_fpx_d(bits)));
+            if (RECOMP_LIKELY(r != INT32_MIN)) return (uint32_t)r;
+        }
+    } else if (rmode == 3 && !is_signed && int_bits == 32) {   /* (through 64 bits: negative and too large fall out together) */
+        const int64_t r = fp_bits == 32 ? _mm_cvttss_si64(_mm_set_ss(recomp_fpx_f(bits))) : _mm_cvttsd_si64(_mm_set_sd(recomp_fpx_d(bits)));
+        if (RECOMP_LIKELY((uint64_t)r <= 0xffffffffull)) return (uint64_t)r;
+    }
+#endif
+    return recomp_fp_to_int(bits, fp_bits, int_bits, is_signed, rmode, fpcr, fpsr);
+}
+/* SCVTF / UCVTF without fraction bits, round to nearest: one host conversion, rounded once as Arm's */
+A64_NAT_INL uint64_t a64_nat_fixed_to_fp(uint64_t bits, unsigned fp_bits, unsigned int_bits, unsigned fbits, unsigned is_signed,
+                                         uint64_t fpcr, uint64_t *fpsr) {
+#if RECOMP_FPX_HOST == 2
+    if (fbits == 0 && RECOMP_LIKELY(!((fpcr >> 22) & 3))) {
+        if (int_bits == 32) {
+            const int64_t v = is_signed ? (int64_t)(int32_t)(uint32_t)bits : (int64_t)(uint32_t)bits;
+            return fp_bits == 32 ? recomp_fpx_fb((float)v) : recomp_fpx_db((double)v);
+        }
+        if (is_signed) {
+            const int64_t v = (int64_t)bits;
+            return fp_bits == 32 ? recomp_fpx_fb((float)v) : recomp_fpx_db((double)v);
+        }
+    }
+#endif
+    return recomp_fixed_to_fp(bits, fp_bits, int_bits, fbits, is_signed, fpcr, fpsr);
+}
+"""
+
+
+def native_header(used):
+    """a64_hot_fp.inc: a native helper for every FPX shape the hot text may call (a64_fpx_nat_<fast>_<exact>), the 2/4-lane
+    vector helpers the lift made (a64_vfpx_nat_*) and the integer conversions (a64_nat_*). A shape with no native form, or a
+    host that is not x86-64, gets the exact hot helper under the native name"""
+    out = [NATIVE_HEAD]
+    alias = []
+    out.append("#if RECOMP_FPX_HOST == 2")
+    for fast, exact, nf, ne in sorted(used):
+        name = "%s_%s" % (fast, exact)
+        params = ", ".join("uint64_t a%d" % i for i in range(ne))
+        args = ", ".join("a%d" % i for i in range(ne))
+        form = NATIVE_SCALAR.get((fast, exact))
+        alias.append("#define a64_fpx_nat_%s a64_fpx_hot_%s" % (name, name))
+        if not form:
+            out.append(alias[-1])
+            continue
+        kind, expr, fma = form
+        ctype, get, put = ("float", "recomp_fpx_f", "recomp_fpx_fb") if kind == "f" else ("double", "recomp_fpx_d", "recomp_fpx_db")
+        loads = " ".join("const %s x%d = %s(a%d);" % (ctype, i, get, i) for i in range(nf))
+        # (the result leaves as the C type on both paths, the exact helper's bits turned back into it: the value then
+        # stays in a vector register from one operation to the next, where an integer result took it through a general
+        # register and back each time)
+        body = ("A64_NAT_INL uint64_t a64_fpx_nat_%s(Ctx *c, %s) { %s r; if (A64_NAT_OPEN(c)) { %s r = %s; "
+                "if (RECOMP_LIKELY(r == r)) goto done; } r = %s(a64_fpx_%s(c, %s)); done: return %s(r); }"
+                % (name, params, ctype, loads, expr, get, name, args, put))
+        if fma:
+            out += ["#if RECOMP_FPX_FMA64", body, "#else", alias[-1], "#endif"]
+        else:
+            out.append(body)
+    out.append(NATIVE_VEC)
+    vec = []
+    if ("add32", "add32", 2, 2) in used:
+        vec.append(("add32", "_mm_add_ps", "k == 4 ? 15 : 3"))
+    if ("sub32", "sub32", 2, 2) in used:
+        vec.append(("sub32", "_mm_sub_ps", "k == 4 ? 15 : 3"))
+    if ("mul32", "fma32", 2, 3) in used:
+        vec.append(("mul32", "_mm_mul_ps", "15"))   # (a64_vfpx_mul32 has all four lanes whatever k)
+    for name, op, lanes in vec:
+        out.append("A64_NAT_VEC(%s, %s, %s)" % (name, op, lanes))
+    out.append("#else")
+    out += alias
+    out += ["#define a64_vfpx_nat_%s a64_vfpx_%s" % (v[0], v[0]) for v in vec]
+    out.append("#endif")
+    out.append(NATIVE_CONV)
+    out.append("#endif")
+    return "\n".join(out) + "\n"
+
+
 def hot_text(text):
-    """a hot function's text: its FPX helper calls go through the copies with the fast path inline"""
-    return HOT_FPX.sub(r"a64_fpx_hot_\1(c,", text)
+    """a hot function's text: its FPX helper calls go through the copies with the fast path inline, or, with A64_NATIVE_FP,
+    through the native helpers (names only: the function's shape, which a play profile is matched by, stays)"""
+    if not NATIVE_FP:
+        return HOT_FPX.sub(r"a64_fpx_hot_\1(c,", text)
+    text = HOT_FPX.sub(r"a64_fpx_nat_\1(c,", text)
+    text = HOT_VFPX.sub(r"a64_vfpx_nat_\1(c,", text)
+    return HOT_CONV.sub(r"a64_nat_\1(", text)
 
 
 def hot_functions():
@@ -2007,12 +2212,13 @@ class Lifter:
         while changed:
             changed = False
             for i in range(n):
-                out = 0 if sync[i] else dirty_in[i] | writes[i]
+                # (a call or an SVC writes back and reads again all but v16-v31, which stay as the locals have them)
+                out = dirty_in[i] & VSCRATCH if sync[i] else dirty_in[i] | writes[i]
                 for j in succ[i]:
                     if out & ~dirty_in[j]:
                         dirty_in[j] |= out
                         changed = True
-        return dirty_in, [0 if sync[i] else dirty_in[i] | writes[i] for i in range(n)]
+        return dirty_in, [dirty_in[i] & VSCRATCH if sync[i] else dirty_in[i] | writes[i] for i in range(n)]
 
     def emit_function(self, e, texts):
         """C text of one function, and the set of C names it calls."""
@@ -2031,7 +2237,7 @@ class Lifter:
         pcs = sorted(body)
         dead = {} if os.environ.get("A64_KEEP_FLAGS") else self.dead_flags(body, pcs, texts)
         frame = not os.environ.get("A64_MARK_FRAME")
-        local = local_regs() and e not in self.no_local
+        local = local_regs() and e not in self.no_local and local_regs_here(self.fname(e))
         dirty = self.dirty_regs(body, pcs, texts) if local else None
         # (fast float regions, ff_region: the run of joinable instructions so far, [(pc, text)])
         ff_only = getattr(self, "ff_only", None)
@@ -2184,6 +2390,13 @@ class Lifter:
                 f.write(FCMPK_HEADER)
             if fastfp_mode():
                 f.write(FASTFP_HEADER)
+        # (hookshot) the hot pieces' native helpers, in a file the other chunks do not include (NATIVE_FP)
+        inc = os.path.join(out_dir, NATIVE_INC)
+        if NATIVE_FP:
+            with open(inc, "w", newline="\n") as f:
+                f.write(native_header(fpx))
+        elif os.path.exists(inc):
+            os.remove(inc)
 
         chunk, size, n, decls, files = [], 0, 0, set(), []
 
@@ -2212,6 +2425,8 @@ class Lifter:
         nhot = 0
         for e in sorted(self.funcs):
             text, refs = self.emit_function(e, texts)
+            if NATIVE_FP and "c->fpcr = (" in text:   # (hookshot: MSR FPCR tells the host, whose MXCSR follows FZ; see NATIVE_FP)
+                text = FPCR_SET.sub(FPCR_SYNC, text)
             if hot and self.fname(e) in hot:
                 text = hot_text(text)
                 nhot += 1
@@ -2229,6 +2444,8 @@ class Lifter:
             path = os.path.join(out_dir, "code_hot.c")
             with open(path, "w", newline="\n") as f:
                 f.write('#include "a64.h"\n')
+                if NATIVE_FP:
+                    f.write('#include "%s"\n' % NATIVE_INC)
                 text = "".join(hot_chunk)
                 if "recomp_sj_setjmp(" in text:
                     f.write("__attribute__((returns_twice)) int recomp_sj_setjmp(void **slot);\n")

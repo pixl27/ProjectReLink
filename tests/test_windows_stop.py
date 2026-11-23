@@ -52,6 +52,7 @@ static void hos_log(const char *fmt, ...) {
 static void hos_log_flush(void) { assert(order == 2); order = 3; }
 void hos_crash_clean_end(void) { assert(order == 3); order = 4; clean_ends++; }
 void hos_fs_wait_writes(void) { assert(order == 1); }
+void hos_ab_end(void) { assert(order == 2); }   /* (host/hos_ab.c: the A/B's sums after the close work, before the flush) */
 static void relaunch(void) { assert(order == 4); restarted++; }
 static void ExitProcess(unsigned code) { assert(order == 4 && code == 0); exited++; }
 /* ACTUAL_FINISH */

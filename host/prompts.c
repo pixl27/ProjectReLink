@@ -5,7 +5,7 @@
    at the face's icon of the pad input bound to it (host/nn_hid.c's controls, the menu's Layout preset and Controls page). So the
    icons say which button to press on this pad, custom controls too.
 
-   The face: hookshot_options.ini's button_prompts (the menu's Button prompts row): 0 Auto, from the first controller's name
+   The face: hookshot_options.ini's button_prompts (the menu's Button prompts row): 0 Auto, from the first controller's type and name
    (SDL; with none, and none through XInput, the keyboard's), else 1 Switch, 2 Xbox, 3 PlayStation 4, 4 PlayStation 5, 5 Steam
    Deck, 6 Keyboard. The keyboard face (nx2/prompt_keys.py) points each Switch button at the icon of the first key bound to it,
    the sticks at the keys that move (the Controls page's: stick_shows) and the mouse that turns the camera, and keeps the
@@ -19,8 +19,15 @@
    as a zstd frame of raw blocks (the file name says .zs; the game's decoder takes a frame made without its dictionary).
 
    The font is larger than the game's, and the game drops a file larger than its entry in the resource size table: the
-   game's table is served with the font's entry raised (prompts/rsizetable.zs, nx2/prompt_assets.py), and a mod's own table with
-   our entries merged into it (sizes), so a mod that grows files keeps the icons. */
+   table the game opens is served as the RomFS's own table of that name with the font's entry raised (own_sizes, made at the
+   start), and a mod's own table with that merged into it (sizes), so a mod that grows files keeps the icons. Never a table
+   made at the build: the RomFS may hold another version's tables beside the game's (a base dump with an update over it),
+   or be another dump than the one the build read, and the game served a table that is not its own drops files it needs at
+   the start (a crash reading guest 0x1030, the game's system object never made). Without a table of the name the game
+   opens, or without a font entry in it, the game's table is its own and the font the game's. The game files the prompts
+   change (the textures, the layouts) are left the game's too when the build's copy is not the size of the RomFS's
+   (same_as_game; (hookshot) the layouts' with the bytes the pause menu's Recomp options button adds, whose entry is raised
+   with the font's: hos_prompts_layouts_entry). */
 #include "hos.h"
 #include "hos_paths.h"
 #include "options_path.h"
@@ -33,10 +40,15 @@
 #include <windows.h>
 #include "../gpu/vk/vk_api.h"   /* (HOS_SW_*, HOS_PAD_*, HOS_BIND_PAD) */
 #include "zstd.h"   /* (third_party/zstd: a mod's size table) */
+#include "hd_rumble.h"   /* (hd_rumble_kind: SDL's types of the Switch's controllers) */
+#include "restbl.h"   /* (the game's size table, its font entry raised: own_sizes) */
 
+uint8_t *hos_zs_read(const char *path, size_t *n, size_t limit);   /* zs.c */
+uint64_t hos_zs_content_size(const char *path);
+int hos_zs_write(const char *path, const uint8_t *data, size_t n);
 int hos_binding(int set, int button, int slot);   /* nn_hid.c */
 int hos_sdl_pads(uint64_t *buttons, int32_t stick[4]);   /* pad_sdl.c */
-void hos_sdl_pad_first_name(char *out, size_t cap);
+void hos_sdl_pad_first(char *out, size_t cap, int *type, int *sdl);
 int hos_mods_file(const char *rel, char *out, size_t cap);   /* mods.c */
 extern const char *hos_romfs_dir;   /* nn_fs.c: the game's RomFS folder */
 int hos_xinput_pads(void);   /* nn_hid.c */
@@ -46,6 +58,10 @@ int rx_option(int id, int otherwise);   /* rx_backend.c: the Insert menu's rows 
 #define TEXTURES_PATH "ui/layout2archive/common.product.100.nin_ounce_nvn2.bntx.zs"
 #define LAYOUTS_PATH "ui/layout2archive/common.product.100.nin_ounce_nvn2.blarc.zs"
 #define SIZES_PATH "system/resource/resourcesizetable."   /* (then the version, ".rsizetable.zs") */
+/* the same in the RomFS's case (the size table's keys are case-sensitive; the files' names, on Linux) */
+#define FONT_ROMFS "Font2/Scalable/External.Nin_Ounce_NVN2.bfotf.zs"
+#define TEXTURES_ROMFS "UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.bntx.zs"
+#define LAYOUTS_ROMFS "UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs"
 #define MAGIC 0x18029a7fu
 #define PAD_BASE 0xF700
 #define FACE_CODES 32   /* (each face's code points: its pad icons, then at STATIC_AT its d-pad icons; nx2/prompt_assets.py) */
@@ -115,16 +131,37 @@ static int contains(const char *text, const char *word) {   /* (any case) */
     return 0;
 }
 
-/* the face of a controller by its name (SDL's), HOS_PROMPT_*: "" no controller, the Switch's (the keyboard, the game's own
-   icons; or XInput without SDL) */
-static int face_of_name(const char *name) {
+/* the face of a controller by the type SDL gives it (sdl: the SDL it came from, 3 or 2; type: SDL_GetGamepadType's or
+   SDL_GameControllerGetType's number), HOS_PROMPT_*; -1 a type that names no face (unknown, standard, virtual, the others):
+   its name says then. SDL knows the type from the pad's USB ids, where names vary ("Wireless Controller" is a DualShock 4 or a
+   DualSense on some systems), and through Steam Input from the pad behind the stand-in */
+static int face_of_type(int sdl, int type) {
+    if (hd_rumble_kind(sdl, type) != HD_RUMBLE_NONE) return HOS_PROMPT_SWITCH;   /* (a Pro Controller, Joy-Cons) */
+    if (sdl == 3) {   /* (SDL_GAMEPAD_TYPE_XBOX360 2, XBOXONE 3, PS3 4, PS4 5, PS5 6) */
+        if (type == 2 || type == 3) return HOS_PROMPT_XBOX;
+        if (type == 4 || type == 5) return HOS_PROMPT_PS4;
+        if (type == 6) return HOS_PROMPT_PS5;
+    } else if (sdl == 2) {   /* (SDL_CONTROLLER_TYPE_XBOX360 1, XBOXONE 2, PS3 3, PS4 4, PS5 7) */
+        if (type == 1 || type == 2) return HOS_PROMPT_XBOX;
+        if (type == 3 || type == 4) return HOS_PROMPT_PS4;
+        if (type == 7) return HOS_PROMPT_PS5;
+    }
+    return -1;
+}
+
+/* the face of a controller by its name (SDL's) and type (face_of_type), HOS_PROMPT_*: "" no controller, the Switch's (the
+   keyboard, the game's own icons; or XInput without SDL). A name that says the maker's buttons wins, then the type (a name
+   that says none of them: "Wireless Controller", Steam Input's "Steam Virtual Gamepad"), else the Xbox's */
+static int face_of_pad(const char *name, int sdl, int type) {
     if (!name[0]) return HOS_PROMPT_SWITCH;
+    /* (a Steam Controller names its buttons as the Deck does: L1/R1, View, Menu, Steam. SDL3 calls it "Steam Controller";
+       SDL has no type for either, and Steam Input's stand-in for one says Xbox) */
+    if (contains(name, "steam deck") || contains(name, "steam controller")) return HOS_PROMPT_STEAMDECK;
     if (contains(name, "dualsense") || contains(name, "ps5")) return HOS_PROMPT_PS5;
     if (contains(name, "dualshock") || contains(name, "ps4") || contains(name, "playstation")) return HOS_PROMPT_PS4;
-    /* (a Steam Controller names its buttons as the Deck does: L1/R1, View, Menu, Steam. SDL3 calls it "Steam Controller") */
-    if (contains(name, "steam deck") || contains(name, "steam controller")) return HOS_PROMPT_STEAMDECK;
     if (contains(name, "nintendo") || contains(name, "switch") || contains(name, "joy-con")) return HOS_PROMPT_SWITCH;
-    return HOS_PROMPT_XBOX;   /* (Xbox pads, and the many that copy their layout) */
+    const int by_type = face_of_type(sdl, type);
+    return by_type >= 0 ? by_type : HOS_PROMPT_XBOX;   /* (Xbox pads, and the many that copy their layout) */
 }
 
 /* the first key bound to Switch button b (a Windows key code, the second slot's when the first is clear), 0 none */
@@ -156,9 +193,10 @@ static unsigned stick_shows(int i, const int *move) {
 
 static int keyboard_built;   /* (the build made the keyboard face: prompts/keyboard/; choose_face) */
 
-/* Auto's face: the first controller's (by SDL's name); with none, and none through XInput either, the keyboard's */
-static int auto_face(const char *name) {
-    return !name[0] && keyboard_built && !hos_xinput_pads() ? HOS_PROMPT_KEYBOARD : face_of_name(name);
+/* Auto's face: the first controller's (by SDL's name and type: sdl, the SDL it came from); with none, and none through XInput
+   either, the keyboard's */
+static int auto_face(const char *name, int sdl, int type) {
+    return !name[0] && keyboard_built && !hos_xinput_pads() ? HOS_PROMPT_KEYBOARD : face_of_pad(name, sdl, type);
 }
 
 /* HOS_PROMPT_* (faces[]) */
@@ -176,15 +214,16 @@ static int choose_face(const char *dir) {
     if (choice >= 1 && choice <= HOS_PROMPT_N) return choice - 1;
     /* Auto: the first controller SDL opens (it scans every second: up to 1.5 s for one, at the game's start) */
     char name[128] = "";
+    int type = 0, sdl = 0;
     uint64_t b = 0;
     int32_t s[4] = {0};
     for (int i = 0; i < 30 && !name[0]; i++) {
         hos_sdl_pads(&b, s);
-        hos_sdl_pad_first_name(name, sizeof name);
+        hos_sdl_pad_first(name, sizeof name, &type, &sdl);
         if (!name[0]) Sleep(50);
     }
-    const int face = auto_face(name);
-    hos_log("prompts: auto: controller \"%s\": %s", name[0] ? name : "(none)", faces[face]);
+    const int face = auto_face(name, sdl, type);
+    hos_log("prompts: auto: controller \"%s\" (SDL%d type %d): %s", name[0] ? name : "(none)", sdl, type, faces[face]);
     return face;
 }
 
@@ -402,17 +441,149 @@ static uint8_t *merge_restbl(const uint8_t *a, size_t an, const uint8_t *b, size
     return t;
 }
 
-/* the size table served for a mod's own (mod: its file): the mod's with ours (prompts/rsizetable.zs) merged in, as raw zstd
-   blocks in cache/prompts/rsizetable.mod.zs (out). 1 with it; 0 when we have none (the faces' fonts fit the game's entry); -1 when
-   the mod's cannot take ours: it is served as it is, and the game's own icons with it. Made once, for the first mod table asked */
-static int sizes(const char *dir, const char *mod, char *out, size_t cap) {
+/* the RomFS's size table (System/Resource/ResourceSizeTable.*.rsizetable.zs) whose path in lower case is key; with key NULL,
+   the one whose name sorts first (the game has opened none yet: the font asked first). Its RomFS path into out; 0 none */
+static int game_table(const char *key, char *out, size_t cap) {
+    char pattern[MAX_PATH], name[MAX_PATH] = "";
+    if (!hos_romfs_dir) return 0;
+    snprintf(pattern, sizeof pattern, "%s/System/Resource/ResourceSizeTable.*.rsizetable.zs", hos_romfs_dir);
+    WIN32_FIND_DATAA fd;
+    HANDLE f = FindFirstFileA(pattern, &fd);
+    if (f == INVALID_HANDLE_VALUE) return 0;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        char low[MAX_PATH];
+        snprintf(low, sizeof low, "system/resource/%s", fd.cFileName);
+        for (char *p = low; *p; p++) *p = (char)tolower((unsigned char)*p);
+        if (key ? !strcmp(low, key) : !name[0] || strcmp(fd.cFileName, name) < 0) snprintf(name, sizeof name, "%s", fd.cFileName);
+        if (key && name[0]) break;
+    } while (FindNextFileA(f, &fd));
+    FindClose(f);
+    if (!name[0]) return 0;
+    snprintf(out, cap, "System/Resource/%s", name);
+    return 1;
+}
+
+/* mods.c, own_sizes: the entry the prompts' font (prompts/External.bfotf, every face's) needs in a size table whose entry for
+   the game's font is `entry`: its size with the allowance the game's entry gives the RomFS's font (decompressed) over its
+   size (nx2/prompt_assets.py's font is the game's own redrawn, so it is read as the game reads its own). `entry` when that
+   fits; 0 when the game folder has no prompts' font or the RomFS no font of its own (then no font is served) */
+uint32_t hos_prompts_font_entry(uint32_t entry) {
+    char dir[MAX_PATH], path[MAX_PATH];
+    if (!game_dir(dir, sizeof dir) || !hos_romfs_dir) return 0;
+    snprintf(path, sizeof path, "%sprompts/External.bfotf", dir);
+    FILE *f = fopen(path, "rb");
+    long ours = -1;
+    if (f) {
+        if (!fseek(f, 0, SEEK_END)) ours = ftell(f);
+        fclose(f);
+    }
+    snprintf(path, sizeof path, "%s/%s", hos_romfs_dir, FONT_ROMFS);
+    const uint64_t game = GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? hos_zs_content_size(path) : 0;
+    if (ours < 16 || !game) return 0;
+    const uint64_t need = (uint64_t)ours + entry > game ? (uint64_t)ours + entry - game : 0;
+    return need > entry ? (need > 0xFFFFFFF0u ? 0 : (uint32_t)need) : entry;
+}
+
+/* (hookshot) the bytes the build's layouts (prompts/Common.blarc) have over the game's: the pause menu's Recomp options button
+   (nx2/pause_layout.py), as nx2/prompt_assets.py wrote them in prompts/Common.blarc.added; 0 without the file */
+static uint32_t layouts_added(const char *dir) {
+    char path[MAX_PATH];
+    snprintf(path, sizeof path, "%sprompts/Common.blarc.added", dir);
+    FILE *f = fopen(path, "r");
+    unsigned long n = 0;
+    if (f) {
+        if (fscanf(f, "%lu", &n) != 1) n = 0;
+        fclose(f);
+    }
+    return n > (1ul << 24) ? 0 : (uint32_t)n;
+}
+
+/* (hookshot) mods.c, own_sizes: the entry the build's layouts need in a size table whose entry for the game's is `entry`: that
+   raised by what the Recomp options button adds (layouts_added); `entry` without it */
+uint32_t hos_prompts_layouts_entry(uint32_t entry) {
+    char dir[MAX_PATH];
+    const uint32_t added = game_dir(dir, sizeof dir) ? layouts_added(dir) : 0;
+    return added && entry <= 0xFFFFFFF0u - added ? entry + added : entry;
+}
+
+/* the size table served in the place of the one the game opens (key: its path, lower case): the RomFS's own table of that
+   name with the font's entry raised to fit ours (hos_prompts_font_entry; and the layouts' by the Recomp options button,
+   hos_prompts_layouts_entry), as raw zstd blocks in cache/prompts/rsizetable.zs
+   (out). 1 with it; 0 when none is needed (our font fits the game's entry, or there is none of ours); -1 when none can be
+   made: the RomFS has no table of that name (another game version than the one the RomFS is), it cannot be read, it has no
+   entry for the font, or the file cannot be written. Then the game's table is its own and the font is left out (the game's own
+   icons): the entry would drop it. Made once, for the first table asked (another name after it: -1) */
+static int own_sizes(const char *key, char *out, size_t cap) {
+    static volatile LONG state;   /* 0 not made, 1 being made, 2 made, 3 none needed, 4 none can be made */
+    static char of[MAX_PATH], path[MAX_PATH];
+    if (InterlockedCompareExchange(&state, 1, 0) == 0) {
+        snprintf(of, sizeof of, "%s", key);
+        char rel[MAX_PATH], file[MAX_PATH], made[MAX_PATH], font_key[MAX_PATH], lay_key[MAX_PATH];
+        const char *why = "the game's files have no table of that name";
+        LONG r = 4;
+        uint32_t entry = 0, need = 0, lay = 0, lay_need = 0;
+        if (game_table(key, rel, sizeof rel)) {
+            snprintf(file, sizeof file, "%s/%s", hos_romfs_dir, rel);
+            size_t n = 0;
+            uint8_t *raw = hos_zs_read(file, &n, 64u << 20);
+            Restbl *t = raw ? restbl_parse(raw, n) : NULL;
+            free(raw);
+            restbl_key(FONT_ROMFS, font_key, sizeof font_key);
+            restbl_key(LAYOUTS_ROMFS, lay_key, sizeof lay_key);
+            if (t && restbl_get(t, lay_key, &lay)) lay_need = hos_prompts_layouts_entry(lay);
+            if (!t) {
+                why = "it is not a size table this can read";
+            } else if (!restbl_get(t, font_key, &entry)) {
+                why = "it has no entry for the font";
+            } else if ((need = hos_prompts_font_entry(entry)) <= entry && lay_need <= lay) {
+                r = 3;
+            } else {
+                size_t wn = 0;
+                int raised = need > entry && restbl_raise(t, font_key, need);
+                if (lay_need > lay && restbl_raise(t, lay_key, lay_need)) raised = 1;
+                uint8_t *w = raised ? restbl_write(t, &wn) : NULL;
+                const int have = made_dir(made, sizeof made);
+                snprintf(path, sizeof path, "%srsizetable.zs", made);
+                r = w && have && hos_zs_write(path, w, wn) ? 2 : 4;
+                why = "cache/prompts/rsizetable.zs could not be written";
+                free(w);
+            }
+            restbl_free(t);
+        }
+        if (r == 2 && need > entry)
+            hos_log("prompts: %s: the game's own table, the font's entry raised from %u to %u bytes", rel, entry, need);
+        if (r == 2 && lay_need > lay)
+            hos_log("prompts: %s: the game's own table, the layouts' entry raised from %u to %u bytes (the Recomp options button)",
+                    rel, lay, lay_need);
+        else if (r == 4)
+            hos_log("prompts: %s: %s: the game's own size table and its own icons in texts", key, why);
+        InterlockedExchange(&state, r);
+    }
+    while (state == 1) Sleep(1);
+    if (strcmp(of, key)) {
+        static volatile LONG told;
+        if (InterlockedIncrement(&told) == 1)
+            hos_log("prompts: %s opened after %s: the game's own, as it is", key, of);
+        return -1;
+    }
+    if (state == 2) snprintf(out, cap, "%s", path);
+    return state == 2 ? 1 : state == 3 ? 0 : -1;
+}
+
+/* the size table served for a mod's own (mod: its file; key: the table's path, lower case): the mod's with ours (own_sizes)
+   merged in, as raw zstd blocks in cache/prompts/rsizetable.mod.zs (out). 1 with it; 0 when we need none (the faces' fonts fit
+   the game's entry); -1 when the mod's cannot take ours, or there is no table of ours to merge: it is served as it is, and the
+   game's own icons with it. Made once, for the first mod table asked */
+static int sizes(const char *key, const char *mod, char *out, size_t cap) {
     static volatile LONG state;   /* 0 not made, 1 being made, 2 made, 3 none of ours, 4 failed */
     static char from[MAX_PATH], path[MAX_PATH];
     if (InterlockedCompareExchange(&state, 1, 0) == 0) {
         snprintf(from, sizeof from, "%s", mod);
-        snprintf(path, sizeof path, "%sprompts/rsizetable.zs", dir);
-        LONG r = 3;
-        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
+        const int own = own_sizes(key, path, sizeof path);
+        LONG r = own == 0 ? 3 : 4;
+        if (own < 0) hos_log("prompts: %s: no size table of the prompts' to merge: the mod's resource size table as it is", mod);
+        if (own > 0) {
             long on = 0, mn = 0;
             size_t bn = 0, an = 0, n = 0;
             int raised = 0;
@@ -433,7 +604,7 @@ static int sizes(const char *dir, const char *mod, char *out, size_t cap) {
                         mod, raised);
             else
                 hos_log("prompts: %s: %s: the mod's resource size table as it is", mod,
-                        !b ? "prompts/rsizetable.zs could not be read" : !theirs ? "could not be read"
+                        !b ? "cache/prompts/rsizetable.zs could not be read" : !theirs ? "could not be read"
                         : !a ? "not a zstd frame that gives its size" : !t ? "not a resource size table as the game's"
                         : "cache/prompts/rsizetable.mod.zs could not be written");
             free(t), free(a), free(b), free(theirs), free(ours);
@@ -460,6 +631,9 @@ static int setup(char *dir, size_t cap, int *face) {
             ok = GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
         }
         if (ok) f = choose_face(d);
+        else if (d[0])   /* (the build draws prompts/ with fontTools: nx2/make_game.py; without it nothing here changes) */
+            hos_log("prompts: no prompts folder in %s: the game's own icons, whatever the Button prompts row says "
+                    "(the build makes it with fontTools and Pillow: nx2/prompt_requirements.txt)", d);
         InterlockedExchange(&setup_state, ok ? 2 : 3);
     }
     while (setup_state == 1) Sleep(1);
@@ -589,7 +763,30 @@ static const int *texture_bind(int face, const int *bind, int *own) {
 
 static void live_textures_start(const char *bntx, const Run *runs, size_t nruns);
 static void part_served(int p, int face, const int *bind);
+static int table_has_room(const char *what, const char *instead);
 enum { PART_TEXTURES, PART_LAYOUTS, PART_FONT, PARTS };
+
+/* 1 when the build's copy of a game file (prompts/<copy>) is the size of the RomFS's (rel, decompressed), so made from these
+   game files; else the game's own file is served: the RomFS is another dump or game version than the one the build read */
+static int same_as_game(const char *dir, const char *copy, const char *rel, uint64_t extra) {
+    char path[MAX_PATH];
+    snprintf(path, sizeof path, "%sprompts/%s", dir, copy);
+    FILE *f = fopen(path, "rb");
+    long n = -1;
+    if (f) {
+        if (!fseek(f, 0, SEEK_END)) n = ftell(f);
+        fclose(f);
+    }
+    uint64_t game = 0;
+    if (hos_romfs_dir) {
+        snprintf(path, sizeof path, "%s/%s", hos_romfs_dir, rel);
+        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) game = hos_zs_content_size(path);
+    }
+    if (n > 0 && game && (uint64_t)n == game + extra) return 1;   /* (extra: what the build adds, layouts_added) */
+    hos_log("prompts: prompts/%s (%ld bytes) is not made from this game's %s (%llu bytes): the game's own", copy, n, rel,
+            (unsigned long long)game);
+    return 0;
+}
 
 static int build_textures(char *out, size_t cap) {
     char dir[MAX_PATH], path[MAX_PATH];
@@ -599,6 +796,10 @@ static int build_textures(char *out, size_t cap) {
     long tn;
     uint8_t *t = read_all(path, "HPTX", &tn);
     if (!t) return 0;   /* (built without the textures: the game's) */
+    if (!same_as_game(dir, "Common.bntx", TEXTURES_ROMFS, 0)) {
+        free(t);
+        return 0;
+    }
     int bind[BINDS], own[HOS_SW_N];
     current_binds(bind);
     uint64_t h = fnv(fnv(fnv(0xcbf29ce484222325ull, &face, sizeof face), bind, BUTTON_BINDS * sizeof *bind), t, (size_t)tn);
@@ -1287,8 +1488,9 @@ static int live_face(void) {
     if (choice >= 1 && choice <= HOS_PROMPT_N) return choice - 1;
     if (choice < 0) return live_face_now;   /* (no menu: the start's) */
     char name[128] = "";
-    hos_sdl_pad_first_name(name, sizeof name);
-    return auto_face(name);
+    int type = 0, sdl = 0;
+    hos_sdl_pad_first(name, sizeof name, &type, &sdl);
+    return auto_face(name, sdl, type);
 }
 
 /* nn_hid.c, as the game reads its controller (every frame; looked at every 100 ms): the face or the controls changed, or a
@@ -1396,6 +1598,11 @@ static int build_layouts(char *out, size_t cap) {
     current_binds(bind);
     Layout o;
     if (!layout_runs(dir, face, bind, &o)) return 0;
+    const uint32_t added = layouts_added(dir);
+    if (!same_as_game(dir, "Common.blarc", LAYOUTS_ROMFS, added) || (added && !table_has_room("the layouts' Recomp options button", "the game's own layouts"))) {
+        layout_free(&o);
+        return 0;
+    }
     char keypath[MAX_PATH], made[MAX_PATH];
     const int have = made_dir(made, sizeof made);
     snprintf(out, cap, "%sCommon.blarc.zs", made);
@@ -1495,37 +1702,35 @@ static int layout_runs(const char *dir, int face, const int *bind, Layout *o) {
     return 1;
 }
 
-/* The game's table name, as nx2/prompt_assets.py selects it for the prompts. A mod can
-   include other versions' tables too; those must not seed the one-time merge. */
-static int game_table(char *out, size_t cap) {
-    char pattern[MAX_PATH], name[MAX_PATH] = "";
-    if (!hos_romfs_dir) return 0;
-    snprintf(pattern, sizeof pattern, "%s/System/Resource/ResourceSizeTable.*.rsizetable.zs", hos_romfs_dir);
-    WIN32_FIND_DATAA fd;
-    HANDLE f = FindFirstFileA(pattern, &fd);
-    if (f == INVALID_HANDLE_VALUE) return 0;
-    do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && (!name[0] || strcmp(fd.cFileName, name) < 0))
-            snprintf(name, sizeof name, "%s", fd.cFileName);
-    } while (FindNextFileA(f, &fd));
-    FindClose(f);
-    if (!name[0]) return 0;
-    snprintf(out, cap, "System/Resource/%s", name);
+/* the size table the game opened (hos_prompts_romfs: its path, lower case), "" none yet */
+static char opened_table[MAX_PATH];
+
+/* 1 when the size table the game opens has room for what (larger than the game's file): the game's own with our entries
+   raised (own_sizes), or a mod's with that merged in (sizes). The table the game opened; when ours is opened first, the
+   RomFS's whose name sorts first. A table that cannot take ours cannot hold it: then the game's own file (instead says so) */
+static int table_has_room(const char *what, const char *instead) {
+    char table[MAX_PATH], mod[MAX_PATH], path[MAX_PATH];
+    if (opened_table[0]) {
+        snprintf(table, sizeof table, "%s", opened_table);
+    } else if (game_table(NULL, table, sizeof table)) {
+        for (char *p = table; *p; p++) *p = (char)tolower((unsigned char)*p);
+    } else {
+        hos_log("prompts: the game's files have no resource size table: %s", instead);
+        return 0;
+    }
+    if (hos_mods_file(table, mod, sizeof mod) ? sizes(table, mod, path, sizeof path) < 0 : own_sizes(table, path, sizeof path) < 0) {
+        hos_log("prompts: the resource size table cannot take %s: %s", what, instead);
+        return 0;
+    }
     return 1;
 }
 
 /* builds cache/prompts/External.bfotf.zs for this run; 1 when there is one */
 static int build(char *out, size_t cap) {
-    char dir[MAX_PATH], path[MAX_PATH];
+    char dir[MAX_PATH];
     int face;
     if (!setup(dir, sizeof dir, &face)) return 0;
-    /* A mod's size table is served with ours merged in. Check the same table even when the font
-       is opened first; an unmergeable one cannot hold the font, which is larger than the game's. */
-    char table[MAX_PATH], mod[MAX_PATH];
-    if (game_table(table, sizeof table) && hos_mods_file(table, mod, sizeof mod) && sizes(dir, mod, path, sizeof path) < 0) {
-        hos_log("prompts: a mod's resource size table cannot take the prompts' sizes: the game's own icons in texts");
-        return 0;
-    }
+    if (!table_has_room("the prompts' font", "the game's own icons in texts")) return 0;
     long n;
     uint32_t key;
     int bound;
@@ -1556,12 +1761,12 @@ int hos_prompts_romfs(const char *key, const char *mod, char *out, size_t cap) {
     static char path[3][MAX_PATH];
     const size_t kn = strlen(key);
     if (!strncmp(key, SIZES_PATH, sizeof SIZES_PATH - 1) && kn > 14 && !strcmp(key + kn - 14, ".rsizetable.zs")) {
-        char dir[MAX_PATH];   /* (the game's size table with room for the font, larger than its: nx2/prompt_assets.py) */
+        char dir[MAX_PATH];   /* (the game's own size table with room for the font, larger than its: own_sizes) */
         int face;
         if (!setup(dir, sizeof dir, &face)) return 0;
-        if (mod) return sizes(dir, mod, out, cap) > 0;
-        snprintf(out, cap, "%sprompts/rsizetable.zs", dir);
-        return GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES;
+        if (!opened_table[0]) snprintf(opened_table, sizeof opened_table, "%s", key);
+        if (mod) return sizes(key, mod, out, cap) > 0;
+        return own_sizes(key, out, cap) > 0;
     }
     const int which = !strcmp(key, FONT_PATH) ? 0 : !strcmp(key, TEXTURES_PATH) ? 1 : !strcmp(key, LAYOUTS_PATH) ? 2 : -1;
     if (which < 0) return 0;

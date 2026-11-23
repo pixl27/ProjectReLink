@@ -21,6 +21,9 @@
 
    HOS_VOICE_OPTION_FOLLOW=0: the game's answer alone, as shipped. */
 #include "hos.h"
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 #include <stdlib.h>
 
 #define VOICE_OPTION 0xa2dcdc9dU   /* (MurmurHash3 of "OptionData.VoiceLanguage") */
@@ -28,7 +31,7 @@ enum { ENUM_COUNT = 0x250, ENUM_ENTRIES = 0x258, ENUM_TABLE = 0x260, ENUM_TABLE_
 
 static int follow_on(void) {
     static int on = -1;
-    if (on < 0) on = !getenv("HOS_VOICE_OPTION_FOLLOW") || atoi(getenv("HOS_VOICE_OPTION_FOLLOW")) != 0;
+    if (on < 0) on = env_on_or("HOS_VOICE_OPTION_FOLLOW", 1);
     return on;
 }
 

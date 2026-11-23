@@ -31,7 +31,7 @@ def name(f):
     return r
 
 
-RUN = prof.RUN_MODS + ("nvoglv64.dll",)
+RUN = prof.RUN_MODS + ("nvoglv64.dll", "amdvlk64.dll", "amdxc64.dll", "amdxx64.dll", "igvk64.dll", "igxelpicd64.dll")
 DRIVERS = ("libnvidia-glcore.so", "libvulkan_radeon.so", "libvulkan_intel.so")   # (Linux: the driver's file has its version after .so)
 seen, running = collections.Counter(), collections.Counter()
 incl, self_ = collections.Counter(), collections.Counter()

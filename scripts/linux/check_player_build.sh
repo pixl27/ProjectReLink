@@ -39,6 +39,10 @@ echo "== the pipeline state list (assets/pipeline_states/: nx2/make_game.py merg
 (cd "$T" && in_image "$R/usr/python/bin/python3" -I -B nx2/pipeline_states.py check --dir assets/pipeline_states) ||
     { echo "the AppImage carries no readable assets/pipeline_states/: a new install's first field load would be drawn white"; exit 1; }
 
+echo "== the hot list (assets/profiles/hot_funcs.txt: the lifted functions every build compiles at -O2, nx2/make_game.py)"
+grep -qE '^f_[0-9a-f]{8}$' "$T/assets/profiles/hot_funcs.txt" 2>/dev/null && ! grep -qvE '^f_[0-9a-f]{8}$' "$T/assets/profiles/hot_funcs.txt" ||
+    { echo "the AppImage carries no hot list, or one with a line that is not f_<8 hex>: every lifted function would be built at -O1"; exit 1; }
+
 echo "== AppRun --cli --help"
 in_image "$R/AppRun" --cli --help > "$TMP/help.txt"
 grep -q -- "--nup" "$TMP/help.txt" || { cat "$TMP/help.txt"; echo "nx2/make_game.py did not start"; exit 1; }

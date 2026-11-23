@@ -1,6 +1,7 @@
 #include "hos.h"
 #include "fullscreen_monitor.h"
 #include "options_path.h"
+#include "../gpu/vk/compat/hookshot_env.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,8 +26,7 @@ void hos_monitor_load(void) {
             }
             fclose(f);
         }
-        const char *forced=getenv("HOS_FULLSCREEN");
-        if (forced) monitor_start=atoi(forced)!=0;
+        monitor_start=env_on_or("HOS_FULLSCREEN",monitor_start);   /* (set: over the saved row, by the switches' one rule) */
     }
     ReleaseSRWLockExclusive(&monitor_lock);
 }

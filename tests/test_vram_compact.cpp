@@ -34,6 +34,22 @@ int main() {
     CHECK(held_budget(4096 * MB, 5600 * MB, 10023 * MB, 215 * MB, allowed, 85) == 4096 * MB);   // (never more than it was)
     CHECK(held_budget(budget, 300 * MB, 10800 * MB, 0, allowed, 85) == texture_min_floor(allowed)); // (clamped at floor)
     CHECK(held_budget(budget, 5600 * MB, 10023 * MB, 215 * MB, 0, 85) == budget);               // (no allowance known: left alone)
+    {   // past the allowance no floor holds the textures (a GTX 1060 6 GB at 6128 MB of the 5231 it allowed, 1606 MB of
+        // textures, under the 1800 MB floor of a card under 8 GB: no rule could take one while the driver paged)
+        const uint64_t a = 5231 * MB, total = 1606 * MB, big = 3584 * MB;
+        CHECK(texture_min_floor(a) == 1800 * MB);
+        CHECK(held_budget(big, total, 6128 * MB, 0, a, 80) < total);                    // (the hold's line takes some)
+        CHECK(held_budget(big, total, 6128 * MB, 0, a, 80) == total - (6128 * MB - a / 100 * 80) / 4);   // (damped, no floor)
+        CHECK(held_budget(big, total, 6128 * MB, 0, a, 80, 2600 * MB) < total);         // (the dynamic floor gives way too)
+        CHECK(count_line_floor(6128 * MB, a) == 0);                                     // (and the 97% rule's floor)
+        CHECK(floor_within(2600 * MB, 6128 * MB, a) == 0);
+        // within the allowance the floors hold as before: the working set is not ratcheted down
+        CHECK(count_line_floor(5100 * MB, a) == 1800 * MB);
+        CHECK(count_line_floor(a, a) == 1800 * MB);                                     // (at it, not past)
+        CHECK(floor_within(2600 * MB, 5100 * MB, a) == 2600 * MB);
+        CHECK(held_budget(big, total, 5100 * MB, 0, a, 80) == 1800 * MB);               // (clamped at the floor, as before)
+        CHECK(floor_within(1800 * MB, 6128 * MB, 0) == 1800 * MB);                      // (no allowance known: as it was)
+    }
     CHECK(held_budget(budget, 5600 * MB, 100 * MB, 215 * MB, allowed, 85) == budget);           // (more to give back than is used)
     // the hold's pass keeps a live texture used in the last ten seconds: the eviction's own 60 presents is not enough for it
     CHECK(kHoldUnused == 180);

@@ -26,6 +26,7 @@ import re
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 import whole_write   # (rewrites written beside and moved over: issue 1197)
+import build_jobs   # (the workers the build was asked for)
 
 import a64_lift
 import lifted_c
@@ -65,16 +66,21 @@ def load(img_dir):
     path = os.path.join(img_dir, FILE)
     if not os.path.exists(path):
         return []
-    return [int(l, 16) for l in open(path) if l.strip() and not l.startswith("#")]
+    try:
+        with open(path, encoding="utf-8") as f:
+            return [int(l, 16) for l in f if l.strip() and not l.startswith("#")]
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        print("chunks: %s could not be read (%s); ignoring" % (path, e), flush=True)
+        return []
 
 
 def save(img_dir, starts):
     # (lift.py --standalone writes this under <work>/image while its image.bin goes to <work>/sa/image, and nothing made
     # that folder: a fresh work folder stopped the lift at its last step with FileNotFoundError. make_game.py prepares it)
     os.makedirs(img_dir, exist_ok=True)
-    with open(os.path.join(img_dir, FILE), "w") as f:
-        f.write("# first guest address of each lifted C chunk after the first (nx2/chunks.py)\n")
-        f.write("".join("%08x\n" % s for s in sorted(starts)))
+    text = ("# first guest address of each lifted C chunk after the first (nx2/chunks.py)\n"
+            + "".join("%08x\n" % s for s in sorted(starts)))
+    whole_write.write_whole(os.path.join(img_dir, FILE), text, sync=True)   # (read by every later lift)
 
 
 # (the dev-loop proposal) chunks of ~4 MB, not 24: a change to two functions compiled their two chunks again, 14 and 24 MB, ~4
@@ -161,7 +167,7 @@ def _no_fork():
 
 def file_jobs():
     """Processes for the per-file passes (split_big, edit_c) and for the emit: HOOKSHOT_LIFT_JOBS, else the cores this process
-    may use (at most 16; each holds its run's texts and the pages of the lift it touches), and at most one per 2 GB of available
+    may use (at most 16, and at most HOOKSHOT_JOBS when the build was given a count; each holds its run's texts and the pages of the lift it touches), and at most one per 2 GB of available
     memory where they are forked (one per 0.75 GB where they are spawned: Windows, its available physical memory): a Steam
     Deck (16 GB) ran out with 8, and the system's out-of-memory
     handling stopped the lift ("lift.py stopped (signal 15): BrokenPipeError") or one worker (the update then sat at "jump tables"
@@ -173,7 +179,7 @@ def file_jobs():
         n = len(os.sched_getaffinity(0))
     except AttributeError:
         n = os.cpu_count() or 1
-    n = max(1, min(16, n))
+    n = build_jobs.cap(max(1, min(16, n)))   # (no more than the build was asked for: HOOKSHOT_JOBS, nx2/build_jobs.py)
     gb = _available_gb()
     if gb is not None:
         # a new process (spawn: Windows) holds only the emit's tables and its run's bodies: 395 MB at most, measured
@@ -328,6 +334,10 @@ def fill_fpx(gen_dir, used):
         raise SystemExit("chunks: %s does not begin with the lifter's FPX helpers for no shape" % path)
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(a64_lift.fpx_header(used) + text[len(empty):])
+    # (hookshot) the hot pieces' native helpers (a64_hot_fp.inc) are made from the same shapes: the lifter wrote them for none
+    if getattr(a64_lift, "NATIVE_FP", False):
+        with open(os.path.join(gen_dir, a64_lift.NATIVE_INC), "w", encoding="utf-8", newline="\n") as f:
+            f.write(a64_lift.native_header(used))
 
 
 class _Spawned:
@@ -489,7 +499,6 @@ def write(L, gen_dir, img_dir, rechunk=False, counters=(), jobs=None, took=None,
     return files
 
 
-HEAD = lifted_c.HEAD_NOTED
 PART = re.compile(r"code_(\d{3})_(\d+)\.c")
 HOT_PIECE = re.compile(r"code_hot_\d+\.c")   # (nx2/split_hot.py's pieces of code_hot.c)
 # (a function's compile time grows with the square of its size: LLVM's passes over one function of tens of thousands of blocks. Fitted to
@@ -506,7 +515,7 @@ def fn_cost(size):
 
 def text_cost(text):
     """The estimated compile cost of a C file of lifted functions"""
-    marks = [m.start() for m in HEAD.finditer(text)] + [len(text)]
+    marks = list(lifted_c.noted_starts(text)) + [len(text)]
     return marks[0] + sum(fn_cost(b - a) for a, b in zip(marks, marks[1:]))
 
 
@@ -527,7 +536,7 @@ def write_costs(gen_dir, costs):
 def _cut(text, budget):
     """A chunk's text cut at function starts into parts of about equal cost when its cost is past the budget:
     ([(part's text, its cost)], the total cost) with the chunk's own (first) part first, or (None, its cost) when it stays whole"""
-    marks = [h.start() for h in HEAD.finditer(text)]
+    marks = list(lifted_c.noted_starts(text))
     ends = marks[1:] + [len(text)]
     cost = [fn_cost(b - a) for a, b in zip(marks, ends)]
     total = sum(cost)
@@ -560,7 +569,7 @@ def _cut_already(gen_dir, path, nnn, text, budget):
     finished the cut and whose result was lost when another worker stopped (the pool breaks, _each runs the chunk again here).
     The chunk and its parts on disk joined and cut again must give those same files, so an earlier lift's parts beside a
     chunk that is small now are not taken: (the parts, {file: cost}, the line to print), or None"""
-    marks = [h.start() for h in HEAD.finditer(text)]
+    marks = list(lifted_c.noted_starts(text))
     if not marks:
         return None
     preamble = text[:marks[0]]

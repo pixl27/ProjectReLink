@@ -39,11 +39,14 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # (python -I leaves the script folder off)
 import kit
 import nso2  # noqa: F401
 import insn
+import fastvec
+import guest_locals
 import lift_fixes
 import suyu_rt_fixes
 import poll
@@ -63,7 +66,14 @@ RUN_ALL_SKIP = {
     "windows": "needs the game's modules (work/dump) and Unicorn",
 }
 
+# (in lift.py's order: the vector rewrites, then the locals, under lift_fixes' emit_function. Not the patches' question
+# (install's touched) nor nx2/ran_funcs.txt: no patch is applied here, and the functions picked get locals whether play
+# ran them or not, so the locals are what is tested. A64_LOCAL_REGS=0 A64_LOCAL_FLAGS=0 and A64_NO_VBYTES=1 ... as in the
+# lift turn them off)
 insn.install()
+fastvec.install()
+guest_locals.install()
+guest_locals.install_plain()
 lift_fixes.install()
 suyu_rt_fixes.install()
 poll.install()
@@ -140,9 +150,12 @@ class Picker:
         if keys:
             order = list(keys)
             tx, fl = a64emit.translate([keys[x] for x in order])
-            T = lambda t: a64_lift.stack_stores(a64_lift.pack_flags(a64_lift.widen_vstores(a64_lift.vectorize_fpx(
-                a64_lift.outline_fpx(t, self.fpx)))))
+            T = lambda t: a64_lift.op_text(t, self.fpx)   # (the game's per-instruction pipeline, the same passes)
             self.texts.update(zip(order, zip((T(t) for t in tx), fl)))
+        # (a function entered below its first block keeps its context, as lift.py asks it: lift_fixes' entry goto would
+        # pass over the locals' loads)
+        guest_locals.keep_entered_below(types.SimpleNamespace(funcs={e: L.funcs[e] for e in entries}, plt=L.plt,
+                                                              no_local=L.no_local))
         for e in entries:
             text, refs = L.emit_function(e, self.texts)
             if any(b in text for b in BAD_TEXT):
@@ -191,7 +204,16 @@ def module_shares(img):
     return {k: v for k, v in share.items() if k in size}
 
 
-def select(P, counts, rng, calls, max_tree):
+FMUL_ELEM_MASK, FMUL_ELEM = 0xFFC0F400, 0x4F809000   # (FMUL Vd.4S, Vn.4S, Vm.S[i]: Q=1, sz=0, opcode 1001)
+
+
+def has_word(P, e, mask, value):
+    if e not in P.L.funcs:
+        P.L.funcs[e] = P.L.walk(e)
+    return any(k[0] == "op" and (w & mask) == value for k, w in P.L.funcs[e][0].values())
+
+
+def select(P, counts, rng, calls, max_tree, only=None):
     img = P.img
     by_mod = collections.defaultdict(list)
     for e in sorted(img.entries):
@@ -201,9 +223,11 @@ def select(P, counts, rng, calls, max_tree):
         cands = by_mod[mod]
         rng.shuffle(cands)
         got = 0
-        for e in cands[:want * 40]:
+        for e in (cands if only else cands[:want * 40]):   # (--fmul-elem: such functions are rare, every one is looked at)
             if got >= want:
                 break
+            if only and not has_word(P, e, *only):
+                continue
             if not calls:
                 if e not in P.L.funcs:
                     P.L.funcs[e] = P.L.walk(e)
@@ -268,6 +292,8 @@ static int run(int idx, Ctx *c) {
 }
 int main(int argc, char **argv) {
     FILE *img = fopen(argv[1], "rb"), *in = fopen(argv[2], "rb"), *out = fopen(argv[3], "wb");
+    FILE *tout = argc > 4 ? fopen(argv[4], "wb") : NULL;   /* (LEAF_TIME_REPS: ns of each case's fastest run) */
+    const int reps = tout && getenv("LEAF_TIME_REPS") ? atoi(getenv("LEAF_TIME_REPS")) : 0;
     if (VirtualAlloc(A64_PTR(IMG_BASE), IMG_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) != A64_PTR(IMG_BASE)) return 3;
     if (VirtualAlloc(A64_PTR(SCR_BASE), SCR_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) != A64_PTR(SCR_BASE)) return 4;
     if (fread(A64_PTR(IMG_BASE), 1, IMG_SIZE, img) != IMG_SIZE) return 5;
@@ -283,6 +309,7 @@ int main(int argc, char **argv) {
         memcpy(&c.fpcr, state + 264, 8); memcpy(&c.fpsr, state + 272, 8); memcpy(c.vreg, state + 280, 512);
         memcpy(&c.tpidr_el0, state + 792, 8); memcpy(&c.tpidrro_el0, state + 800, 8);
         c.poll = 1;
+        const Ctx c0 = c;
         int fault = run(idx, &c);
         memcpy(state, c.x, 256); memcpy(state + 256, &c.n, 4);
         memcpy(state + 264, &c.fpcr, 8); memcpy(state + 272, &c.fpsr, 8); memcpy(state + 280, c.vreg, 512);
@@ -296,7 +323,26 @@ int main(int argc, char **argv) {
                     memcpy(A64_PTR(a), pristine(a), 4096);
                 }
         fwrite(&ndiff, 4, 1, out); fwrite(diff, 16, ndiff < 8192 ? ndiff : 8192, out);
+        if (reps) {   /* (the same case again, from the same state and memory each time; only the call is timed) */
+            double best = 1e30;
+            for (int k = 0; k < reps && !fault; k++) {
+                Ctx t = c0;
+                /* (the time stamp counter, not QueryPerformanceCounter: its 100 ns steps were longer than most functions;
+                   ticks at the CPU's base clock, the same in every variant) */
+                const uint64_t a0 = __builtin_ia32_rdtsc();
+                int f2 = run(idx, &t);
+                const uint64_t a1 = __builtin_ia32_rdtsc();
+                if (f2) break;
+                const double ns = (double)(a1 - a0);
+                if (ns < best) best = ns;
+                for (size_t r = 0; r < NREG; r++)
+                    for (uint64_t a = regions[r][0]; a < regions[r][1]; a += 4096)
+                        if (memcmp(A64_PTR(a), pristine(a), 4096)) memcpy(A64_PTR(a), pristine(a), 4096);
+            }
+            fwrite(&best, 8, 1, tout);
+        }
     }
+    if (tout) fclose(tout);
     fclose(out);
     fprintf(stderr, "loop-header polls taken: %%llu\n", (unsigned long long)polls);
     return 0;
@@ -319,6 +365,8 @@ def build(tmp, P, roots, funcs, meta, img_size, addr64):
     a64_rtgen.write(tmp)
     with open(os.path.join(tmp, "a64_fpx.h"), "w", newline="\n") as f:
         f.write(a64_lift.fpx_header(P.fpx))
+        if a64_lift.local_flags():   # (A64_LOCAL_FLAGS' scalar FCMP helper, as the game's lift writes it)
+            f.write(a64_lift.FCMPK_HEADER)
     rt = os.path.join(kit.KIT, "rt")
     if addr64:
         rt = rtgen.write(os.path.join(tmp, "rt64"))   # (its a64.h shadows the vendored one)
@@ -334,7 +382,7 @@ def build(tmp, P, roots, funcs, meta, img_size, addr64):
     open(path, "w", newline="\n").write("\n".join(src))
     exe = os.path.join(tmp, "harness.exe")
     cmd = [toolchain.need(toolchain.find("clang"))] + toolchain.native_target() + toolchain.native_link() + \
-          ["-O1", "-g0", "-mcx16", "-Wno-everything"] + (["-DA64_POLLING"] if addr64 else []) + ["-I" + rt, "-I" + tmp, path,
+          ["-O1", "-g0", "-mcx16", "-Wno-everything"] + (["-march=native", "-ffp-contract=off", "-fno-strict-aliasing"] if os.environ.get("LEAF_TIME_REPS") else []) + (["-DA64_POLLING"] if addr64 else []) + ["-I" + rt, "-I" + tmp, path,
            os.path.join(tmp, "a64_suyu.c"), "-o", exe]
     subprocess.run(cmd, check=True)
     return exe
@@ -435,6 +483,8 @@ def main():
     p.add_argument("--max-tree", type=int, default=4000)
     p.add_argument("--addr32", action="store_true")
     p.add_argument("--list", action="store_true")
+    p.add_argument("--fmul-elem", action="store_true", help="only functions with an FMUL Vd.4S, Vn.4S, Vm.S[i] "
+                   "(a64_lift.py's VFPX_MUL_ELEM)")
     a = p.parse_args()
     if a.addr32:
         SCRATCH = 0x0E000000
@@ -444,7 +494,8 @@ def main():
     meta = img.write(os.path.join(kit.WORK, "image_test"))
     P = Picker(img)
     share = module_shares(img)
-    roots, funcs = select(P, {m: max(1, int(a.count * s)) for m, s in share.items()}, rng, a.calls, a.max_tree)
+    roots, funcs = select(P, {m: max(1, int(a.count * s)) for m, s in share.items()}, rng, a.calls, a.max_tree,
+                          (FMUL_ELEM_MASK, FMUL_ELEM) if a.fmul_elem else None)
     print("%d %s, %d functions lifted in all, %d instructions (%.0fs)" % (
         len(roots), "call trees" if a.calls else "self-contained functions", len(funcs),
         sum(len(P.L.funcs[e][0]) for e in funcs), time.time() - t0), flush=True)
@@ -472,7 +523,9 @@ def main():
         for i, seed, st in cases:
             x, nzcv, fpcr, fpsr, v, tpidr, tpidrro = st
             f.write(struct.pack("<IQ", i, seed) + STATE.pack(*(x + nzcv + [fpcr, fpsr] + v + [tpidr, tpidrro])))
-    r = subprocess.run([exe, img_path, inp, outp], timeout=900)
+    tpath = os.path.join(tmp, "times.bin")
+    timed = bool(os.environ.get("LEAF_TIME_REPS"))
+    r = subprocess.run([exe, img_path, inp, outp] + ([tpath] if timed else []), timeout=3600)
     if r.returncode:
         raise SystemExit("harness exited with %d" % r.returncode)
     fn_fail, fn_pass, fpsr_only = collections.defaultdict(list), collections.Counter(), collections.Counter()
@@ -494,8 +547,12 @@ def main():
             else:
                 ip = a.calls and (vals[16], vals[17]) != (ex_x[16], ex_x[17])
                 ip_only[i] += ip
+                # (A64_LOCAL_REGS: x9-x15 are not compared then. The kit's write-back leaves the scratch registers out
+                # at a return: by the AAPCS64 a caller may not read x9-x15 after a call, and the lift rests on no
+                # guest caller doing so. This is that rule, not a check made weaker by accident)
+                scratch = range(9, 16) if a64_lift.local_regs() else ()
                 d += ["%s %#x != %#x" % ("sp" if r == 31 else "x%d" % r, vals[r], ex_x[r]) for r in range(32)
-                      if vals[r] != ex_x[r] and not (a.calls and r in (16, 17))]
+                      if vals[r] != ex_x[r] and not (a.calls and r in (16, 17)) and r not in scratch]
                 d += ["v%d.%s %#x != %#x" % (r // 2, "hi" if r & 1 else "lo", vals[38 + r], ex_v[r]) for r in range(64)
                       if vals[38 + r] != ex_v[r]]
                 if pages != ex_pages:
@@ -508,6 +565,16 @@ def main():
                 if (vals[37] & 0x9F) != (ex_fpsr & 0x9F):
                     fpsr_only[i] += 1
     bad = sorted(fn_fail)
+    if timed and os.environ.get("LEAF_TIME_OUT"):   # (per function: the median over its cases of the fastest run, ns)
+        import json
+        raw = open(tpath, "rb").read()
+        ts = struct.unpack("<%dd" % (len(raw) // 8), raw)
+        per_fn = collections.defaultdict(list)
+        for (i, _, _), t in zip(cases, ts):
+            if t < 1e29:
+                per_fn["%08x" % roots[i][1]].append(t)
+        json.dump({k: sorted(v)[len(v) // 2] for k, v in per_fn.items()}, open(os.environ["LEAF_TIME_OUT"], "w"))
+        print("timed %d functions into %s" % (len(per_fn), os.environ["LEAF_TIME_OUT"]))
     per = collections.Counter(roots[i][0] for i in tested)
     sizes = [roots[i][2] for i in tested]
     print("%d %s run (%s)%s, %d cases: %d pass every case, %d with differences; FPSR cumulative bits differ in %d" % (

@@ -1,0 +1,16 @@
+# The lifted functions a HOOKSHOT_TRACY build makes Tracy zones of (nx2/tracy_funcs.py, docs/development/tracy.md).
+#   <guest address> [calls] [the zone's name]
+# `calls`: each indirect call the function makes is a zone too, named by its target and the object: a dispatch point.
+# The frame's phases on the main thread and the job loops, from profiles of Castle Town's market. A longer list made from
+# a profile of your own goes in a file HOOKSHOT_TRACY_FUNCS names; that one is made from the game and stays on your PC.
+8004ab40 calls  job loop (BaseProcExecutor)
+8007fe60 calls  job loop (module workers, main thread)
+80070b20        wait for a job batch
+80706be0        actor batch (BaseProc)
+800998a0        poll loop (sleeps 20 us)
+802eacc0        draw building: batch
+83acfb90        draw building: join
+806668b0        frame's submit
+8042cd20        frame wait (GPU fence)
+80365f00        readback (InvalidateMappedRange)
+8348c680        frame (main loop body)

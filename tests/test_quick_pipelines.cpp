@@ -26,13 +26,13 @@ void check(bool ok, const char* what) {
 using VkPipeline = uintptr_t;
 constexpr VkPipeline VK_NULL_HANDLE = 0;
 using VkPrimitiveTopology = int;
-enum VkDriverId { VK_DRIVER_ID_AMD_PROPRIETARY = 1, VK_DRIVER_ID_NVIDIA_PROPRIETARY = 4 };
+enum VkDriverId { VK_DRIVER_ID_AMD_PROPRIETARY = 1, VK_DRIVER_ID_NVIDIA_PROPRIETARY = 4, VK_DRIVER_ID_MESA_RADV = 3 };
 struct {
     VkDriverId driver_id = VK_DRIVER_ID_NVIDIA_PROPRIETARY;
     struct { bool pipelineCreationCacheControl = true; } vk13;
     void* device = nullptr;
 } dev;
-struct Program { uint64_t key = 0x1234; };
+struct Program { uint64_t key = 0x1234; bool mesh = false, fallback = false; };
 bool program_modules_dropped(const Program&) { return false; }
 struct NvnState {};
 struct Targets {};
@@ -79,7 +79,7 @@ struct FakeEntry {
 
 void header_rules() {
     bool bad = false;
-    check(quick_pipe::quick_ms(nullptr, &bad) == 0 && !bad, "unset: off on every driver (until measured on AMD)");
+    check(quick_pipe::quick_ms(nullptr, &bad) == 0 && !bad, "unset: no numeric budget for skippable draws");
     check(quick_pipe::quick_ms("250", &bad) == 250 && !bad, "a number sets it anywhere");
     check(quick_pipe::quick_ms("8", &bad) == quick_pipe::kQuickSuggestedMs && !bad, "the suggested value");
     check(quick_pipe::kQuickSuggestedMs > 0 && quick_pipe::kQuickSuggestedMs <= 16, "the suggested budget is under a 60 fps frame");
@@ -181,6 +181,11 @@ void header_rules() {
     check(quick_pipe::take(c, false, 1000, budget, 10, ask_none, build_slow, destroy, now, poll) == quick_pipe::Got::kOther &&
               asked == 0 && built == before,
           "an entry is given one once");
+    FakeEntry during_ask;
+    const auto published = [&](bool&) { during_ask.pipeline.store(1); during_ask.ready.store(true); return 0; };
+    check(quick_pipe::take(during_ask, true, 8, budget, 11, published, build_slow, destroy, now, poll) ==
+              quick_pipe::Got::kOther && built == before,
+          "a full pipeline published during a cache miss avoids a second compile on the draw thread");
     // (the full one came first: kept, the quick one destroyed, no draw has seen it)
     FakeEntry f;
     const auto build_racing = [&](bool&) { f.pipeline.store(1); f.ready.store(true); return 77; };
@@ -274,6 +279,20 @@ void cut_code(double want_ms) {
     Program p;
     NvnState s;
     Targets at;
+    if (const char* mode = std::getenv("RX_VK_QUICK_MS"); !mode || std::strcmp(mode, "required") == 0) {
+        check(!quick_pipeline(e, p, s, at, 0, false) && calls.empty(),
+              "required mode: a skippable draw leaves all compilation to its worker");
+        check(quick_pipeline(e, p, s, at, 0, true) && e.pipeline.load() && !e.ready.load(),
+              "required mode: a later mandatory draw gets a usable temporary pipeline");
+        check(calls.size() == 2 && calls[0].asked && calls[1].quick, "required mode: cache first, then unoptimized build");
+        dev.driver_id = VK_DRIVER_ID_MESA_RADV;
+        p.mesh = true;
+        PipeEntry mesh;
+        calls.clear();
+        check(!quick_pipeline(mesh, p, s, at, 0, true) && calls.size() == 1 && calls[0].asked,
+              "RADV mesh draws can probe the cache but keep their optimized shaders on a miss");
+        return;
+    }
     check(quick_budget_ms() == want_ms, "RX_VK_QUICK_MS comes to what it should on this driver");
     if (want_ms <= 0) {
         check(!quick_pipeline(e, p, s, at, 0, true) && calls.empty(), "off: nothing asked, nothing built");

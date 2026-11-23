@@ -81,7 +81,7 @@ static void program_cache_borrow_all(uint64_t key, const std::function<void(std:
 MAIN = r"""
 static std::mutex seen_mu;
 static std::multiset<std::pair<uint64_t, uint64_t>> warmed;
-static std::atomic<int> running{0}, most_of_one{0};
+static std::atomic<int> most_of_one{0};
 static std::atomic<uint64_t> heavy_running{0};
 int main() {
     keys = {164, 7, 103, 1, 132, 110};   // (64, 7, 3, 1, 32 and 10 variants)
@@ -156,14 +156,15 @@ def check_source(draw):
             (': dev.driver_id == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA;', "the pass apart is no longer Mesa's Intel driver's default"),
             ('getenv("RX_VK_COMPUTE_WARM_APART")', "the switch is gone"),
             ("(apart && !warming_apart)) return;", "the translation still compiles the variants where they are warmed apart"),
-            ("warm_computes_apart(progress, warm_compute, only)", "prepare_run does not run the pass apart"),
-            ('const ComputePlan plan = computes_plan(precompile_computes_which(), !env_on("RX_VK_NO_STATE_LIST"));',
+            ("if (!apart && only && !only->count(p.key)) return;", "inline driver compiles ignore the selection"),
+            ("warm_computes_apart(apart_progress, warm_compute, only)", "prepare_run does not run the pass apart"),
+            ('const ComputePlan* plan = warm_cs ? &compute_warm_plan() : nullptr;',
              "the pass apart does not take the precompile's plan"),
-            ("const std::unordered_set<uint64_t>* only = plan.all ? nullptr : plan.none ? &none : &plan.keys;",
+            ("const auto* only = !plan || plan->all ? nullptr : plan->none ? &none : &plan->keys;",
              "the pass apart warms programs the plan leaves out")):
         if needle not in prepare:
             raise SystemExit("prepare_run: " + why)
-    if prepare.index("warm_computes_apart(progress, warm_compute, only)") > prepare.rindex("prepared_for.warmed = warmed;"):
+    if prepare.index("warm_computes_apart(apart_progress, warm_compute, only)") > prepare.rindex("prepared_for.warmed = warmed;"):
         raise SystemExit("prepare_run writes the driver's part down as made before the pass apart")
 
 
@@ -173,7 +174,7 @@ def main():
     args = parser.parse_args()
     draw = (ROOT / "gpu/vk/vk_draw.cpp").read_text(encoding="utf-8")
     check_source(draw)
-    fn = block(draw, "size_t warm_computes_apart(void (*progress)(size_t done, size_t total), const std::function<void(Program&)>& warm,\n")
+    fn = block(draw, "size_t warm_computes_apart(const std::function<void(size_t done, size_t total)>& progress, const std::function<void(Program&)>& warm,\n")
     with tempfile.TemporaryDirectory(prefix="compute-warm-apart-") as tmp:
         src, exe = Path(tmp) / "t.cpp", Path(tmp) / "t"
         src.write_text(HEAD + fn + "\n" + MAIN, encoding="utf-8")

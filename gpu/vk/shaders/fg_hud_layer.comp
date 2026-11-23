@@ -1,0 +1,82 @@
+#version 450
+// Frame generation (vk_framegen.cpp hud_source): how see-through each HUD pixel is, for AMD FSR 3.1's made frames (#1565).
+// The HUD's soft glows and shadows, its faint icons and the minimap let the scene through: where the game drew its HUD over
+// the picture, the picture as presented is D = B + T * S, the HUD's own colour B over the scene S (the picture before the
+// HUD), T how much of the scene still shows. Laid over a made frame whole, as FSR 3.1's HUD-less mode does, the presented
+// pixel brings this frame's scene with it, and every HUD element carried a halo of the real frame's background over the
+// made frame's moved one. So T is learned: the HUD stays where it is while the scene behind it moves, so from one frame to
+// the next D1 - D0 = T * (S1 - S0); the fit (least squares over the colour's channels, kept from frame to frame) gives T,
+// and B = D1 - T * S1. A pixel whose T is not known yet, or no longer explains this frame (the HUD changed: a count, a
+// prompt, the hearts beating), is unknown, and the made frame takes the presented pixel there, as before
+// (shaders/fg_hud_composite.comp lays B + T * the made frame's scene). In the picture's own encoding: the game's blending is.
+// (tests/test_fsr3fi_hud_layer.py compiles hud_fit as C++, and makes fg_hud_layer_comp_spv.h: --write)
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D before;        // this frame's picture before the HUD (S1)
+layout(binding = 1) uniform sampler2D after;         // and as presented, the HUD on it (D1)
+layout(binding = 2) uniform sampler2D prev_before;   // the frame before's (S0)
+layout(binding = 3) uniform sampler2D prev_after;    // (D0)
+layout(binding = 4, rgba16f) uniform image2D fit;    // the fit, kept: sum dS.dD, sum dS.dS, frames in it
+layout(binding = 5, rgba16f) uniform writeonly image2D layer;   // B and T; T < 0: unknown; (0, 0, 0, 1): no HUD
+// (the crop's corner in the picture and its size, as fg_hud.comp's; prev: 1 the frame before's pictures are bound)
+layout(push_constant) uniform P { ivec2 offset; ivec2 size; int prev; } pc;
+
+const float kKeep = 0.9;          // (of the fit, each frame with something to learn from: the newer frames count more)
+const float kMinChange = 0.02;    // (sum dS.dS: enough change behind the pixel that the picture's rounding is not T)
+const float kMinFrames = 2.0;
+
+float see_through(vec4 f) { return clamp(f.x / f.y, 0.0, 1.0); }
+bool known(vec4 f) { return f.z >= kMinFrames && f.y >= kMinChange; }
+
+// Whether T explains the change from the frame before, to within the picture's precision (B10G11R11: 5 or 6 bits of
+// mantissa: under 1.6% of a value, and four values go in) and a little more
+bool explains(vec3 s1, vec3 d1, vec3 s0, vec3 d0, float t) {
+    const vec3 err = abs((d1 - d0) - t * (s1 - s0));
+    const vec3 lim = 0.025 * (abs(d1) + abs(d0) + t * (abs(s1) + abs(s0))) + 1.0 / 1024.0;
+    return all(lessThanEqual(err, lim));
+}
+
+// One frame of a pixel's fit: f the fit so far, prev whether the frame before's pictures are there. Returns the fit to keep;
+// layer: B and T where the HUD is and T is known, T < 0 where it is unknown, (0, 0, 0, 1) where there is no HUD
+vec4 hud_fit(vec3 s1, vec3 d1, vec3 s0, vec3 d0, bool prev, vec4 f, out vec4 layer) {
+    // (a fit that is not one, the image's memory before it was ever written included: started again. NaN fails each test)
+    if (!(f.y >= 0.0 && f.y <= 1e4 && abs(f.x) <= 1e4 && f.z >= 0.0 && f.z <= 255.0)) f = vec4(0.0);
+    // (no HUD here: the made frame as FSR 3.1 made it. The fit is kept: a faint HUD pixel can come out as the scene's own
+    // value at the picture's precision for a frame, and starting again there flickered it back to the presented pixel)
+    if (s1 == d1) {
+        layer = vec4(0.0, 0.0, 0.0, 1.0);
+        return f;
+    }
+    layer = vec4(0.0, 0.0, 0.0, -1.0);
+    // (no frame before, or no HUD here in it: nothing to learn from or check this frame, unknown)
+    if (!prev || s0 == d0) return f;
+    // (the HUD changed: start again from the next frame, this pair spanning the change)
+    if (known(f) && !explains(s1, d1, s0, d0, see_through(f))) return vec4(0.0);
+    const vec3 ds = s1 - s0, dd = d1 - d0;
+    const float change = dot(ds, ds);
+    if (change > 1e-8) f = vec4(kKeep * f.x + dot(ds, dd), kKeep * f.y + change, min(f.z + 1.0, 255.0), 0.0);
+    if (!known(f)) return f;
+    const float t = see_through(f);
+    // (the frame is the picture clamped at 1, sRGB-encoded: a scene or HUD brighter than that behind the pixel would make
+    // the HUD over the made frame's clamped scene darker than the real frame's. The presented pixel there)
+    if (any(greaterThan(max(s1, d1), vec3(1.0)))) return f;
+    if (explains(s1, d1, s0, d0, t)) layer = vec4(d1 - t * s1, t);
+    return f;
+}
+
+void main() {
+    const ivec2 g = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(g, pc.size))) return;
+    const ivec2 q = g + pc.offset;
+    const vec3 s1 = texelFetch(before, q, 0).rgb, d1 = texelFetch(after, q, 0).rgb;
+    if (s1 == d1) {   // (no HUD, most of the picture: hud_fit's answer without reading the rest; the fit kept, not read)
+        imageStore(layer, g, vec4(0.0, 0.0, 0.0, 1.0));
+        if (pc.prev == 0) imageStore(fit, g, vec4(0.0));   // (no frame before: every pixel's fit starts again, made or not)
+        return;
+    }
+    const vec3 s0 = texelFetch(prev_before, q, 0).rgb, d0 = texelFetch(prev_after, q, 0).rgb;
+    const bool prev = pc.prev != 0;
+    vec4 l;
+    const vec4 f = hud_fit(s1, d1, s0, d0, prev, prev ? imageLoad(fit, g) : vec4(0.0), l);
+    imageStore(fit, g, f);
+    imageStore(layer, g, l);
+}

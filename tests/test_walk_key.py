@@ -147,6 +147,7 @@ static int32_t pad_stick[4], mouse_right[2];
 static int mouse_captured;
 static void pads_read(uint64_t *b, int32_t s[4]) { (void)b; stick_max(s, pad_stick); }
 int hos_mouse_native(void) { return -1; }
+int hos_mouse_in_game_menu(void) { return 0; }   /* (display.c: none of the game's menus has the mouse) */
 void hos_mouse_native_free(int free) { (void)free; }
 void hos_mouse_native_stick(int held) { (void)held; }
 static void mouse_setup(void) {}

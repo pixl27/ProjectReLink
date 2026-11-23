@@ -21,6 +21,9 @@ FIXTURE = r'''
 
 enum VkShaderStageFlagBits : uint32_t {
     VK_SHADER_STAGE_VERTEX_BIT = 1,
+    VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT = 2,
+    VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT = 4,
+    VK_SHADER_STAGE_GEOMETRY_BIT = 8,
     VK_SHADER_STAGE_FRAGMENT_BIT = 16,
     VK_SHADER_STAGE_COMPUTE_BIT = 32,
     VK_SHADER_STAGE_TASK_BIT_EXT = 64,
@@ -29,17 +32,29 @@ enum VkShaderStageFlagBits : uint32_t {
     VK_SHADER_STAGE_ALL = 0x7fffffff,
 };
 using VkShaderStageFlags = uint32_t;
+using VkBool32 = uint32_t;
+constexpr VkBool32 VK_FALSE = 0;
+enum VkShaderFloatControlsIndependence { VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL = 1, VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE = 2 };
 constexpr uint32_t VK_DRIVER_ID_AMD_PROPRIETARY = 1;
-constexpr bool VK_FALSE = false;
+bool float16_shaders() { return true; }
 constexpr uint32_t VK_DRIVER_ID_MESA_RADV = 3;   // (the RADV branch of the fragment shuffle fallback)
 struct {
     uint32_t sg32_stages = 0, subgroup_size = 32, subgroup_max = 32, driver_id = 0;
+    uint32_t max_workgroup_subgroups = 32;   // (pins_32: 32-lane subgroups cover the 64 invocations profile_pinned assumes)
+    VkShaderStageFlags subgroup_stages = 0xff;   // (make_profile: subgroups in every stage, float modes and 64-bit atomics on)
+    struct {
+        VkShaderFloatControlsIndependence denormBehaviorIndependence = VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL,
+                                          roundingModeIndependence = VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL;
+        VkBool32 shaderSignedZeroInfNanPreserveFloat16 = 1, shaderSignedZeroInfNanPreserveFloat32 = 1,
+                 shaderDenormPreserveFloat32 = 1, shaderDenormFlushToZeroFloat32 = 1;
+    } float_controls;
     struct {
         bool shaderFloat16 = true;   // (k10: f16 lowered where the GPU has none; here it has)
         // (make_profile: storage image and texel buffer arrays indexed nonuniformly where the GPU can)
         bool shaderStorageImageArrayNonUniformIndexing = true, shaderUniformTexelBufferArrayNonUniformIndexing = true,
              shaderStorageTexelBufferArrayNonUniformIndexing = true;
         bool shaderInt8 = true;   // (make_profile: 8-bit integers where the GPU has them)
+        VkBool32 shaderBufferInt64Atomics = 1;
     } vk12;
     struct { bool shaderInt16 = true; } features;   // (and 16-bit)
     bool float_atomic_add = false;
@@ -136,9 +151,10 @@ void check_stamp(uint32_t size, uint32_t pinned, bool workaround, bool forced) {
 }
 '''
     internal = (VK / "vk_internal.h").read_text(encoding="utf-8")
-    fixture = (FIXTURE + section(internal, "inline uint64_t storage_binding_align()", "/// A range of guest memory")
+    fixture = (FIXTURE + section(internal, "inline bool pins_32(", "/// (hookshot) Where a storage buffer binding starts")
+               + section(internal, "inline uint64_t storage_binding_align()", "/// A range of guest memory")
                + section(shader, "Shader::Profile make_profile(", "Shader::HostTranslateInfo host_info()")
-               + section(shader, "const Shader::Profile& profile()", "const std::vector<Code>& codes_of(")
+               + section(shader, "const Shader::Profile& profile()", "const std::vector<SharedCode>& codes_of(")
                + section(warp, "Id HostThreadId(", "Id GuestLane(")
                + section(warp, "bool UseShuffleFallback(", "Id ShuffleAbsolute(") + check_stamp + CASES)
     with tempfile.TemporaryDirectory(prefix="hookshot-subgroup-profile-") as tmp:
@@ -165,7 +181,7 @@ void check_stamp(uint32_t size, uint32_t pinned, bool workaround, bool forced) {
         env = {k: v for k, v in os.environ.items() if k not in ("RX_VK_WARP64", "RX_VK_FRAG_SHUFFLE_FALLBACK")}
         for device, expected, overrides in cases:
             subprocess.run([str(exe), *map(str, device + expected)], env=env | overrides, check=True, timeout=10)
-    assert "EmitSPIRV(profile_pinned(), rt, t->program, bindings)" in shader
+    assert "EmitSPIRV(profile_pinned(uint64_t(wg[0]) * wg[1] * wg[2]), rt, t->program, bindings)" in shader
     for stage in ("TASK", "MESH"):
         assert f"fallback ? profile_pinned() : profile_graphics(VK_SHADER_STAGE_{stage}_BIT_EXT)" in shader
     for start, end in (("Id ShuffleRelative(", "Id BroadcastLane("), ("Id EmitShuffleIndex(", "Id EmitShuffleUp("),

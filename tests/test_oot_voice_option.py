@@ -31,6 +31,8 @@ from pathlib import Path
 RUN_ALL_ARGS = ["--cc", "gcc"]
 
 ROOT = Path(__file__).resolve().parents[1]
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(ROOT / "gpu" / "vk" / "compat" / "hookshot_env.h")
 sys.path.insert(0, str(ROOT / "nx2"))
 import oot_patches  # noqa: E402
 
@@ -227,7 +229,7 @@ def main():
                 (tmp / "oot_voice.c").write_text((ROOT / "host" / "oot_voice.c").read_text(encoding="utf-8"), encoding="utf-8")
                 sources += [str(tmp / "oot_voice.c"), "-DHOOKED"]
             exe = tmp / ("fixture.exe" if os.name == "nt" else "fixture")
-            subprocess.run([cc, "-std=gnu11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", str(tmp)] + sources + ["-o", str(exe)],
+            subprocess.run([cc, "-std=gnu11", "-O1", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", "-I", str(tmp)] + sources + ["-o", str(exe)],
                            check=True)
             env = {k: v for k, v in os.environ.items() if k != "HOS_VOICE_OPTION_FOLLOW"}
             for mode, extra in (("", {}), ("off", {"HOS_VOICE_OPTION_FOLLOW": "0"})):

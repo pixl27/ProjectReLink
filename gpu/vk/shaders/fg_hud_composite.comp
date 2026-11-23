@@ -1,0 +1,37 @@
+#version 450
+// Frame generation (vk_framegen.cpp fsr3fi_frames): this frame's HUD over a frame AMD FSR 3.1 made (#1565). FSR 3.1 made it
+// from the pictures before the HUD alone (its present given as the HUD-less colour: it lays nothing over it), so it is the
+// scene, moved. Where the HUD's see-through amount is known (shaders/fg_hud_layer.comp: B, the HUD's own colour, and T), the
+// HUD goes over the made frame's own scene, B + T * scene, as the game drew it over its picture: its glows, shadows and faint
+// icons show the made frame's background, not a halo of the real frame's. Where T is unknown, the frame as presented, as
+// before. In the picture's encoding: the frame is the picture sRGB-encoded (pq: the native HDR picture, encoded already).
+// (tests/test_fsr3fi_hud_layer.py compiles hud_over as C++, and makes fg_hud_composite_comp_spv.h: --write)
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0, rgba8) uniform image2D made;   // a made frame (the set's copy of it), written over in place
+layout(binding = 1) uniform sampler2D shown;       // the game's frame as presented (fg_copy's crop, RGBA8)
+layout(binding = 2) uniform sampler2D layer;       // fg_hud_layer.comp's B and T, the same crop
+layout(push_constant) uniform P { ivec2 size; int pq; } pc;
+
+float srgb1(float v) {
+    v = clamp(v, 0.0, 1.0);
+    return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+vec3 srgb(vec3 v) { return vec3(srgb1(v.r), srgb1(v.g), srgb1(v.b)); }
+float linear1(float v) { return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4); }
+vec3 linear(vec3 v) { return vec3(linear1(v.r), linear1(v.g), linear1(v.b)); }
+
+// A made pixel with the HUD over it: made, FSR 3.1's (the scene, moved); shown, the presented frame's; l, B and T
+vec3 hud_over(vec3 made, vec3 shown, vec4 l, bool pq) {
+    if (l.a < 0.0) return shown;   // (unknown: the presented pixel whole, as before)
+    if (pq) return clamp(l.rgb + l.a * made, 0.0, 1.0);
+    return srgb(l.rgb + l.a * linear(made));
+}
+
+void main() {
+    const ivec2 g = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(g, pc.size))) return;
+    const vec4 l = texelFetch(layer, g, 0);
+    if (l == vec4(0.0, 0.0, 0.0, 1.0)) return;   // (no HUD: FSR 3.1's pixel, untouched)
+    const vec3 m = imageLoad(made, g).rgb;
+    imageStore(made, g, vec4(hud_over(m, texelFetch(shown, g, 0).rgb, l, pc.pq != 0), 1.0));
+}

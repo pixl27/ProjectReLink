@@ -71,7 +71,7 @@ static int native_on(void) {
     static const char *env;
     static int looked;
     if (!looked) looked = 1, env = getenv("HOS_MOUSE_NATIVE");
-    return env ? atoi(env) != 0 : rx_option(6, 0) == 1;   /* (2: Off) */
+    return env ? !env_value_off(env) : rx_option(6, 0) == 1;   /* (2: Off) */
 }
 
 static int invert_y(void) {

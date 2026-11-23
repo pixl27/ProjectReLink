@@ -169,7 +169,7 @@ static void fps_refresh(void) {
         const char *e = getenv("HOS_FPS_MAX");
         env = e ? fps_of(atoi(e)) : 0;
         start = hos_ini_option("frame_rate_cap", 0);
-        movie_pace = !(getenv("HOS_MOVIE_PACE") && !atoi(getenv("HOS_MOVIE_PACE")));   /* (0: the movie pacing off) */
+        movie_pace = env_on_or("HOS_MOVIE_PACE", 1);   /* (0: the movie pacing off) */
     }
     const int i = env ? 0 : rx_option(HOS_OPT_FPS_CAP, start);
     const int row = env ? env : fps_of(caps[i >= 0 && i < CAPS ? i : 0]);
@@ -211,7 +211,7 @@ int hos_vi_native_interval(Ctx *c, int requested) {
        as it is ready, 60 at most; the game still reads back its own interval. HOS_GAME_INTERVAL=1, or Game speed Per frame:
        paced to the game's interval, as before (the Per frame row is honored only at a cap of 60) */
     static int game_interval = -1;
-    if (game_interval < 0) game_interval = getenv("HOS_GAME_INTERVAL") && atoi(getenv("HOS_GAME_INTERVAL")) != 0;
+    if (game_interval < 0) game_interval = env_on("HOS_GAME_INTERVAL");
     int rx_option(int id, int otherwise);
     const int clamped = requested < 1 ? 1 : requested > 4 ? 4 : requested;
     present_interval = game_interval || (!rx_option(0, 1) && fps_max() == 60) ? clamped : 1;
@@ -342,7 +342,7 @@ uint32_t hos_movie_frames(uint64_t player) {
     uint32_t n = 1;
     memcpy(&secs, &bits, 4);
     AcquireSRWLockExclusive(&lock);
-    if (timed < 0) timed = !(getenv("HOS_FPS_MOVIE") && !atoi(getenv("HOS_FPS_MOVIE")));
+    if (timed < 0) timed = env_on_or("HOS_FPS_MOVIE", 1);
     if (timed) {
         int i = 0;
         while (i < PLACES && carry[i].player != player) i++;
@@ -367,16 +367,78 @@ uint32_t hos_movie_frames(uint64_t player) {
     ReleaseSRWLockExclusive(&lock);
     return n;
 }
+/* (hookshot) Whether the carries below keep the fractions of the game's step per counter: while the frames' own time is the step
+   (a cap other than 60), and at a cap of 60 while the rate the game was given (+0x2c8, realtime_step's) makes a step 60 / rate
+   that is not a whole frame (HOS_FRAME_CARRY, on). 46 fps steps 1.30, and the game's cuts counted 46 whole frames a second, not
+   60: the time of day, the water's ripples, the floor web and the Scarecrow's Song ran at 77 %. A rate of 60, 30, 20 or 15 (steps
+   1, 2, 3, 4), Per frame's 60, and a cap above 60 without the frames' time (HOS_FPS_STEP=0) are cut as the game cuts them, as
+   before. The rate is read where the game reads it, so the decision follows the step the game makes from it */
+static int carry_fractions(void) {
+    if (__atomic_load_n(&hos_frame_seconds_bits, __ATOMIC_RELAXED) != 0) return 1;
+    static int on = -1;   /* (read by the game's threads) */
+    int v = __atomic_load_n(&on, __ATOMIC_RELAXED);
+    if (v < 0) v = env_on_or("HOS_FRAME_CARRY", 1), __atomic_store_n(&on, v, __ATOMIC_RELAXED);
+    const uint64_t mod = hos_gfx_module;
+    if (!v || !mod || fps_now != 60) return 0;
+    const int rate = __atomic_load_n((const int *)GP(mod + 0x2c8), __ATOMIC_RELAXED);
+    return rate >= 15 && rate <= 60 && 60 % rate != 0;
+}
 /* (nx2/oot_patches.py patch_whole_frames) the whole frames a game counter at `at` takes for an amount of the frame step (its
    float's bits): with the frames' own time as the step, their fractions carried per counter; else cut as the game cuts it */
 #include "frame_whole.h"
 static FrameWhole frame_whole_state;
 static SRWLOCK frame_whole_lock = SRWLOCK_INIT;   /* (the game's update threads) */
+/* (HOS_FPS_LOG, every 3000 calls: the whole frames the counters took against the step they were handed, 1.000 while their
+   fractions are kept, under 1 while they are cut: (int)(2 * 1.30) / 2.6 = 0.77 for the time of day at 46 fps. Under the lock) */
+static void whole_seen(uint32_t amount_bits, uint32_t times, uint32_t whole, int carry) {
+    static int log_on = -1;
+    static double asked;
+    static uint64_t given, calls;
+    if (log_on < 0) log_on = env_on("HOS_FPS_LOG");
+    float amount;
+    memcpy(&amount, &amount_bits, 4);
+    if (!log_on || !(amount > 0.0f) || amount >= 2147483648.0f) return;
+    asked += (double)amount * times, given += whole;
+    if (++calls % 3000) return;
+    hos_log("vi: whole-frame counters took %llu whole frames for %.1f of the step (%.3f), fractions %s", (unsigned long long)given,
+            asked, given / asked, carry ? "kept" : "cut");
+    asked = 0, given = 0;
+}
 uint32_t hos_frame_whole(uint64_t at, uint32_t amount_bits) {
     AcquireSRWLockExclusive(&frame_whole_lock);
-    const uint32_t whole = frame_whole(&frame_whole_state, at, amount_bits, __atomic_load_n(&hos_frame_seconds_bits, __ATOMIC_RELAXED) != 0);
+    const int carry = carry_fractions();
+    const uint32_t whole = frame_whole(&frame_whole_state, at, amount_bits, carry);
+    whole_seen(amount_bits, 1, whole, carry);
     ReleaseSRWLockExclusive(&frame_whole_lock);
     return whole;
+}
+/* (the same for a counter that runs `times` substeps a frame: the whole substeps, so a frame above 60 fps runs some of them
+   instead of all or none) */
+uint32_t hos_frame_whole_times(uint64_t at, uint32_t amount_bits, uint32_t times) {
+    AcquireSRWLockExclusive(&frame_whole_lock);
+    const int carry = carry_fractions();
+    const uint32_t whole = frame_whole_times(&frame_whole_state, at, amount_bits, times, carry);
+    whole_seen(amount_bits, times, whole, carry);
+    ReleaseSRWLockExclusive(&frame_whole_lock);
+    return whole;
+}
+/* (nx2/oot_patches.py patch_loop_steps, patch_loop_pose) the step of an animation entry's clock, and the time a skeleton is drawn at,
+   for a loop of one frame or less while the frames' own time is the step: whole frames, and the loop's start (host/loop_step.h,
+   issue 988: the frozen Zoras twitched above a 60 cap), and at a cap of 60 while the step is not a whole frame (carry_fractions).
+   Anything else, and a whole step, as the game has it. */
+#include "loop_step.h"
+static LoopStep loop_step_state;
+static SRWLOCK loop_step_lock = SRWLOCK_INIT;   /* (the game's update threads) */
+uint32_t hos_loop_step(uint64_t at, uint32_t step_bits, uint32_t start_bits, uint32_t end_bits) {
+    const int timed = carry_fractions();
+    if (!timed || !loop_is_pose(start_bits, end_bits)) return step_bits;   /* (most entries: no lock) */
+    AcquireSRWLockExclusive(&loop_step_lock);
+    const uint32_t whole = loop_step(&loop_step_state, at, step_bits, start_bits, end_bits, timed);
+    ReleaseSRWLockExclusive(&loop_step_lock);
+    return whole;
+}
+uint32_t hos_loop_pose(uint32_t time_bits, uint32_t start_bits, uint32_t end_bits) {
+    return loop_pose(time_bits, start_bits, end_bits, carry_fractions());
 }
 volatile uint64_t hos_res_module = 0;   /* (f_831f3200's object, whose +0xe5c is the 3D's scale: nx2/oot_patches.py) */
 /* Quantize the time step to the engine's integer nominal rate. Keep debt from a short frame even when the minimum
@@ -439,6 +501,21 @@ static void realtime_step(int64_t now) {
     }
     const uint64_t mod = hos_gfx_module;
     if (!mod) return;
+    {   /* (hookshot) The game's alternating pacing mode: bit 0 of the graphics module's +0x24f, asked for at +0x24e
+           (2: on, 1: off; f_80670d00 from its config's +0xa30 bit 0, carried out by f_8348c680). While it is on, bit 1 flips every
+           frame (f_8348c680) and the frame wait (f_8042cd20) takes turns: a frame with both bits sleeps to its frame mark (+0x108)
+           plus 1 / the limiter (+0xfc), the next waits for the vsync event (vsync_main, free-running). The frame-time
+           oscillation that set in after an ocarina song or a zone change at a cap of 60 and left only at a reload is suspected
+           to be this mode: logged when it changes, so a log shows whether it is */
+        static int mode_seen = -1;
+        const int mode = *(const uint8_t *)GP(mod + 0x24f) & 1;
+        if (mode != mode_seen) {
+            if (mode_seen >= 0 || mode)
+                hos_log("vi: the game's alternating frame pacing (+0x24f bit 0) %s (asked %d), at cap %d", mode ? "on" : "off",
+                        *(const uint8_t *)GP(mod + 0x24e), fps_max());
+            mode_seen = mode;
+        }
+    }
     {   /* (hookshot) The frame limiter (f_8042cd20 sleeps to 1 / +0xfc). The engine's adaptive controller writes +0xfc when
            variable refresh is on (+0x231, f_804fc0f0), any rate from 40 up. HOS_FPS_TARGET=<fps>: that rate kept, 0: left alone;
            HOS_FPS_LOG=1: what the game asks for, every 300 presents */
@@ -447,9 +524,10 @@ static void realtime_step(int64_t now) {
         if (target < 0) target = getenv("HOS_FPS_TARGET") ? atoi(getenv("HOS_FPS_TARGET")) : 0, log_on = env_on("HOS_FPS_LOG");
         int *limit = (int *)GP(mod + 0xfc);
         if (log_on && !(n++ % 300))
-            hos_log("vi: frame limiter %d, vrr %d %d, nominal %d, controller +0x58.. %d %d %d %d", *limit, *(uint8_t *)GP(mod + 0x231),
-                    *(uint8_t *)GP(mod + 0x232), *(int *)GP(mod + 0x2c8), *(int *)GP(mod + 0x270 + 0x58), *(int *)GP(mod + 0x270 + 0x28),
-                    *(int *)GP(mod + 0x270 + 0x2c), *(int *)GP(mod + 0x270 + 0x30));
+            hos_log("vi: frame limiter %d, vrr %d %d, nominal %d, controller +0x58.. %d %d %d %d, pacing mode %d (asked %d)", *limit,
+                    *(uint8_t *)GP(mod + 0x231), *(uint8_t *)GP(mod + 0x232), *(int *)GP(mod + 0x2c8), *(int *)GP(mod + 0x270 + 0x58),
+                    *(int *)GP(mod + 0x270 + 0x28), *(int *)GP(mod + 0x270 + 0x2c), *(int *)GP(mod + 0x270 + 0x30),
+                    *(uint8_t *)GP(mod + 0x24f), *(uint8_t *)GP(mod + 0x24e));
         if (log_on && !((n - 1) % 300) && hos_step_probe) {   /* (game speed: the game clock's 1/60 s units a second of wall time, 60.0 at speed 1) */
             static double clock_before;
             static int64_t at_before;
@@ -509,7 +587,7 @@ static void realtime_step(int64_t now) {
        At 30 the same hook gives two 60ths per frame to the game, sound, movie cues and counters.
        HOS_FPS_STEP=0, or a lift without the hook (hos_step_probe unset): the rate up to the cap, as before */
     static int timed_step = -1;
-    if (timed_step < 0) timed_step = !(getenv("HOS_FPS_STEP") && !atoi(getenv("HOS_FPS_STEP")));
+    if (timed_step < 0) timed_step = env_on_or("HOS_FPS_STEP", 1);
     const int timed = fps_max() != 60 && timed_step && hos_step_probe;
     if (timed) {
         const double secs = sum / count, shortest = 1.0 / (fps_max() > 240 ? fps_max() : 240);

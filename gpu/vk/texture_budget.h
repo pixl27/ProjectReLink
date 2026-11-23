@@ -36,12 +36,13 @@ inline uint64_t dedicated_bytes(uint64_t allowed, uint64_t vram, uint64_t ram) {
 }
 
 /// An integrated GPU's share of the allowance, before texture_frame's caps by the system's RAM (2.5 GB with 16 GB, the Steam
-/// Deck's): 45% of it up to 8.5 GB, else 70%, at most 6 GB, as before; and Minimum's 2.2 GB where the GPU's heap is 4.5 GB or
-/// less, as the preset every integrated GPU started on gave it there. Its memory is the system's, which the game shares
-/// (vk_texture.cpp)
-inline uint64_t integrated_bytes(uint64_t allowed, uint64_t vram) {
+/// Deck's): 45% of it up to 8.5 GB, else 70%, at most 6 GB (8 GB when ASTC is decoded on the CPU, as RGBA8 textures take ~4x
+/// the space of BC3); and Minimum's 2.2 GB where the GPU's heap is 4.5 GB or less, as the preset every integrated GPU started on
+/// gave it there. Its memory is the system's, which the game shares (vk_texture.cpp)
+inline uint64_t integrated_bytes(uint64_t allowed, uint64_t vram, bool astc_on_cpu = false) {
     if (!allowed) return 4096 * kMB;
-    uint64_t b = std::min<uint64_t>(allowed / 100 * (allowed <= 8704 * kMB ? 45 : 70), 6144 * kMB);
+    const uint64_t cap = astc_on_cpu ? 8192 * kMB : 6144 * kMB;
+    uint64_t b = std::min<uint64_t>(allowed / 100 * (allowed <= 8704 * kMB ? 45 : 70), cap);
     if (mirror_rule::small_card(vram)) b = std::min<uint64_t>(b, 2200 * kMB);
     return b;
 }

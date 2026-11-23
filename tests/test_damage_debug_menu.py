@@ -45,6 +45,7 @@ def main():
     source += 'const char* hn_threaded(int, int) { return nullptr; }\n'
     source += 'const char* hn_robust(int, int) { return nullptr; }\n'
     source += 'const char* hn_astc_rgba8(int, int) { return nullptr; }\n'
+    source += 'const char* hn_present_queue(int, int) { return nullptr; }\n'
     source += 'const char* hn_intel_compiles(int, int) { return nullptr; }\n'
     source += 'Row rows[] = {' + ',\n'.join(entries) + '};\n'
     source += 'constexpr int kRows = sizeof rows / sizeof rows[0];\n'
@@ -58,9 +59,11 @@ bool laptop_row() { return false; }   // (a dedicated card: no Set up for a weak
 int upscalers_available() { return 1; }
 constexpr int DLSS_OK = 0;
 int dlss_why() { return 1; }
+int upscaler() { return 0; }   // (the game's own: the DLAA before the bloom row hidden)
 namespace ur {
 bool upscaler_shown(int n) { return n > 1; }
 bool model_shown(bool available) { return available; }
+bool pre_bloom_shown(bool dlss_ok, int upscaler) { return dlss_ok && (upscaler == 1 || upscaler == 2); }
 }
 '''
     for name in ("bool cheats_on(", "bool is_laptop_row(", "bool row_shown(", "int tab_row_count(", "int tab_row_to_global(",
@@ -128,7 +131,7 @@ int main() {
         const int n = debug_rows(order, &dev, &heading);
         assert(heading >= 0);
         assert(dev == (env || enabled ? (int)std::size(expected) : kDebugGeneralRows));
-        assert(n == dev + 8); // Only the existing Developer rows follow (Uncap detail sliders, Frame pacing and Threaded rendering among them).
+        assert(n == dev + 9); // Only the existing Developer rows follow (Uncap detail sliders, Present queue, Frame pacing and Threaded rendering among them).
         for (int i = 0; i < dev; ++i) {
             const Row& row = rows[tab_row_to_global(TAB_DEBUG, order[i])];
             assert(!std::strcmp(row.name, expected[i]));

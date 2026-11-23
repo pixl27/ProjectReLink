@@ -6,19 +6,42 @@
 // there, 1 elsewhere. The patched interpolation (scripts/fsr3_shaders.py FI_PATCHES) keeps those pixels where they are.
 // And the same crop of the picture before the HUD: FSR 3.1's own HUD-less colour (vk_fsr3fi.h Inputs::present), which it
 // interpolates instead, so no HUD of either frame is moved with the scene, and on which it lays this frame's HUD after.
+// (tests/test_fsr3fi_hudless_colour.py compiles hudless_colour as C++, and makes fg_hud_comp_spv.h: --write)
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(binding = 0) uniform sampler2D frame;    // the game's frame as fg_copy cropped it (RGBA8)
 layout(binding = 1) uniform sampler2D before;   // the picture as the upscale left it, before the HUD
 layout(binding = 2) uniform sampler2D after;    // the picture as presented, the HUD on it
 layout(binding = 3, rgba8) uniform writeonly image2D dst;
 layout(binding = 4, rgba8) uniform writeonly image2D hudless;   // the picture before the HUD, cropped as dst
-layout(push_constant) uniform P { ivec2 offset; ivec2 size; } pc;   // (the crop's corner in the picture, and its size)
+// (the crop's corner in the picture, and its size; pq: 1 the picture is the native HDR one, already encoded)
+layout(push_constant) uniform P { ivec2 offset; ivec2 size; int pq; } pc;
+
+// The sRGB encode of a linear value, clamped as the RGBA8 frame is
+float srgb1(float v) {
+    v = clamp(v, 0.0, 1.0);
+    return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+vec3 srgb(vec3 v) { return vec3(srgb1(v.r), srgb1(v.g), srgb1(v.b)); }
+
+// A pixel's HUD-less colour: scene, the picture before the HUD; drawn, the same picture as presented; shown, the frame's
+// pixel. It has to be the presented frame's to the bit wherever nothing was drawn over the picture: FSR 3.1 lays the
+// presented frame over its made one wherever the two differ at all (ffx_frameinterpolation_inpainting.h, HUD-less mode).
+// The picture is in linear light (B10G11R11) and the frame is presented sRGB-encoded (RGBA8): the copy taken as it was
+// differed everywhere, and every made frame came out as the game's frame itself (FSR 3.1 at 4x showed each game frame four
+// times: RTX 3090, 42 fps, Upscaler Off, the made frames the same as the game's to the bit). Under the HUD the copy,
+// encoded as the frame is (sRGB; pq: the native HDR picture, encoded already): left linear, it was far darker than the
+// frame, a dark ring around the HUD's see-through parts and the effects drawn after the upscale (the fairy's glow)
+vec3 hudless_colour(vec3 scene, vec3 drawn, vec3 shown, bool pq) {
+    if (scene == drawn) return shown;
+    return pq ? clamp(scene, 0.0, 1.0) : srgb(scene);
+}
+
 void main() {
     const ivec2 g = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(g, pc.size))) return;
     const ivec2 q = g + pc.offset;
-    const vec3 scene = texelFetch(before, q, 0).rgb;
-    const bool hud = any(notEqual(scene, texelFetch(after, q, 0).rgb));
-    imageStore(dst, g, vec4(texelFetch(frame, g, 0).rgb, hud ? 0.0 : 1.0));
-    imageStore(hudless, g, vec4(scene, 1.0));
+    const vec3 scene = texelFetch(before, q, 0).rgb, drawn = texelFetch(after, q, 0).rgb;
+    const vec3 shown = texelFetch(frame, g, 0).rgb;
+    imageStore(dst, g, vec4(shown, scene != drawn ? 0.0 : 1.0));
+    imageStore(hudless, g, vec4(hudless_colour(scene, drawn, shown, pc.pq != 0), 1.0));
 }

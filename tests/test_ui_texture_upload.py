@@ -1,7 +1,11 @@
 """Run the custom ImGui texture uploader with coherent and noncoherent host caches. headless: with no window (RX_VK_SHOT_MENU's
-overlays, recorded on the replay's timeline) what it lets go also waits for the timeline value past its last use."""
+overlays, recorded on the replay's timeline) what it lets go also waits for the timeline value past its last use. In a window
+(the other cases, ring-destroy) what it lets go, a staging buffer or a texture, lives through every present that may still be
+on the GPU: present_image's ring of frame slots (vk_replay.cpp present_slots_for, up to vk_internal.h's kPresentSlotsMax
+while frame generation runs), whose wait for a slot is all that tells the CPU a copy is done."""
 import argparse
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import sys
@@ -25,11 +29,18 @@ def main():
     draw = (a.source / "third_party/imgui/imgui_draw.cpp").read_text(encoding="utf-8")
     state = source[source.index("struct Tex {"):source.index("void reap(bool all)")]
     actual = "\n".join(block(source, marker) for marker in ["void pixels(", "void update_texture(", "void reap(bool all)"])
+    internal = (a.source / "gpu/vk/vk_internal.h").read_text(encoding="utf-8")
+    replay = (a.source / "gpu/vk/vk_replay.cpp").read_text(encoding="utf-8")
+    slots_max = re.search(r"constexpr int kPresentSlotsMax = (\d+);", internal)
+    assert slots_max, "gpu/vk/vk_internal.h: constexpr int kPresentSlotsMax"
+    ring = (f"constexpr int kPresentSlotsMax = {slots_max.group(1)};\n" +
+            block(replay, "int present_slots_for(", where="gpu/vk/vk_replay.cpp"))
     fixture = (ROOT / "tests/ui_texture_upload_test.cpp").read_text(encoding="utf-8")
-    fixture = fixture.replace("/* STATE */", state).replace("/* UPLOADER */", actual)
+    fixture = fixture.replace("/* RING */", ring).replace("/* STATE */", state).replace("/* UPLOADER */", actual)
     fixture = fixture.replace("/* DESTROY_PIXELS */", block(draw, "void ImTextureData::DestroyPixels()"))
     cases = ["rgba-create", "alpha-create", "rgba-dirty", "alpha-dirty", "rgba-fallback", "alpha-fallback",
-             "failure-buffer", "failure-image", "failure-view", "failure-descriptor", "destroy", "no-backend", "empty", "headless"]
+             "failure-buffer", "failure-image", "failure-view", "failure-descriptor", "destroy", "ring-destroy", "no-backend",
+             "empty", "headless"]
     if a.case != "all":
         assert a.case in cases
         cases = [a.case]

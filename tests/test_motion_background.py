@@ -21,6 +21,8 @@ import tempfile
 RUN_ALL_ARGS = ["--cc", "gcc"]
 
 ROOT = Path(__file__).resolve().parents[1]
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(ROOT / "gpu" / "vk" / "compat" / "hookshot_env.h")
 
 # (front, HOS_INPUT_BACKGROUND or None, the menu's row, the Insert menu open, whether motion counts)
 CASES = [
@@ -83,7 +85,7 @@ int main(void) {{
     with tempfile.TemporaryDirectory() as tmp:
         c, exe = Path(tmp) / "t.c", Path(tmp) / "t"
         c.write_text(fixture)
-        r = subprocess.run([args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", str(c), "-o", str(exe)],
+        r = subprocess.run([args.cc, "-std=c11", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", str(c), "-o", str(exe)],
                            capture_output=True, text=True)
         if r.returncode:
             sys.exit("FAIL: compile\n" + r.stderr)

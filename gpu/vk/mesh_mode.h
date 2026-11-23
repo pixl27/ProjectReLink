@@ -34,6 +34,20 @@ inline Choice choose(const char* env, const char* force_fallback) {
     return {0, "the default"};
 }
 
+/// The device line's mesh shaders field (vk_main.cpp): what the driver offers and what this run does, apart. A Steam Deck's
+/// RADV offers VK_EXT_mesh_shader, and Automatic runs RADV on the compute path all the same (its own can hang the GPU):
+/// "mesh shaders no" there was read as a driver without them. offered: the driver has task and mesh shaders
+/// (dev.mesh_capable); used: this run draws with them (dev.mesh_shader); mode: choose()'s; radv: Automatic took the
+/// compute path for RADV.
+/// No ';' in it: the line's readers take the device from the text before "; mesh shaders"
+inline const char* device_note(bool offered, bool used, int mode, bool radv) {
+    if (!offered) return "not offered by the driver";
+    if (used) return "used";
+    if (radv) return "offered by the driver but not used (Automatic runs RADV on the compute path: RX_VK_MESH_SHADERS=native to try)";
+    if (mode == 2) return "offered by the driver but not used (Compute chosen)";
+    return "offered by the driver but not used";
+}
+
 /// A line of hookshot_options.ini: the old row's mesh_shaders= with Native (1) or Compute (2), which is no longer
 /// read (the log says so once, and the menu's next save drops the line). *value: what it held
 inline bool old_ini_choice(const char* line, int* value) {

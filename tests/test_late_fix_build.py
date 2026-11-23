@@ -678,6 +678,9 @@ def main():
                .replace('@FORGET@', block(text, 'void shadows_forget_written() {')))
     env = {k: v for k, v in os.environ.items()
            if k not in ('RX_VK_LATE_FIX', 'RX_VK_PARALLEL')}
+    # (these cases count a late page's own stamp block; the rest of its pool's, made ahead by default, are
+    # tests/test_late_stamps_ahead.py's)
+    env['RX_VK_LATE_STAMPS_AHEAD'] = '0'
     with tempfile.TemporaryDirectory(prefix='late-fix-build-') as tmp:
         src = Path(tmp) / 'late_fix_build.cpp'
         exe = Path(tmp) / 'late_fix_build.exe'

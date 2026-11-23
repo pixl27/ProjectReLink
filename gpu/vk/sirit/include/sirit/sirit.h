@@ -1300,6 +1300,9 @@ public:
     // the resulting value is undefined.
     Id OpGroupNonUniformBallotFindLSB(Id result_type, Id scope, Id value);
 
+    // True for one active invocation in the subgroup.
+    Id OpGroupNonUniformElect(Id result_type, Id scope);
+
     // Result is the Value of the invocation identified by the id Id to all active invocations in
     // the group.
     Id OpGroupNonUniformBroadcast(Id result_type, Id scope, Id value, Id id);

@@ -3,7 +3,7 @@
 device_policy() is compiled with the Vulkan headers and run on the facts of PCs players have: NVIDIA's driver on Linux
 and Windows (4, 6, 8 and 24 GB cards), NVK, AMD's Windows driver in its two compiler branches, on a Navi 22 card and on
 the graphics in a Ryzen 7000 desktop CPU, RADV on an RDNA 2 card, on a GCN card and on the Steam Deck, AMDVLK, Intel's
-Windows driver on an integrated GPU with 4 threads and on two Arc cards, ANV, llvmpipe. For each PC the check names
+Windows driver on an integrated GPU with 4 threads and on three Arc cards, ANV, llvmpipe. For each PC the check names
 every field of DevicePolicy: the yes/no fields that are on (every other one must be off) and every number. A rule that
 leaks to a PC it is not for, or a new field no PC here expects, fails by name.
 
@@ -41,14 +41,14 @@ ROOT = Path(__file__).resolve().parents[1]
 VK = ROOT / "gpu" / "vk"
 
 # The yes/no fields, in DevicePolicy's order
-BOOLS = """fetch_bounds nan_bits gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer
+BOOLS = """fetch_bounds nan_bits mesh_fallback_strict_fmul bc_copy_per_layer gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer
 amd_retry_no_optimizer amd_cloth_no_optimizer fault_gate_serial task_mesh_fallback intel_compile_gate compute_builds_serial
 pcache_fetch_lock split_before_draw astc_on_cpu inline_deku_web_loads networks_left_out dma_buf_imports nv_checkpoints
 allowance_at_count_rule
 mirrors ub_snapshot split_ub_flush native_float_add warp64 batch_submits mma_unroll_try global_table_loop occ_copy
 intel_side_by_side_auto fsr4_tune gpu_clock_peak presenter_queue pcache_small_pc small_vram_textures astc_bc_all
-room_in_blocks_rule squeeze_damped linux_hold_caps_budget dlss_cnn auto_render_third rtx rdna4 threaded_auto_cpus
-drop_modules_small_ram""".split()
+room_in_blocks_rule squeeze_damped linux_hold_caps_budget dlss_cnn auto_render_third rtx rdna4 threaded_auto_render
+threaded_auto_recorder drop_modules_small_ram native_zstd_keep_core""".split()
 # The numbers: the field and how the fixture prints it (sizes in whole MB; -1: no limit)
 NUMS = [
     ("equal_depth_bias", "(long long)p.equal_depth_bias"),
@@ -82,7 +82,8 @@ AMD_OLD = "(AMD proprietary shader compiler)"
 
 # The facts' columns, in the fixture's struct D's order:
 #   vendor, device, driver id, driver version, device type, driverInfo, the GPU's name, windows, SteamDeck=1,
-#   VRAM heap MB, allowed at the start MB, RAM MB, CPUs, usable CPUs,
+#   VRAM heap MB, allowed at the start MB, RAM MB, CPUs, usable CPUs, the physical cores among those (SMT siblings once:
+#   Threaded rendering's Auto counts by them, the render thread from 4 and the recorder thread too from 6),
 #   mesh shaders, buffer device addresses, float add, cooperative matrices, NV checkpoints, 16-bit stage inputs,
 #   dynamic indexing of storage buffer arrays, lanes, most lanes, the stages pinned to 32
 # num: the numbers in NUM_NAMES' order:
@@ -93,173 +94,208 @@ AMD_OLD = "(AMD proprietary shader compiler)"
 PCS = [
     dict(name="RTX 3090 (24 GB), NVIDIA's Linux driver, 24 threads",
          facts=(0x10DE, 0x2204, "NVIDIA_PROPRIETARY", 0, "DISCRETE_GPU", "580.105.08", "NVIDIA GeForce RTX 3090", 0, 0,
-                24576, 24000, 32768, 24, 24, 1, 1, 1, 1, 1, 1, 1, 32, 32, 0),
+                24576, 24000, 32768, 24, 24, 12, 1, 1, 1, 1, 1, 1, 1, 32, 32, 0),
          on="inline_deku_web_loads nv_checkpoints allowance_at_count_rule mirrors split_ub_flush native_float_add "
-            "presenter_queue room_in_blocks_rule rtx threaded_auto_cpus",
+            "presenter_queue room_in_blocks_rule rtx threaded_auto_render threaded_auto_recorder",
          num=(0, 0, 0, 1, 85, 4, 11000, 3072, 768, 512, 3000, -1, 256, 24, 64, 32, 97, 5, 6, 4, 8, 6, 4)),
     # (an 8 GB card: every large ASTC texture as BC3, the squeeze damped, 12 blocks at the start and the 32 MB blocks)
     dict(name="RTX 4070 Laptop (8 GB), NVIDIA's Windows driver",
          facts=(0x10DE, 0x2860, "NVIDIA_PROPRIETARY", 0, "DISCRETE_GPU", "581.57", "NVIDIA GeForce RTX 4070 Laptop GPU", 1, 0,
-                8188, 7400, 16200, 16, 16, 1, 1, 1, 1, 1, 1, 1, 32, 32, 0),
+                8188, 7400, 16200, 16, 16, 8, 1, 1, 1, 1, 1, 1, 1, 32, 32, 0),
          on="inline_deku_web_loads nv_checkpoints allowance_at_count_rule mirrors split_ub_flush native_float_add "
-            "presenter_queue astc_bc_all room_in_blocks_rule squeeze_damped rtx threaded_auto_cpus",
+            "presenter_queue astc_bc_all room_in_blocks_rule squeeze_damped rtx threaded_auto_render threaded_auto_recorder",
          num=(0, 0, 0, 1, 85, 4, 4776, 2047, 616, 462, 925, -1, 256, 12, 32, 16, 97, 3, 6, 4, 8, 6, 4)),
     # (a 4 GB card. The rules that ask the vendor take NVK for NVIDIA's compiler: no invariant positions, no fetch bounds,
     # the Deku web's loads inlined, the presenter's queue; the study doubts each. And it doubts the mirrors' 1365 MB here,
     # a third of the card, where mirror_budget.h argues for 256)
     dict(name="GTX 1650 (4 GB), NVK",
          facts=(0x10DE, 0x1F82, "MESA_NVK", 0, "DISCRETE_GPU", "Mesa 26.0.1", "NVIDIA GeForce GTX 1650 (NVK TU117)", 0, 0,
-                4096, 3900, 16000, 8, 8, 0, 1, 0, 0, 0, 1, 1, 32, 32, 0),
+                4096, 3900, 16000, 8, 8, 4, 0, 1, 0, 0, 0, 1, 1, 32, 32, 0),
          on="inline_deku_web_loads dma_buf_imports allowance_at_count_rule mirrors split_ub_flush presenter_queue "
-            "small_vram_textures astc_bc_all room_in_blocks_rule squeeze_damped dlss_cnn drop_modules_small_ram threaded_auto_cpus",
+            "small_vram_textures astc_bc_all room_in_blocks_rule squeeze_damped dlss_cnn threaded_auto_render "
+            "drop_modules_small_ram",
          num=(0, 0, 0, 1, 85, 4, 2200, 1365, 325, 243, 487, 32, 128, 10, 32, 16, 97, 1, 2, 2, 4, 4, 2)),
     # (Navi 22: task + mesh draws on the compute fallback, and with it the retry without the optimizer)
     dict(name="RX 6700 XT, AMD's Windows driver (RDNA 2 compiler)",
          facts=(0x1002, 0x73DF, "AMD_PROPRIETARY", 0x800161, "DISCRETE_GPU", "26.10.1 " + AMD_OLD, "AMD Radeon RX 6700 XT", 1, 0,
-                12272, 11500, 32600, 12, 12, 1, 1, 0, 0, 0, 1, 1, 64, 64, 0xFF),
-         on="fetch_bounds networks_left_out nan_bits gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer "
+                12272, 11500, 32600, 12, 12, 6, 1, 1, 0, 0, 0, 1, 1, 64, 64, 0xFF),
+         on="bc_copy_per_layer fetch_bounds networks_left_out nan_bits mesh_fallback_strict_fmul gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer "
             "amd_retry_no_optimizer amd_cloth_no_optimizer fault_gate_serial task_mesh_fallback allowance_at_count_rule "
-            "mirrors split_ub_flush warp64 fsr4_tune room_in_blocks_rule threaded_auto_cpus",
+            "mirrors split_ub_flush warp64 fsr4_tune room_in_blocks_rule threaded_auto_render threaded_auto_recorder",
          num=(0, 0, 0, 2, 85, 4, 7158, 2048, 768, 512, 1437, -1, 256, 24, 64, 32, 97, 4, 4, 4, 6, 6, 3)),
-    # (the card has the float add, but no run on AMD has shown it right: the loop. The study doubts the fragment shuffles'
-    # fallback and the unoptimized mesh programs on LLPC, where neither was measured)
+    # (the card has the float add, but no run on AMD has shown it right: the loop. RDNA 4 tries the software matrix
+    # multiplies' unrolled forms on AMD's proprietary driver; the study doubts the fragment shuffles' fallback and the
+    # unoptimized mesh programs on LLPC, where neither was measured)
     dict(name="RX 9070 XT, AMD's Windows driver (LLPC)",
          facts=(0x1002, 0x7550, "AMD_PROPRIETARY", 0x800161, "DISCRETE_GPU", "26.10.1 (LLPC)", "AMD Radeon RX 9070 XT", 1, 0,
-                16304, 15300, 32600, 16, 16, 1, 1, 1, 1, 0, 1, 1, 64, 64, 0xFF),
-         on="fetch_bounds networks_left_out gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer amd_cloth_no_optimizer "
-            "fault_gate_serial allowance_at_count_rule mirrors split_ub_flush warp64 fsr4_tune room_in_blocks_rule rdna4 "
-            "threaded_auto_cpus",
+                16304, 15300, 32600, 16, 16, 8, 1, 1, 1, 1, 0, 1, 1, 64, 64, 0xFF),
+         on="bc_copy_per_layer fetch_bounds networks_left_out gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer amd_cloth_no_optimizer "
+            "fault_gate_serial allowance_at_count_rule mirrors split_ub_flush warp64 mma_unroll_try fsr4_tune room_in_blocks_rule rdna4 "
+            "threaded_auto_render threaded_auto_recorder",
          num=(0, 0, 0, 2, 85, 4, 11000, 3072, 768, 512, 1912, -1, 256, 24, 64, 32, 97, 5, 6, 4, 8, 6, 4)),
     # (Compute for its mesh programs, with no Mesa version that ends it, which the study doubts.
     # Corrected: fault_gate_serial is off, as issue 996 is AMD's Windows driver's; by the vendor it was on here)
     dict(name="RX 6800 XT, RADV",
          facts=(0x1002, 0x73BF, "MESA_RADV", 0, "DISCRETE_GPU", "Mesa 26.2.5", "AMD Radeon RX 6800 XT (RADV NAVI21)", 0, 0,
-                16368, 16000, 32000, 16, 16, 1, 1, 1, 0, 0, 1, 1, 64, 64, 0xFF),
+                16368, 16000, 32000, 16, 16, 8, 1, 1, 1, 0, 0, 1, 1, 64, 64, 0xFF),
          on="fetch_bounds networks_left_out gather_offset frag_shuffle_fallback position_invariant dma_buf_imports allowance_at_count_rule mirrors "
-            "split_ub_flush warp64 batch_submits mma_unroll_try fsr4_tune room_in_blocks_rule threaded_auto_cpus",
+            "split_ub_flush warp64 batch_submits mma_unroll_try fsr4_tune room_in_blocks_rule "
+            "threaded_auto_render threaded_auto_recorder",
          num=(0, 2, 0, 1, 85, 4, 11000, 3072, 768, 512, 2000, -1, 256, 24, 64, 32, 97, 5, 6, 4, 8, 6, 4)),
+    # (RDNA 4 on RADV: no batched submits, the gaps between held submits let its clock drop)
+    dict(name="RX 9070 XT, RADV",
+         facts=(0x1002, 0x7550, "MESA_RADV", 0, "DISCRETE_GPU", "Mesa 26.2.6", "AMD Radeon RX 9070 XT (RADV GFX1201)", 0, 0,
+                16304, 15300, 32600, 16, 16, 8, 1, 1, 1, 0, 0, 1, 1, 64, 64, 0xFF),
+         on="fetch_bounds networks_left_out gather_offset frag_shuffle_fallback position_invariant dma_buf_imports allowance_at_count_rule mirrors "
+            "split_ub_flush warp64 mma_unroll_try fsr4_tune room_in_blocks_rule rdna4 "
+            "threaded_auto_render threaded_auto_recorder",
+         num=(0, 2, 0, 1, 85, 4, 11000, 3072, 768, 512, 1912, -1, 256, 24, 64, 32, 97, 5, 6, 4, 8, 6, 4)),
     # (GCN: no batched submits, the phi limit. Its heap is 8192 MB exactly: the small blocks (<= 8 GB) and the large
     # card's 15% of blocks at the start (< 8 GB is the other branch), the two comparators the study names.
     # Corrected: fault_gate_serial is off on RADV)
     dict(name="RX 580 (8 GB), RADV on GCN",
          facts=(0x1002, 0x67DF, "MESA_RADV", 0, "DISCRETE_GPU", "Mesa 26.2.5", "AMD Radeon RX 580 Series (RADV POLARIS10)", 0, 0,
-                8192, 8000, 16000, 8, 8, 0, 1, 1, 0, 0, 0, 1, 64, 64, 0),
+                8192, 8000, 16000, 8, 8, 4, 0, 1, 1, 0, 0, 0, 1, 64, 64, 0),
          on="fetch_bounds networks_left_out gather_offset frag_shuffle_fallback position_invariant dma_buf_imports allowance_at_count_rule mirrors "
             "split_ub_flush warp64 mma_unroll_try fsr4_tune astc_bc_all room_in_blocks_rule squeeze_damped "
-            "drop_modules_small_ram threaded_auto_cpus",
+            "threaded_auto_render drop_modules_small_ram",
          num=(0, 2, 50000, 1, 85, 4, 4778, 2048, 666, 500, 1000, -1, 256, 24, 32, 16, 97, 1, 2, 2, 4, 4, 2)),
     # (corrected: batched submits are on. Vega is GFX9, not GCN 1-4: it has 16-bit stage inputs, which is the one
     # definition of GCN (DeviceFacts::radv_gcn); batch_on's own, no stage pinned to 32 lanes and 64-lane waves, took it
-    # for GCN and left them off. Nothing was measured on Vega either way)
+    # for GCN and left them off. Nothing was measured on Vega either way. Its CPU here has 8 cores without SMT: Threaded
+    # rendering's Auto gives it both threads, where 8 threads of 4 cores (the RX 580's, the same count) get the render thread)
     dict(name="RX Vega 64 (8 GB), RADV on GFX9",
          facts=(0x1002, 0x687F, "MESA_RADV", 0, "DISCRETE_GPU", "Mesa 26.2.5", "AMD Radeon RX Vega (RADV VEGA10)", 0, 0,
-                8176, 7900, 16000, 8, 8, 0, 1, 1, 0, 0, 1, 1, 64, 64, 0),
+                8176, 7900, 16000, 8, 8, 8, 0, 1, 1, 0, 0, 1, 1, 64, 64, 0),
          on="fetch_bounds networks_left_out gather_offset frag_shuffle_fallback position_invariant dma_buf_imports allowance_at_count_rule mirrors split_ub_flush "
             "warp64 batch_submits mma_unroll_try fsr4_tune astc_bc_all room_in_blocks_rule squeeze_damped "
-            "drop_modules_small_ram threaded_auto_cpus",
+            "threaded_auto_render threaded_auto_recorder drop_modules_small_ram",
          num=(0, 2, 0, 1, 85, 4, 4769, 2044, 658, 493, 987, -1, 256, 12, 32, 16, 97, 1, 2, 2, 4, 4, 2)),
     # (no mirrors, so 16 MB chunks; the mirrors' budget is worked out all the same, by the heap. Uniform updates are still
     # written at each part's end and no snapshot is taken, which the study doubts for every GPU without mirrors.
-    # Corrected: fault_gate_serial is off on RADV)
+    # Corrected: fault_gate_serial is off on RADV. Its 4 cores and 8 threads: Threaded rendering's Auto by the 4 cores is the
+    # render thread alone, which the menu then turns off all the same, as the pools have no mirrors)
     dict(name="Steam Deck (LCD), RADV",
          facts=(0x1002, 0x163F, "MESA_RADV", 0, "INTEGRATED_GPU", "Mesa 25.1.0", "AMD Custom GPU 0405 (RADV VANGOGH)", 0, 1,
-                7168, 6800, 14800, 8, 8, 1, 1, 1, 0, 0, 1, 1, 64, 64, 0xFF),
+                7168, 6800, 14800, 8, 8, 4, 1, 1, 1, 0, 0, 1, 1, 64, 64, 0xFF),
          on="fetch_bounds networks_left_out gather_offset frag_shuffle_fallback position_invariant dma_buf_imports allowance_at_count_rule "
             "split_ub_flush warp64 batch_submits mma_unroll_try fsr4_tune gpu_clock_peak small_vram_textures astc_bc_all "
-            "squeeze_damped linux_hold_caps_budget drop_modules_small_ram threaded_auto_cpus",
+            "squeeze_damped linux_hold_caps_budget threaded_auto_render drop_modules_small_ram",
          num=(0, 2, 0, 1, 85, 16, 2560, 1792, 566, 425, 512, -1, 256, 0, 32, 16, 90, 1, 2, 2, 4, 4, 2)),
     # (corrected, twice: mesh_mode is Automatic (0), so its own mesh shaders, as the deadlock of issue 2245 is RADV's and
     # the rule now asks for RADV; "AMD off Windows" gave AMDVLK Compute. And fault_gate_serial is off, as on RADV.
     # LLPC's task and mesh programs still go unoptimized here, which the study doubts)
     dict(name="RX 6800, AMDVLK",
          facts=(0x1002, 0x73BF, "AMD_OPEN_SOURCE", 0, "DISCRETE_GPU", "2025.Q2.1 (LLPC)", "AMD Radeon RX 6800", 0, 0,
-                16368, 16000, 32000, 12, 12, 1, 1, 0, 0, 0, 1, 1, 64, 64, 0xFF),
+                16368, 16000, 32000, 12, 12, 6, 1, 1, 0, 0, 0, 1, 1, 64, 64, 0xFF),
          on="fetch_bounds networks_left_out gather_offset position_invariant mesh_no_optimizer dma_buf_imports "
-            "allowance_at_count_rule mirrors split_ub_flush warp64 fsr4_tune room_in_blocks_rule threaded_auto_cpus",
+            "allowance_at_count_rule mirrors split_ub_flush warp64 fsr4_tune room_in_blocks_rule "
+            "threaded_auto_render threaded_auto_recorder",
          num=(0, 0, 0, 1, 85, 4, 11000, 3072, 768, 512, 2000, -1, 256, 24, 64, 32, 97, 5, 4, 4, 6, 6, 3)),
     # (4 threads beside an integrated GPU: Auto's 33%. It reports the float add, but its family is not on the list. The
     # part split before a plain draw is on though it has no mesh shaders, which the study doubts)
     dict(name="UHD Graphics (i3-1115G4, 16 GB, 4 threads), Intel's Windows driver",
          facts=(0x8086, 0x9A78, "INTEL_PROPRIETARY_WINDOWS", INTEL | 7088, "INTEGRATED_GPU", "101.7088", "Intel(R) UHD Graphics", 1, 0,
-                8100, 7402, 16100, 4, 4, 0, 1, 1, 0, 0, 1, 1, 32, 32, 0xFF),
+                8100, 7402, 16100, 4, 4, 2, 0, 1, 1, 0, 0, 1, 1, 32, 32, 0xFF),
          on="fetch_bounds networks_left_out gather_offset position_invariant intel_compile_gate compute_builds_serial pcache_fetch_lock "
             "split_before_draw allowance_at_count_rule ub_snapshot small_vram_textures astc_bc_all squeeze_damped "
-            "auto_render_third",
+            "auto_render_third native_zstd_keep_core",
          num=(64, 0, 0, 2, 0, 16, 2560, 2025, 616, 462, 512, -1, 256, 0, 32, 16, 90, 1, 2, 2, 2, 2, 2)),
-    # (Battlemage from 101.9154: side by side, so no gate, and the float add. Compute builds stay one at a time though
-    # the gate is open, which the study doubts and a B580 would have to say)
+    # (Battlemage from 101.9154: side by side, so no gate, and the float add; equal_depth_bias stays 0 so alpha-tested
+    # Z-prepass cutouts do not render opaque. Compute builds stay one at a time though the gate is open, which the study
+    # doubts and a B580 would have to say)
     dict(name="Arc B580, Intel's Windows driver 101.9154",
          facts=(0x8086, 0xE20B, "INTEL_PROPRIETARY_WINDOWS", INTEL | 9154, "DISCRETE_GPU", "101.9154", "Intel(R) Arc(TM) B580 Graphics",
-                1, 0, 12216, 11600, 32500, 20, 20, 1, 1, 1, 0, 0, 1, 1, 32, 32, 0xFF),
+                1, 0, 12216, 11600, 32500, 20, 20, 14, 1, 1, 1, 0, 0, 1, 1, 32, 32, 0xFF),
          on="fetch_bounds networks_left_out gather_offset position_invariant compute_builds_serial pcache_fetch_lock split_before_draw "
             "allowance_at_count_rule mirrors ub_snapshot split_ub_flush native_float_add occ_copy intel_side_by_side_auto "
-            "room_in_blocks_rule threaded_auto_cpus",
-         num=(64, 0, 0, 2, 0, 4, 7126, 2048, 768, 512, 1450, -1, 256, 24, 64, 32, 97, 4, 6, 4, 8, 6, 4)),
+            "room_in_blocks_rule threaded_auto_render threaded_auto_recorder",
+         num=(0, 0, 0, 2, 0, 4, 7126, 2048, 768, 512, 1450, -1, 256, 24, 64, 32, 97, 4, 6, 4, 8, 6, 4)),
+    # (Battlemage Arc B570 on Windows 101.9175: equal_depth_bias stays 0 so Z-prepass alpha cutouts do not render opaque)
+    dict(name="Arc B570, Intel's Windows driver 101.9175",
+         facts=(0x8086, 0xE20C, "INTEL_PROPRIETARY_WINDOWS", INTEL | 9175, "DISCRETE_GPU", "101.9175", "Intel(R) Arc(TM) B570 Graphics",
+                1, 0, 10074, 9305, 16311, 12, 12, 6, 1, 1, 1, 0, 0, 1, 1, 32, 32, 0xFF),
+         on="fetch_bounds networks_left_out gather_offset position_invariant compute_builds_serial pcache_fetch_lock split_before_draw "
+            "allowance_at_count_rule mirrors ub_snapshot split_ub_flush native_float_add occ_copy intel_side_by_side_auto "
+            "room_in_blocks_rule threaded_auto_render threaded_auto_recorder",
+         num=(0, 0, 0, 2, 0, 4, 5876, 2048, 768, 512, 1163, -1, 256, 24, 64, 32, 97, 3, 4, 4, 6, 6, 3)),
     # (an Arc A card: the gate, and the loop for float adds, which the study doubts on Intel's Windows driver)
     dict(name="Arc A750, Intel's Windows driver 101.9175",
          facts=(0x8086, 0x56A1, "INTEL_PROPRIETARY_WINDOWS", INTEL | 9175, "DISCRETE_GPU", "101.9175", "Intel(R) Arc(TM) A750 Graphics",
-                1, 0, 8128, 7700, 16200, 12, 12, 1, 1, 1, 0, 0, 1, 1, 32, 32, 0xFF),
+                1, 0, 8128, 7700, 16200, 12, 12, 6, 1, 1, 1, 0, 0, 1, 1, 32, 32, 0xFF),
          on="fetch_bounds networks_left_out gather_offset position_invariant intel_compile_gate compute_builds_serial pcache_fetch_lock "
             "split_before_draw allowance_at_count_rule mirrors ub_snapshot split_ub_flush occ_copy astc_bc_all "
-            "room_in_blocks_rule squeeze_damped threaded_auto_cpus",
+            "room_in_blocks_rule squeeze_damped threaded_auto_render threaded_auto_recorder",
          num=(64, 0, 0, 2, 0, 4, 4741, 2032, 641, 481, 962, -1, 256, 12, 32, 16, 97, 3, 4, 4, 6, 6, 3)),
     # (corrected: compute_builds_serial is off, as issue 496 is the compiler of Intel's Windows driver; by the vendor it
-    # was on here. The equal-depth margin and the part split still ask the vendor and reach Mesa's driver: their sites
-    # name no driver, so a run on ANV has to say, and the study doubts both)
+    # was on here. No equal-depth margin either: the game's EQUAL holds on Mesa's compiler (Iris Xe, Mesa 26.2.7:
+    # Kakariko, the Death Mountain gate and trail without a hole), and the margin's LESS_OR_EQUAL let the terrain draw
+    # in front of the canyon's rocks on Death Mountain Trail, a flat wall where the depth pass had none. The part split
+    # still asks the vendor and reaches Mesa's driver: its site names no driver, so a run on ANV has to say, and the
+    # study doubts it)
     dict(name="Iris Xe, ANV",
          facts=(0x8086, 0x9A49, "INTEL_OPEN_SOURCE_MESA", 0, "INTEGRATED_GPU", "Mesa 26.0.1", "Mesa Intel(R) Xe Graphics (TGL GT2)", 0, 0,
-                11850, 10000, 15800, 8, 8, 0, 1, 1, 0, 0, 1, 1, 32, 32, 0xFF),
+                11850, 10000, 15800, 8, 8, 4, 0, 1, 1, 0, 0, 1, 1, 32, 32, 0xFF),
          on="fetch_bounds networks_left_out gather_offset position_invariant split_before_draw dma_buf_imports "
             "allowance_at_count_rule ub_snapshot global_table_loop small_vram_textures astc_bc_all linux_hold_caps_budget "
-            "drop_modules_small_ram threaded_auto_cpus",
-         num=(64, 0, 20000, 1, 85, 16, 2560, 2048, 768, 512, 512, -1, 256, 0, 64, 32, 90, 1, 2, 2, 4, 4, 2)),
+            "threaded_auto_render drop_modules_small_ram native_zstd_keep_core",
+         num=(0, 0, 20000, 1, 85, 16, 2560, 2048, 768, 512, 512, -1, 256, 0, 64, 32, 90, 1, 2, 2, 4, 4, 2)),
     # (neither discrete nor integrated: no mirrors, yet a dedicated card's budgets, blocks at the start and 97% line.
     # The study doubts it: the two tests are not a partition)
     dict(name="llvmpipe",
          facts=(0x10005, 0, "MESA_LLVMPIPE", 0, "CPU", "Mesa 26.0.1 (LLVM 20.1.8)", "llvmpipe (LLVM 20.1.8, 256 bits)", 0, 0,
-                32000, 25600, 32000, 16, 16, 0, 1, 0, 0, 0, 1, 1, 8, 8, 0),
+                32000, 25600, 32000, 16, 16, 8, 0, 1, 0, 0, 0, 1, 1, 8, 8, 0),
          on="fetch_bounds networks_left_out position_invariant dma_buf_imports allowance_at_count_rule split_ub_flush room_in_blocks_rule "
-            "threaded_auto_cpus",
+            "threaded_auto_render threaded_auto_recorder",
          num=(0, 0, 0, 1, 85, 16, 11000, 3072, 768, 512, 3200, -1, 256, 24, 64, 32, 97, 1, 6, 4, 8, 6, 4)),
     # (a 6 GB card: the small spares and staging, the CNN model. The study doubts its 1700 MB of mirrors, set before
     # mirror_budget.h's rule is reached)
     dict(name="RTX 3060 Laptop (6 GB), NVIDIA's Windows driver",
          facts=(0x10DE, 0x2520, "NVIDIA_PROPRIETARY", 0, "DISCRETE_GPU", "581.57", "NVIDIA GeForce RTX 3060 Laptop GPU", 1, 0,
-                6144, 5700, 16200, 16, 16, 1, 1, 1, 1, 1, 1, 1, 32, 32, 0),
+                6144, 5700, 16200, 16, 16, 8, 1, 1, 1, 1, 1, 1, 1, 32, 32, 0),
          on="inline_deku_web_loads nv_checkpoints allowance_at_count_rule mirrors split_ub_flush native_float_add "
-            "presenter_queue astc_bc_all room_in_blocks_rule squeeze_damped dlss_cnn rtx threaded_auto_cpus",
+            "presenter_queue astc_bc_all room_in_blocks_rule squeeze_damped dlss_cnn rtx "
+            "threaded_auto_render threaded_auto_recorder",
          num=(0, 0, 0, 1, 85, 4, 3584, 1700, 475, 356, 712, 32, 128, 12, 32, 16, 97, 2, 6, 4, 8, 6, 4)),
     dict(name="RTX 4090 (24 GB), NVIDIA's Windows driver",
          facts=(0x10DE, 0x2684, "NVIDIA_PROPRIETARY", 0, "DISCRETE_GPU", "581.57", "NVIDIA GeForce RTX 4090", 1, 0,
-                24564, 23500, 65000, 32, 32, 1, 1, 1, 1, 1, 1, 1, 32, 32, 0),
+                24564, 23500, 65000, 32, 32, 16, 1, 1, 1, 1, 1, 1, 1, 32, 32, 0),
          on="inline_deku_web_loads nv_checkpoints allowance_at_count_rule mirrors split_ub_flush native_float_add "
-            "presenter_queue room_in_blocks_rule rtx threaded_auto_cpus",
+            "presenter_queue room_in_blocks_rule rtx threaded_auto_render threaded_auto_recorder",
          num=(0, 0, 0, 1, 85, 4, 11000, 3072, 768, 512, 2937, -1, 256, 24, 64, 32, 97, 5, 6, 4, 8, 6, 4)),
     # (no mesh shaders: Minimum, and no task + mesh fallback to choose)
     dict(name="RX 5700 (8 GB), AMD's Windows driver (RDNA 1 compiler)",
          facts=(0x1002, 0x731F, "AMD_PROPRIETARY", 0x800161, "DISCRETE_GPU", "25.9.1 " + AMD_OLD, "AMD Radeon RX 5700", 1, 0,
-                8176, 7378, 16300, 12, 12, 0, 1, 0, 0, 0, 1, 1, 64, 64, 0x20),
-         on="fetch_bounds networks_left_out nan_bits gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer "
+                8176, 7378, 16300, 12, 12, 6, 0, 1, 0, 0, 0, 1, 1, 64, 64, 0x20),
+         on="bc_copy_per_layer fetch_bounds networks_left_out nan_bits mesh_fallback_strict_fmul gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer "
             "amd_cloth_no_optimizer fault_gate_serial allowance_at_count_rule mirrors split_ub_flush warp64 fsr4_tune "
-            "astc_bc_all room_in_blocks_rule squeeze_damped threaded_auto_cpus",
+            "astc_bc_all room_in_blocks_rule squeeze_damped threaded_auto_render threaded_auto_recorder",
          num=(0, 0, 0, 2, 85, 4, 4769, 2044, 614, 461, 922, -1, 256, 12, 32, 16, 97, 1, 4, 4, 6, 6, 3)),
-    # (ASTC on the CPU. The process may use 8 of the PC's 24 threads: the workers go by the 24, Threaded rendering's Auto
-    # by the 8, which the study names as two ways of counting)
+    # (ASTC on the CPU: 70% of 10,232 MB allowed is 7,162 MB, under the 8 GB cap for 32 GB RAM. The process may use 8 of the
+    # PC's 24 threads: the workers go by the 24, Threaded rendering's Auto by the 4 cores of those 8 (the render thread
+    # alone), which the study names as two ways of counting)
     dict(name="Ryzen 9 7900X's graphics (32 GB), AMD's Windows driver, on 8 of 24 threads",
          facts=(0x1002, 0x164E, "AMD_PROPRIETARY", 0x800161, "INTEGRATED_GPU", "26.10.1 " + AMD_OLD, "AMD Radeon(TM) Graphics", 1, 0,
-                16300, 10232, 32600, 24, 8, 1, 1, 0, 0, 0, 1, 1, 64, 64, 0xFF),
-         on="fetch_bounds networks_left_out nan_bits gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer "
+                16300, 10232, 32600, 24, 8, 4, 1, 1, 0, 0, 0, 1, 1, 64, 64, 0xFF),
+         on="bc_copy_per_layer fetch_bounds networks_left_out nan_bits mesh_fallback_strict_fmul gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer "
             "amd_cloth_no_optimizer fault_gate_serial astc_on_cpu allowance_at_count_rule split_ub_flush warp64 occ_copy fsr4_tune "
-            "astc_bc_all threaded_auto_cpus",
-         num=(0, 0, 0, 2, 85, 16, 4096, 3072, 768, 512, 512, -1, 256, 0, 64, 32, 90, 1, 6, 4, 8, 6, 4)),
+            "astc_bc_all threaded_auto_render",
+         num=(0, 0, 0, 2, 85, 16, 7162, 3072, 768, 512, 512, -1, 256, 0, 64, 32, 90, 1, 6, 4, 8, 6, 4)),
+    dict(name="Radeon 860M (0x1002:0x1114), AMD's Windows driver 26.10.1 (LLPC)",
+         facts=(0x1002, 0x1114, "AMD_PROPRIETARY", 0x800161, "INTEGRATED_GPU", "26.10.1 " + AMD_OLD, "AMD Radeon 860M", 1, 0,
+                16300, 10232, 32600, 24, 8, 4, 1, 1, 0, 0, 0, 1, 1, 64, 64, 0xFF),
+         on="bc_copy_per_layer fetch_bounds networks_left_out nan_bits mesh_fallback_strict_fmul gather_offset frag_shuffle_fallback position_invariant mesh_no_optimizer "
+            "amd_cloth_no_optimizer fault_gate_serial astc_on_cpu allowance_at_count_rule split_ub_flush warp64 occ_copy fsr4_tune "
+            "astc_bc_all threaded_auto_render",
+         num=(0, 0, 0, 2, 85, 16, 7162, 3072, 768, 512, 512, -1, 256, 0, 64, 32, 90, 1, 6, 4, 8, 6, 4)),
 ]
 
 # The switches (device_policy_env). The fields a switch can set, in the Sw enum's order (its bit in set_by_switch), and what
-# else the cases look at: the import chunk, which follows the mirrors
+# else the cases look at: the import chunk (which follows the mirrors) and the texture budget (which follows astc_on_cpu)
 SW = ["astc_on_cpu", "batch_submits", "compute_builds_serial", "pcache_fetch_lock", "split_before_draw", "ub_snapshot",
       "split_ub_flush", "occ_copy", "mirrors", "fsr4_tune", "position_invariant", "equal_depth_bias", "cap_spare_max",
-      "staging_keep", "workers"]
-ENV_FIELDS = SW + ["import_chunk_mb"]
+      "staging_keep", "workers", "mesh_fallback_strict_fmul", "bc_copy_per_layer"]
+ENV_FIELDS = SW + ["import_chunk_mb", "texture_budget"]
 NVIDIA, RADV, B580, UHD, AMD_WIN, RAPHAEL, SMALL = (
     "RTX 3090 (24 GB), NVIDIA's Linux driver, 24 threads", "RX 6800 XT, RADV", "Arc B580, Intel's Windows driver 101.9154",
     "UHD Graphics (i3-1115G4, 16 GB, 4 threads), Intel's Windows driver", "RX 6700 XT, AMD's Windows driver (RDNA 2 compiler)",
@@ -280,11 +316,17 @@ ENV = [
     (RADV, {"RX_VK_BATCH": ""}, {}, [], []),                                           # (was off: empty is the default now)
     (NVIDIA, {"RX_VK_COMPUTE_SERIAL": "true"}, {"compute_builds_serial": 1}, ["compute_builds_serial"], []),   # (was off: not a 1)
     (NVIDIA, {"RX_VK_COMPUTE_SERIAL": "2"}, {"compute_builds_serial": 1}, ["compute_builds_serial"], []),      # (was off)
+    (AMD_WIN, {"RX_VK_MESH_STRICT_FMUL": "0"}, {"mesh_fallback_strict_fmul": 0}, ["mesh_fallback_strict_fmul"], []),
+    (NVIDIA, {"RX_VK_MESH_STRICT_FMUL": "1"}, {"mesh_fallback_strict_fmul": 1}, ["mesh_fallback_strict_fmul"], []),
+    (AMD_WIN, {"RX_VK_BC_COPY_PER_LAYER": "0"}, {"bc_copy_per_layer": 0}, ["bc_copy_per_layer"], []),
+    (AMD_WIN, {"RX_VK_BC_COPY_PER_LAYER": ""}, {}, [], []),
+    (NVIDIA, {"RX_VK_BC_COPY_PER_LAYER": "1"}, {"bc_copy_per_layer": 1}, ["bc_copy_per_layer"], []),
     (UHD, {"RX_VK_COMPUTE_SERIAL": "0"}, {"compute_builds_serial": 0}, ["compute_builds_serial"], []),
     (UHD, {"RX_VK_COMPUTE_SERIAL": "off"}, {"compute_builds_serial": 0}, ["compute_builds_serial"], []),
     (UHD, {"RX_VK_COMPUTE_SERIAL": ""}, {}, [], []),                                   # (was off)
-    (RAPHAEL, {"RX_VK_ASTC_CPU": "0"}, {"astc_on_cpu": 0}, ["astc_on_cpu"], []),
+    (RAPHAEL, {"RX_VK_ASTC_CPU": "0"}, {"astc_on_cpu": 0, "texture_budget": 4096}, ["astc_on_cpu"], []),
     (RAPHAEL, {"RX_VK_ASTC_CPU": ""}, {}, [], []),                                     # (was off)
+    (UHD, {"RX_VK_ASTC_CPU": "1"}, {"astc_on_cpu": 1}, ["astc_on_cpu"], []),           # (<= 16 GB RAM: budget cap stays 2560 MB)
     (NVIDIA, {"RX_VK_ASTC_CPU": "yes"}, {"astc_on_cpu": 1}, ["astc_on_cpu"], []),
     (NVIDIA, {"RX_VK_PCACHE_FETCH_LOCK": "1", "RX_VK_SPLIT_BEFORE_DRAW": "1", "RX_VK_UB_SNAPSHOT": "1"},
      {"pcache_fetch_lock": 1, "split_before_draw": 1, "ub_snapshot": 1}, ["pcache_fetch_lock", "split_before_draw", "ub_snapshot"], []),
@@ -367,6 +409,12 @@ RULES = [
     ("mbs(policy_rule::integrated_texture_budget(3000 %s, 0))" % MB, 1024),   # (RAM not known: as 8 GB, the 1 GB floor)
     ("mbs(policy_rule::integrated_texture_budget(512 %s, 32768 %s))" % (MB, MB), 512),   # (never more than the share)
     ("mbs(policy_rule::integrated_texture_budget(6144 %s, 65536 %s))" % (MB, MB), 6144),
+    ("mbs(call_integrated_texture_budget(8192 %s, 16384 %s, false))" % (MB, MB), 2560),
+    ("mbs(call_integrated_texture_budget(8192 %s, 16384 %s, true))" % (MB, MB), 2560),
+    ("mbs(call_integrated_texture_budget(8192 %s, 24576 %s, false))" % (MB, MB), 3584),
+    ("mbs(call_integrated_texture_budget(8192 %s, 24576 %s, true))" % (MB, MB), 6144),
+    ("mbs(call_integrated_texture_budget(8192 %s, 26283 %s, false))" % (MB, MB), 4096),
+    ("mbs(call_integrated_texture_budget(8192 %s, 26283 %s, true))" % (MB, MB), 8192),
     ("mbs(policy_rule::vma_block(8192 %s))" % MB, 32),
     ("mbs(policy_rule::vma_block(8192 %s + 1))" % MB, 64),
     ("mbs(policy_rule::target_block(8192 %s))" % MB, 16),
@@ -393,9 +441,26 @@ RULES = [
     ("(long long)policy_rule::native_fadd_listed(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0xE20B, 101u << 14 | 9153u)", 0),
     ("(long long)policy_rule::native_fadd_listed(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0xB080, 101u << 14 | 9150u)", 1),
     ("(long long)policy_rule::native_fadd_listed(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0xB080, 101u << 14 | 9149u)", 0),
+    ("(long long)policy_rule::native_fadd_listed(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0x64A0, 101u << 14 | 8991u)", 1),
+    ("(long long)policy_rule::native_fadd_listed(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0x64A0, 101u << 14 | 8990u)", 0),
     ("(long long)policy_rule::native_fadd_listed(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0x56A1, 101u << 14 | 9999u)", 0),
     ("(long long)policy_rule::native_fadd_listed(VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, 0x7D55, 0xFFFFFFFFu)", 0),
     ("(long long)policy_rule::native_fadd_listed(VK_DRIVER_ID_AMD_PROPRIETARY, 0x7550, 0xFFFFFFFFu)", 0),
+    # (equal_depth_bias: 0 on discrete Battlemage 0xE2xx and Mesa ANV; 64 on older/integrated Intel Windows families)
+    ("(long long)policy_rule::equal_depth_bias(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0xE20Cu)", 0),
+    ("(long long)policy_rule::equal_depth_bias(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0xE20Bu)", 0),
+    ("(long long)policy_rule::equal_depth_bias(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0x56A1u)", 64),
+    ("(long long)policy_rule::equal_depth_bias(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0x9A78u)", 64),
+    ("(long long)policy_rule::equal_depth_bias(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, 0xB080u)", 64),
+    ("(long long)policy_rule::equal_depth_bias(VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, 0x9A49u)", 0),
+    ("(long long)policy_rule::equal_depth_bias(VK_DRIVER_ID_NVIDIA_PROPRIETARY, 0x2204u)", 0),
+    # (DeviceFacts::arch() / amd_win() end-to-end, including AMD proprietary Windows GCN without radv_gcn)
+    ("(long long)[] { DeviceFacts f{}; f.vendor_id = 0x1002; f.device_id = 0x67B0; f.driver_id = VK_DRIVER_ID_AMD_PROPRIETARY; f.windows = true; return f.amd_win() && !f.radv_gcn() && f.arch() == GpuArch::AmdGcn; }()", 1),
+    ("(long long)[] { DeviceFacts f{}; f.vendor_id = 0x1002; f.device_id = 0x73DF; f.driver_id = VK_DRIVER_ID_AMD_PROPRIETARY; f.windows = true; return f.amd_win() && f.rdna2() && !f.rdna3() && !f.rdna4(); }()", 1),
+    ("(long long)[] { DeviceFacts f{}; f.vendor_id = 0x1002; f.device_id = 0x73DF; f.driver_id = VK_DRIVER_ID_AMD_PROPRIETARY; f.windows = false; return f.amd_win(); }()", 0),
+    ("(long long)[] { DeviceFacts f{}; f.vendor_id = 0x1002; f.device_id = 0x731F; f.driver_id = VK_DRIVER_ID_AMD_PROPRIETARY; f.windows = true; return f.rdna1(); }()", 1),
+    ("(long long)[] { DeviceFacts f{}; f.vendor_id = 0x1002; f.device_id = 0x1114; f.driver_id = VK_DRIVER_ID_AMD_PROPRIETARY; f.windows = true; return f.rdna3(); }()", 1),
+    ("(long long)[] { DeviceFacts f{}; f.vendor_id = 0x1002; f.device_id = 0x130F; f.driver_id = VK_DRIVER_ID_MESA_RADV; f.storage_io16 = false; return f.radv_gcn() && f.arch() == GpuArch::AmdGcn; }()", 1),
 ]
 
 FIXTURE = r"""
@@ -415,7 +480,7 @@ struct D {
     const char* gpu;
     int windows, deck;
     uint64_t vram_mb, allowed_mb, ram_mb;
-    unsigned cpus, usable;
+    unsigned cpus, usable, cores;
     int mesh, bda, fadd, coop, checkpoints, io16, dynamic;
     uint32_t lanes, lanes_max, sg32;
 };
@@ -425,7 +490,7 @@ static DeviceFacts facts_of(const D& d) {
     f.driver_id = d.driver, f.device_type = d.type, f.driver_info = d.info, f.device_name = d.gpu;
     f.windows = d.windows != 0, f.steam_deck_env = d.deck != 0;
     f.vram_heap = d.vram_mb << 20, f.allowed_at_start = d.allowed_mb << 20, f.ram = d.ram_mb << 20;
-    f.cpus_all = d.cpus, f.cpus_usable = d.usable;
+    f.cpus_all = d.cpus, f.cpus_usable = d.usable, f.cores_usable = d.cores;
     f.mesh_shader = d.mesh != 0, f.mesh_queries = d.mesh != 0, f.buffer_device_address = d.bda != 0;
     f.float32_atomic_add = d.fadd != 0, f.coop_matrix_ext = d.coop != 0, f.nv_checkpoints_ext = d.checkpoints != 0;
     f.storage_io16 = d.io16 != 0, f.storage_buffer_array_dynamic_indexing = d.dynamic != 0, f.robust_image_access = true;
@@ -433,6 +498,15 @@ static DeviceFacts facts_of(const D& d) {
     return f;
 }
 static long long mbs(uint64_t bytes) { return bytes == ~0ull ? -1 : (long long)(bytes >> 20); }
+template <class B = bool>
+static uint64_t call_integrated_texture_budget(uint64_t share, uint64_t ram, B astc_on_cpu) {
+    if constexpr (requires(B cpu) { policy_rule::integrated_texture_budget(share, ram, cpu); }) {
+        return policy_rule::integrated_texture_budget(share, ram, astc_on_cpu);
+    } else {
+        (void)astc_on_cpu;
+        return policy_rule::integrated_texture_budget(share, ram);
+    }
+}
 static void log_block(int k, const DevicePolicy& p, const DeviceFacts& f) {
     device_policy_log(p, f, [&](const char* line) { std::printf("LOG %d %zu %s\n", k, std::strlen(line), line); });
 }
@@ -448,11 +522,12 @@ static void env_case(int i, const D& d) {
     device_policy_env(p, f, get);
     std::printf("ENV %d astc_on_cpu=%d batch_submits=%d compute_builds_serial=%d pcache_fetch_lock=%d split_before_draw=%d "
                 "ub_snapshot=%d split_ub_flush=%d occ_copy=%d mirrors=%d fsr4_tune=%d position_invariant=%d equal_depth_bias=%g "
-                "cap_spare_max=%lld staging_keep=%lld workers=%u import_chunk_mb=%u set=%u notes=%s\n",
+                "cap_spare_max=%lld staging_keep=%lld workers=%u mesh_fallback_strict_fmul=%d bc_copy_per_layer=%d import_chunk_mb=%u texture_budget=%lld set=%u notes=%s\n",
                 i, (int)p.astc_on_cpu, (int)p.batch_submits, (int)p.compute_builds_serial, (int)p.pcache_fetch_lock,
                 (int)p.split_before_draw, (int)p.ub_snapshot, (int)p.split_ub_flush, (int)p.occ_copy, (int)p.mirrors, (int)p.fsr4_tune,
                 (int)p.position_invariant, (double)p.equal_depth_bias, mbs(p.cap_spare_max), mbs(p.staging_keep), p.workers,
-                (unsigned)p.import_chunk_mb, (unsigned)p.set_by_switch, p.switch_notes);
+                (int)p.mesh_fallback_strict_fmul, (int)p.bc_copy_per_layer,
+                (unsigned)p.import_chunk_mb, mbs(p.texture_budget), (unsigned)p.set_by_switch, p.switch_notes);
     if (i == 0 || p.set_by_switch) log_block(1000 + i, p, f);   // (the block with switches set: still six lines under their length)
 }
 int main() {
@@ -486,7 +561,7 @@ int main() {
         for (const char* name : {"RX_VK_MIRROR", "RX_VK_SPLIT_UBFLUSH", "RX_VK_UB_SNAPSHOT", "RX_VK_ASTC_CPU", "RX_VK_BATCH",
                                  "RX_VK_COMPUTE_SERIAL", "RX_VK_PCACHE_FETCH_LOCK", "RX_VK_SPLIT_BEFORE_DRAW", "RX_VK_OCC_COPY",
                                  "RX_VK_FSR4_TUNE", "RX_VK_NO_INVARIANT", "RX_VK_EQ_BIAS", "RX_VK_CAP_SPARE_MB",
-                                 "RX_VK_STAGING_KEEP_MB", "RX_VK_WORKERS"})
+                                 "RX_VK_STAGING_KEEP_MB", "RX_VK_WORKERS", "RX_VK_MESH_STRICT_FMUL"})
             env[name] = wordy;
         const DeviceFacts f = facts_of(devices[0]);
         DevicePolicy p = device_policy(f);
@@ -536,6 +611,9 @@ def check_source():
     ):
         if text not in create:
             raise SystemExit("FAIL: create_device: %s" % why)
+    if "pf.cores_usable = usable_cores();" not in create:
+        raise SystemExit("FAIL: create_device: the facts' cores are not usable_cores (Threaded rendering's Auto counts by "
+                         "them)")
     if not create.index("pf.sg32_stages = dev.sg32_stages;") < create.index("dev.policy = device_policy(pf);") \
             < create.index("device_policy_env(dev.policy, pf,") < create.index("vkCreateDevice(dev.physical, &ci"):
         raise SystemExit("FAIL: create_device: the policy is not made once every fact is filled, then the switches read, "
@@ -558,7 +636,8 @@ def check_source():
         ("vk_texture.cpp", "void texture_frame(uint64_t completed)",
          ("const uint64_t keep = staging_keep();",
           "policy_rule::squeeze_damped(allowed) ? (over / 4) : over;",
-          "own = policy_rule::integrated_texture_budget(driver_budget, system_ram);")),
+          "texture_rule::integrated_bytes(a, device_vram_bytes(), astc_on_cpu())",
+          "own = policy_rule::integrated_texture_budget(driver_budget, system_ram, astc_on_cpu());")),
         ("vk_replay.cpp", "bool batch_on() {", ("const bool v = dev.policy.batch_submits;",)),
         ("vk_replay.cpp", "bool occ_copy_wanted() {", ("if (par_threads() != 0) return false;", "return dev.policy.occ_copy;")),
         ("vk_replay.cpp", "bool part_ends_before_draw() {", ("return dev.policy.split_before_draw;",)),
@@ -655,12 +734,12 @@ def check_source():
 
 
 def c_row(pc):
-    (vendor, device, driver, version, kind, info, gpu, windows, deck, vram, allowed, ram, cpus, usable, mesh, bda, fadd, coop,
-     checkpoints, io16, dynamic, lanes, lanes_max, sg32) = pc["facts"]
+    (vendor, device, driver, version, kind, info, gpu, windows, deck, vram, allowed, ram, cpus, usable, cores, mesh, bda, fadd,
+     coop, checkpoints, io16, dynamic, lanes, lanes_max, sg32) = pc["facts"]
     return ('        {"%s", 0x%X, 0x%X, VK_DRIVER_ID_%s, 0x%Xu, VK_PHYSICAL_DEVICE_TYPE_%s, "%s", "%s", %d, %d, %dull, %dull, %dull, '
-            '%du, %du, %d, %d, %d, %d, %d, %d, %d, %du, %du, 0x%Xu},'
-            % (pc["name"], vendor, device, driver, version, kind, info, gpu, windows, deck, vram, allowed, ram, cpus, usable, mesh,
-               bda, fadd, coop, checkpoints, io16, dynamic, lanes, lanes_max, sg32))
+            '%du, %du, %du, %d, %d, %d, %d, %d, %d, %d, %du, %du, 0x%Xu},'
+            % (pc["name"], vendor, device, driver, version, kind, info, gpu, windows, deck, vram, allowed, ram, cpus, usable,
+               cores, mesh, bda, fadd, coop, checkpoints, io16, dynamic, lanes, lanes_max, sg32))
 
 
 def main():
@@ -668,9 +747,8 @@ def main():
     parser.add_argument("--headers", type=Path, required=True)
     parser.add_argument("--cxx", default="g++")
     args = parser.parse_args()
-    check_source()
     for pc in PCS:   # (the table itself: every number given, every name on the list)
-        if len(pc["num"]) != len(NUM_NAMES) or len(pc["facts"]) != 24:
+        if len(pc["num"]) != len(NUM_NAMES) or len(pc["facts"]) != 25:
             raise SystemExit("FAIL: the table's row for %s is short or long" % pc["name"])
         unknown = set(pc["on"].split()) - set(BOOLS)
         if unknown:
@@ -804,6 +882,26 @@ def main():
     amd = "".join(text for _, text in logs.get(names.index(AMD_WIN), []))
     if "on driver version 0x800161:" not in amd or "task_mesh_fallback=1(seen on 0x800161)" not in amd:
         failures.append("the log block does not say the driver's version and the one task_mesh_fallback was seen on: %s" % amd[:300])
+    # (DeviceFacts::arch() / arch_name() end-to-end on the facts log line across representative PCs)
+    for pc_name, want_arch in (
+        (NVIDIA, "nvidia_ampere"),
+        ("RTX 4070 Laptop (8 GB), NVIDIA's Windows driver", "nvidia_ada"),
+        ("GTX 1650 (4 GB), NVK", "nvidia_turing"),
+        (AMD_WIN, "amd_rdna2"),
+        ("RX 9070 XT, AMD's Windows driver (LLPC)", "amd_rdna4"),
+        ("RX 580 (8 GB), RADV on GCN", "amd_gcn"),
+        ("RX Vega 64 (8 GB), RADV on GFX9", "amd_vega"),
+        ("Steam Deck (LCD), RADV", "amd_rdna2"),
+        ("RX 5700 (8 GB), AMD's Windows driver (RDNA 1 compiler)", "amd_rdna1"),
+        ("Radeon 860M (0x1002:0x1114), AMD's Windows driver 26.10.1 (LLPC)", "amd_rdna3"),
+        (UHD, "intel_gen12"),
+        (B580, "intel_battlemage"),
+        ("Arc A750, Intel's Windows driver 101.9175", "intel_alchemist"),
+        ("llvmpipe", "unknown"),
+    ):
+        facts_line = logs.get(names.index(pc_name), [(0, "")])[0][1]
+        if "(arch %s)" % want_arch not in facts_line:
+            failures.append("%s: facts line missing (arch %s): %s" % (pc_name, want_arch, facts_line[:200]))
     for i, (expr, want) in enumerate(RULES):
         if rule_values.get(i) != want:
             failures.append("%s is %s, expected %d" % (expr, rule_values.get(i), want))
@@ -812,6 +910,7 @@ def main():
         failures.append("a PC nothing is known of: %s, expected 0 1 2 4096 3072" % none)
     if failures:
         raise SystemExit("FAIL:\n  " + "\n  ".join(failures))
+    check_source()
     print("ok: %d PCs, each of DevicePolicy's %d fields as the rules have it; %d environments through the switches' one rule; "
           "%d rule edges; the log block under 900 characters a line; the facts filled before the device and the moved sites "
           "reading the policy" % (len(PCS), len(BOOLS) + len(NUM_NAMES), len(ENV), len(RULES)))

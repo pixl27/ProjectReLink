@@ -13,9 +13,9 @@
    Every mod file is indexed once at the start (no disk lookups per open); nn_fs.c asks hos_mods_romfs for each rom:
    path and lists a folder's mod-only entries with the game's own (hos_mods_dir_extras). HOS_FS_OVERLAY (nn_fs.c) is
    looked at after this, so a test overlay wins over mods.
-   (hookshot) The resource size table (restbl.h): when the mods serve files, the game's table (or the button prompts' copy of
-   it) is served with every enabled mod's own table merged in (an entry larger than the game's wins) and the entry of every file
-   a mod serves raised to what its size needs: two mods that each grow files load together. Written to
+   (hookshot) The resource size table (restbl.h): when the mods serve files, the game's table (the button prompts' font entry
+   raised in it, host/prompts.c) is served with every enabled mod's own table merged in (an entry larger than the game's wins)
+   and the entry of every file a mod serves raised to what its size needs: two mods that each grow files load together. Written to
    modcache/rsizetable.zs in the game folder at each start that needs it (merge_sizes).
    (hookshot) ExeFS patches are applied when the game is built (nx2/exefs_patches.py: the code is compiled ahead of time from
    the patched instructions, their data writes are in image.bin). The build lists what it applied in exefs_patches.txt in the
@@ -76,7 +76,11 @@ typedef struct {
 static Mod *mods;
 static int nmods, cap_mods;
 static char root_dir[MAX_PATH], state_path[MAX_PATH], cache_dir[MAX_PATH];
-static uint64_t start_key;   /* the order and the switches at the start: mods_state_key */
+#define MODS_KEY_NONE 0xcbf29ce484222325ull   /* (state_key with no mods: FNV-1a's offset basis) */
+/* the order and the switches at the start: state_key. With no mods folder, or none in it, hos_mods_init returns before
+   it takes it, so it starts as state_key's answer for no mods: else the menu counted "the mods" as changed at every
+   close and asked to restart */
+static uint64_t start_key = MODS_KEY_NONE;
 
 static void put(const char *key, const char *host, const char *rel, uint64_t size, int is_dir, int mod) {
     if ((table_n + 1) * 2 > table_cap) {   /* (grow: rehash) */
@@ -325,7 +329,7 @@ static void write_state(void) {
 
 /* the order and the switches as one number: what the menu compares with the start's */
 static uint64_t state_key(void) {
-    uint64_t h = 0xcbf29ce484222325ull;
+    uint64_t h = MODS_KEY_NONE;
     for (int i = 0; i < nmods; i++) {
         for (const char *p = mods[i].name; *p; p++) h = (h ^ (uint8_t)*p) * 0x100000001b3ull;
         h = (h ^ (uint64_t)(mods[i].enabled ? 0x101 : 0x100)) * 0x100000001b3ull;
@@ -423,7 +427,7 @@ static void exefs_status(const char *game_dir) {
 }
 
 /* ---- the size table */
-static int fit_sizes(const char *game_dir) {
+static int fit_sizes(void) {
     if (!sizes_rel[0]) return 0;
     int any = nshipped > 0;
     for (size_t i = 0; i < table_cap && !any; i++) any = table[i].key && !table[i].is_dir;
@@ -435,20 +439,27 @@ static int fit_sizes(const char *game_dir) {
     uint8_t *raw = hos_zs_read(path, &n, 64u << 20);
     Restbl *base = raw ? restbl_parse(raw, n) : NULL;
     free(raw);
-    /* (what is served without mods: the button prompts' copy where they made one, with room for their fonts; else the game's) */
-    /* (prompts.c hos_prompts_romfs serves prompts/rsizetable.zs whenever the build made one: read here, not through it, as its
-       first call chooses the controller's face, which is not known yet) */
-    char prompts_table[MAX_PATH];
-    snprintf(prompts_table, sizeof prompts_table, "%sprompts/rsizetable.zs", game_dir);
+    /* (the game's own table; the button prompts' font entry raised in it as prompts.c raises it in the table it serves without
+       mods (hos_prompts_font_entry, asked here, not through hos_prompts_romfs, as its first call chooses the controller's face,
+       which is not known yet; and the layouts' raised by the Recomp options button, hos_prompts_layouts_entry). Never a table
+       the build made: another dump or game version may have made it */
     Restbl *out = NULL;
-    if ((raw = hos_zs_read(prompts_table, &n, 64u << 20)) != NULL) {
+    if ((raw = hos_zs_read(path, &n, 64u << 20))) {
         out = restbl_parse(raw, n);
         free(raw);
     }
-    if (!out && (raw = hos_zs_read(path, &n, 64u << 20))) {
-        out = restbl_parse(raw, n);
-        free(raw);
-    }
+    uint32_t hos_prompts_font_entry(uint32_t entry);   /* prompts.c */
+    uint32_t font_entry = 0, font_need = 0;
+    char font_key[MAX_PATH];
+    restbl_key("Font2/Scalable/External.Nin_Ounce_NVN2.bfotf.zs", font_key, sizeof font_key);
+    if (base && out && restbl_get(base, font_key, &font_entry) && (font_need = hos_prompts_font_entry(font_entry)) > font_entry)
+        restbl_raise(out, font_key, font_need);
+    uint32_t hos_prompts_layouts_entry(uint32_t entry);   /* prompts.c */
+    uint32_t lay_entry = 0, lay_need = 0;
+    char lay_key[MAX_PATH];
+    restbl_key("UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs", lay_key, sizeof lay_key);
+    if (base && out && restbl_get(base, lay_key, &lay_entry) && (lay_need = hos_prompts_layouts_entry(lay_entry)) > lay_entry)
+        restbl_raise(out, lay_key, lay_need);
     if (!base || !out) {   /* (as without the merge: the last enabled mod's own table, sizes_fallback) */
         hos_log("mods: cannot read the resource size table %s: %s", sizes_rel,
                 sizes_fallback[0] ? "the last mod's own table is served" : "mod files larger than the game's may not load");
@@ -598,7 +609,7 @@ void hos_mods_init(const char *image_path) {
     }
     for (int s = 0; s < nshipped; s++)
         if (!shipped[s].other && mods[shipped[s].mod].enabled) snprintf(sizes_fallback, sizeof sizes_fallback, "%s", shipped[s].host);
-    if (fit_sizes(game_dir)) {
+    if (fit_sizes()) {
         /* (served in the game's table's place: hos_mods_romfs) */
     }
     for (int i = 0; i < nmods; i++) mod_text(&mods[i]);
@@ -612,6 +623,7 @@ int hos_mods_romfs(const char *rel, char *out, size_t cap) {
     lower_slash(key);
     int hos_prompts_romfs(const char *key, const char *mod, char *out, size_t cap);   /* prompts.c: the button prompts */
     int hos_texts_romfs(const char *key, const char *mod, char *out, size_t cap);   /* texts.c: the texts' PC wording */
+    int hos_event_skip_romfs(const char *key, const char *mod, char *out, size_t cap);   /* event_skip.c: every cutscene skippable */
     if (sizes_served[0] && !strcmp(key, sizes_key)) {   /* (the merged size table: the prompts' entries are in it) */
         snprintf(out, cap, "%s", sizes_served);
         static volatile LONG told;
@@ -627,7 +639,8 @@ int hos_mods_romfs(const char *rel, char *out, size_t cap) {
         return 1;
     }
     Entry *e = table_n ? find(key) : NULL;
-    if (!e || e->is_dir) return hos_prompts_romfs(key, NULL, out, cap) || hos_texts_romfs(key, NULL, out, cap);
+    if (!e || e->is_dir)
+        return hos_prompts_romfs(key, NULL, out, cap) || hos_texts_romfs(key, NULL, out, cap) || hos_event_skip_romfs(key, NULL, out, cap);
     const int merged = hos_prompts_romfs(key, e->host, out, cap);   /* (the size table: the prompts' entries merged in) */
     if (!merged) snprintf(out, cap, "%s", e->host);
     static volatile LONG logged;

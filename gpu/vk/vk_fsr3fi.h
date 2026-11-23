@@ -102,4 +102,9 @@ struct Inputs {
 /// Forgets the sequence, so the next frame is made with the reset flag set: a cut, a load, a resize.
 void reset();
 
+/// (hookshot) Frame generation off or not this one (vk_framegen.cpp framegen_idle): the images let go once the GPU is done with
+/// them, and those of earlier sizes too (free_dead ran only in generate). The next generate makes them again. Every present
+/// while it is idle: nothing to do once they are gone
+void release();
+
 } // namespace mkwvk::fsr3fi

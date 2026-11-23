@@ -12,7 +12,7 @@ loop's words in theirs. Without a GPU this checks what can be checked:
 - the self-test's inputs catch a driver that folds the f16 conversion into the FMA before it: on the CPU, the loop's
   arithmetic (each FMA rounded to f32, the sum to f16 after every 8 columns of K) and the folded one (the last FMA of a group
   rounded to f16 once) give other words on the warps built for it, so such a driver's unrolled form is refused;
-- the switch (RX_VK_MMA_UNROLL, RADV by default), the emitter's use of the chosen form, and the program cache's stamp.
+- the switch (RX_VK_MMA_UNROLL, RADV and AMD RDNA 4 on AMD's proprietary driver by default), the emitter's use of the chosen form, and the program cache's stamp.
 """
 import argparse
 from pathlib import Path
@@ -32,8 +32,8 @@ RUN_ALL_SKIP = {"windows": "needs spirv-val: checked on Linux"}
 ROOT = Path(__file__).resolve().parents[1]
 VK = ROOT / "gpu/vk"
 SPIRV_DIR = VK / "eden/shader_recompiler/backend/spirv"
-DRIVER_IDS = {"VK_DRIVER_ID_AMD_PROPRIETARY": 1, "VK_DRIVER_ID_MESA_RADV": 3, "VK_DRIVER_ID_NVIDIA_PROPRIETARY": 4,
-              "VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA": 6}   # (as the Vulkan headers number them)
+DRIVER_IDS = {"VK_DRIVER_ID_AMD_PROPRIETARY": 1, "VK_DRIVER_ID_AMD_OPEN_SOURCE": 2, "VK_DRIVER_ID_MESA_RADV": 3,
+              "VK_DRIVER_ID_NVIDIA_PROPRIETARY": 4, "VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA": 6}   # (as the Vulkan headers number them)
 
 
 def compile_and_run(cxx, source, extra, folder, name, *args):
@@ -210,29 +210,58 @@ int main() {
 
 
 def switch(cxx, folder):
-    """software_unroll_wanted: RADV by default, RX_VK_MMA_UNROLL over it"""
+    """software_unroll_wanted: RADV and AMD RDNA 4 on AMD's proprietary driver by default, RX_VK_MMA_UNROLL over it"""
+    arch_h = (VK / "gpu_arch.h").read_text(encoding="utf-8")
+    rdna4_fn = block(arch_h, "inline bool is_rdna4(")
+    auto_profile = block((VK / "vk_main.cpp").read_text(encoding="utf-8"), "void auto_profile(")
+    auto_profile = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", auto_profile, flags=re.S))   # (code only)
+    if not re.search(r"^\s*hw\.rdna4 = is_rdna4\(p\.vendorID, p\.deviceID, p\.deviceName\);", auto_profile, re.M):
+        raise SystemExit("auto_profile does not set hw.rdna4 from is_rdna4(p.vendorID, p.deviceID, p.deviceName)")
     coopmat = (VK / "vk_coopmat.cpp").read_text(encoding="utf-8")
     fn = block(coopmat, "bool software_unroll_wanted(")
     choose = block(coopmat, "void choose_software_form(")
-    if 'software_unroll_wanted(dev.driver_id, env)' not in choose or 'std::getenv("RX_VK_MMA_UNROLL")' not in choose:
-        raise SystemExit("choose_software_form does not ask software_unroll_wanted with RX_VK_MMA_UNROLL")
+    if ('software_unroll_wanted(dev.driver_id, is_rdna4(dev.props.vendorID, dev.props.deviceID, dev.props.deviceName), env)' not in choose
+            or 'std::getenv("RX_VK_MMA_UNROLL")' not in choose):
+        raise SystemExit("choose_software_form does not ask software_unroll_wanted with is_rdna4 and RX_VK_MMA_UNROLL")
     order = [choose.index(x) for x in ("software_test_input()", "software_forms_agree(", "mma_software_form = (uint32_t)form")]
     if order != sorted(order):
         raise SystemExit("choose_software_form does not run the loop, compare a form and only then use it")
     if "software_multiplies(\"subgroup shuffles, RX_VK_MMA_SOFTWARE\")" not in coopmat:
         raise SystemExit("RX_VK_MMA_SOFTWARE=1 does not go through software_multiplies (and its form)")
-    radv, amd, nvidia, intel = "VK_DRIVER_ID_MESA_RADV", "VK_DRIVER_ID_AMD_PROPRIETARY", "VK_DRIVER_ID_NVIDIA_PROPRIETARY", \
-        "VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA"
-    cases = [(radv, None, True), (radv, "0", False), (radv, "1", True), (amd, None, False), (amd, "1", True),
-             (nvidia, None, False), (intel, None, False), (intel, "true", True), (nvidia, "off", False)]
+    radv, amd, amd_open, nvidia, intel = (
+        "VK_DRIVER_ID_MESA_RADV", "VK_DRIVER_ID_AMD_PROPRIETARY", "VK_DRIVER_ID_AMD_OPEN_SOURCE",
+        "VK_DRIVER_ID_NVIDIA_PROPRIETARY", "VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA")
+    cases = [
+        (radv, False, None, True), (radv, True, None, True), (radv, False, "0", False), (radv, False, "1", True),
+        (amd, False, None, False), (amd, False, "1", True),
+        (amd, True, None, True), (amd, True, "0", False), (amd, True, "1", True),
+        (amd_open, True, None, False), (amd_open, True, "1", True),
+        (nvidia, False, None, False), (intel, False, None, False),
+        (intel, False, "true", True), (nvidia, False, "off", False),
+    ]
+    rdna4_checks = "\n".join([
+        '    if (!is_rdna4(0x1002, 0x7551, "AMD Radeon AI PRO R9700")) { std::puts("FAIL: is_rdna4 R9700"); return 1; }',
+        '    if (!is_rdna4(0x1002, 0x7550, "AMD Device 7550")) { std::puts("FAIL: is_rdna4 0x7550"); return 1; }',
+        '    if (!is_rdna4(0x1002, 0x7590, "AMD Device 7590")) { std::puts("FAIL: is_rdna4 0x7590"); return 1; }',
+        '    if (!is_rdna4(0x1002, 0x0000, "AMD Radeon RX 9060 XT")) { std::puts("FAIL: is_rdna4 RX 9060 XT by name"); return 1; }',
+        '    if (!is_rdna4(0x1002, 0x7551, nullptr)) { std::puts("FAIL: is_rdna4 0x7551 nullptr"); return 1; }',
+        '    if (!is_rdna4(0x1002, 0x0000, "AMD Radeon RX 9080")) { std::puts("FAIL: is_rdna4 RX 9080"); return 1; }',
+        '    if (!is_rdna4(0x1002, 0x0000, "AMD Radeon GFX1201")) { std::puts("FAIL: is_rdna4 GFX1201"); return 1; }',
+        '    if (is_rdna4(0x1002, 0x73DF, "AMD Radeon RX 6700 XT")) { std::puts("FAIL: is_rdna4 RX 6700 XT"); return 1; }',
+        '    if (is_rdna4(0x1002, 0x744C, "AMD Radeon RX 7900 XTX")) { std::puts("FAIL: is_rdna4 RX 7900 XTX"); return 1; }',
+        '    if (is_rdna4(0x1002, 0x0000, nullptr)) { std::puts("FAIL: is_rdna4 nullptr"); return 1; }',
+        '    if (is_rdna4(0x10DE, 0x7551, "NVIDIA GeForce RTX 4090")) { std::puts("FAIL: is_rdna4 NVIDIA id"); return 1; }',
+        '    if (is_rdna4(0x10DE, 0x0000, "NVIDIA RX 9000")) { std::puts("FAIL: is_rdna4 NVIDIA name"); return 1; }',
+    ])
     checks = "\n".join(
-        f'    if (software_unroll_wanted({d}, {"nullptr" if e is None else chr(34) + e + chr(34)}) != {str(w).lower()}) '
-        f'{{ std::puts("FAIL: {d} {e}"); return 1; }}' for d, e, w in cases)
+        f'    if (software_unroll_wanted({d}, {str(r).lower()}, {"nullptr" if e is None else chr(34) + e + chr(34)}) != {str(w).lower()}) '
+        f'{{ std::puts("FAIL: {d} rdna4={r} {e}"); return 1; }}' for d, r, e, w in cases)
     env_h = (VK / "compat/hookshot_env.h").read_text(encoding="utf-8")
     enum = "enum VkDriverId { " + ", ".join(f"{k} = {n}" for k, n in DRIVER_IDS.items()) + " };\n"
-    source = env_h + "\n#include <cstdio>\n#include <cstdlib>\n" + enum + fn + "\nint main() {\n" + checks + "\n    return 0;\n}\n"
+    source = (env_h + "\n#include <cstdint>\n#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n" + enum +
+              rdna4_fn + "\n" + fn + "\nint main() {\n" + rdna4_checks + "\n" + checks + "\n    return 0;\n}\n")
     compile_and_run(cxx, source, [], folder, "switch")
-    print("PASS: RX_VK_MMA_UNROLL: unrolled on RADV by default, looped elsewhere, the switch over both")
+    print("PASS: RX_VK_MMA_UNROLL: unrolled on RADV and AMD RDNA 4 on AMD's proprietary driver by default, looped elsewhere, the switch over both")
 
 
 def wiring():

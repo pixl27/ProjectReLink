@@ -59,7 +59,7 @@ VkResult guarded_shader_module(const VkShaderModuleCreateInfo* info,VkShaderModu
  ++shader_creates;assert(info->pCode==(shader_creates==1?TAAU_UPSCALE_COMP_SPV:TAAU_UPSCALE_RGBA_COMP_SPV));
  *p=handle<VkShaderModule>(++next_handle);return VK_SUCCESS;
 }
-VkResult guarded_compute(VkPipelineCache,const VkComputePipelineCreateInfo*,VkPipeline* p){*p=handle<VkPipeline>(++next_handle);return VK_SUCCESS;}
+VkResult texture_compute_pipeline(const VkComputePipelineCreateInfo&,VkPipeline& p){p=handle<VkPipeline>(++next_handle);return VK_SUCCESS;}   // (vk_texture.cpp)
 void vkDestroyShaderModule(VkDevice,VkShaderModule,const VkAllocationCallbacks*){}
 VkResult vkCreateSampler(VkDevice,const VkSamplerCreateInfo*,const VkAllocationCallbacks*,VkSampler* p){*p=handle<VkSampler>(++next_handle);return VK_SUCCESS;}
 void vkDestroyImageView(VkDevice,VkImageView,const VkAllocationCallbacks*){}

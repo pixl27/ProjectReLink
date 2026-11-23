@@ -370,6 +370,7 @@ def exit_test(cxx, headers, out, recorder_text, name):
     (d / "vk_work.h").write_text((VK / "vk_work.h").read_text(encoding="utf-8"), encoding="utf-8")
     (d / "vk_recorder.h").write_text(recorder_text, encoding="utf-8")
     (d / "gpu_wait_stats.h").write_text((VK / "gpu_wait_stats.h").read_text(encoding="utf-8"), encoding="utf-8")
+    (d / "vk_new.h").write_text((VK / "vk_new.h").read_text(encoding="utf-8"), encoding="utf-8")   # (NewNothrow, issue 1280)
     src = str(ROOT / "tests" / "recorder_exit_test.cpp")
     flags = ["-std=c++20", "-include", ENV_ON_H, "-O2", "-Wall", "-Wextra", "-Werror", "-DVK_NO_PROTOTYPES", "-D_CRT_SECURE_NO_WARNINGS"]
     for cmd in ([cxx, *flags, "-shared", "-DRX_EXIT_DLL", "-I" + str(d), "-I" + str(headers), src, "-o", str(d / "rx_exit.dll")],
@@ -442,7 +443,7 @@ def main():
          broken(rec, "c[i].pImageInfo = e.dup(w[i].pImageInfo, w[i].descriptorCount);",
                 "c[i].pImageInfo = w[i].pImageInfo;", "push descriptors"), work_h, ("sync", None)),
         ("fallback without the drain (order)",
-         broken(rec, "    else drain();\n    t_arena.fallbacks++;", "    t_arena.fallbacks++;", "fallback"), work_h, ("sync", None)),
+         broken(rec, "    else drain();\n    t_arena().fallbacks++;", "    t_arena().fallbacks++;", "fallback"), work_h, ("sync", None)),
         ("defer: no drain before vkEndCommandBuffer",
          rec, no_wait(work_h, "vkEndCommandBuffer"), (None, None)),
         ("defer: the replay lock let go without a drain",

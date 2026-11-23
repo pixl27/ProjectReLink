@@ -14,6 +14,9 @@ RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 ROOT = Path(__file__).resolve().parents[1]
 WITNESS = "PASS: frame log CSV header, sequence, elapsed/interval times, and disabled output"
 FIXTURE = r'''
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <chrono>
 #include <cstdint>
 #include <cstdio>

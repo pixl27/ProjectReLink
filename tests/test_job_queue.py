@@ -11,16 +11,24 @@
 - Two exclusive jobs run one after the other, two shared ones together (a real queue in a temporary folder).
 - Windows: a cancelled job's command and its children end, so do those of a runner killed outright (the job object), and a
   command that ends by itself leaves what it started running.
+- Windows protects a player as Linux does: a hookshot.exe with no HOOKSHOT_JOB is someone playing (a timed or --when-idle
+  job waits, status names it), one under a job or preparing shaders is not, one whose memory can't be read counts as nobody's;
+  a build outside the queue is a python running nx2/build.py or make_game.py, backslashes or not. Checked on a made-up
+  process table on any OS (the Windows code, its process reads stood in for), and on Windows with real processes.
 
 python -I -B tests/test_job_queue.py
 """
+import contextlib
 import importlib.util
+import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "scripts", "job_queue.py")
@@ -131,6 +139,123 @@ class RealQueue(unittest.TestCase):
     def test_exclusive_one_at_a_time_shared_together(self):
         self.assertFalse(self.run_two("gpu"))
         self.assertTrue(self.run_two("shared"))
+
+
+class WindowsPlayers(unittest.TestCase):
+    """The Windows code over a made-up process table: Toolhelp's (pid: parent, program) and each process's command line and
+    environment as its PEB holds them. Main returned "nobody" on Windows whatever ran"""
+    PROCS = {   # (pid: (parent, program, command line, environment block; None: its memory can't be read))
+        4: (0, "System", None, None),
+        40: (4, "hookshot.exe", '"C:\\Games\\Hookshot\\hookshot.exe"', "=C:=C:\\Games\0PATH=C:\\x\0"),
+        41: (4, "Hookshot.exe", "hookshot.exe --x", "HOOKSHOT_JOB=fps\0PATH=C:\\x\0"),
+        42: (4, "hookshot.exe", "hookshot.exe --prepare-shaders", "PATH=C:\\x\0"),
+        43: (4, "hookshot.exe", None, None),
+        50: (4, "python.exe", 'python.exe -I C:\\src\\nx2\\build.py --jobs 4', "PATH=C:\\x\0"),
+        51: (4, "python.exe", "python.exe -I nx2/make_game.py", "HOOKSHOT_JOB=b1\0"),
+        52: (4, "python.exe", "python.exe -c pass", "PATH=C:\\x\0"),
+        53: (60, "python.exe", "python.exe nx2/build.py", "PATH=C:\\x\0"),
+        60: (4, "cmd.exe", "cmd /c x", "PATH=C:\\x\0"),
+        61: (60, "notepad.exe", "notepad", "PATH=C:\\x\0"),
+        62: (61, "conhost.exe", "conhost", "PATH=C:\\x\0"),   # (61 is a pid used again: started before its "parent")
+    }
+    BORN = {60: 10, 61: 15, 53: 20, 62: 1}
+
+    def setUp(self):
+        self.read = []
+        self.PROCS = dict(self.PROCS)
+
+        def params(pid):
+            self.read.append(pid)
+            p = self.PROCS.get(pid)
+            return None if p is None or p[2] is None else (p[2], p[3] + "\0")
+        split = lambda cmd: [a.strip('"') for a in cmd.split()]   # (CommandLineToArgvW enough for these)
+        self.patches = [mock.patch.object(q, "WINDOWS", True),
+                        mock.patch.object(q, "_win_snapshot", lambda: {k: v[:2] for k, v in self.PROCS.items()}, create=True),
+                        mock.patch.object(q, "_win_params", params, create=True),
+                        mock.patch.object(q, "_win_split", split, create=True),
+                        mock.patch.object(q, "_win_start", lambda pid: self.BORN.get(pid, 0) if pid in self.PROCS else None),
+                        mock.patch.dict(os.environ, {"HOOKSHOT_QUEUE_PLAYING_FILE": ""})]
+        for m in self.patches:
+            m.start()
+        self.s = dict(q.DEFAULTS)
+
+    def tearDown(self):
+        for m in reversed(self.patches):
+            m.stop()
+
+    def test_games(self):
+        games = {g["pid"]: g["job"] for g in q.game_procs(self.s)}
+        self.assertEqual(games, {40: "", 41: "fps", 42: "prepare", 43: None})
+        self.assertFalse({4, 50, 60, 61} & set(self.read), "only the games' and pythons' memory is read")
+        self.assertEqual(q.env_of(40), {"PATH": "C:\\x"}, "the block's =C: entries are no variables")
+
+    def test_playing(self):
+        with mock.patch.object(q.time, "sleep"):
+            self.assertTrue(q.user_playing(self.s), "a hookshot.exe of nobody's job: someone is playing")
+            del self.PROCS[40]
+            self.assertFalse(q.user_playing(self.s), "a job's game, shader preparation, an unreadable one: nobody")
+
+    def test_status(self):
+        out = io.StringIO()
+        with mock.patch.object(q, "read_tickets", lambda *a, **k: []), mock.patch.object(q, "legacy_tickets", lambda s: []), \
+                contextlib.redirect_stdout(out):
+            q.status(self.s)
+        self.assertIn("playing: hookshot.exe (pid 40)", out.getvalue())
+        self.assertIn("game: Hookshot.exe pid 41 under job fps", out.getvalue())
+        self.assertIn("a build outside the queue: pid 50", out.getvalue())
+
+    def test_builds_outside(self):
+        self.assertEqual(q.heavy_procs(self.s), [50, 53])
+        self.assertEqual(q.heavy_procs(self.s, q.tree(60)), [50], "a job's tree is its own")
+
+    def test_tree(self):
+        self.assertEqual(sorted(q.tree(60)), [53, 60, 61], "61's 62 is older than 61: a pid used again")
+
+
+@unittest.skipUnless(os.name == "nt", "Windows' processes")
+class WindowsPlayersReal(unittest.TestCase):
+    """Real processes: a copy of ping.exe named hookshot.exe, with and without HOOKSHOT_JOB, read through Toolhelp and PEB"""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.exe = os.path.join(self.d, "hookshot.exe")
+        shutil.copy(os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "PING.EXE"), self.exe)
+        self.procs = []
+
+    def tearDown(self):
+        for p in self.procs:
+            p.kill()
+            p.wait()
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def start(self, job=None, args=("-n", "60", "127.0.0.1")):
+        env = {k: v for k, v in os.environ.items() if k not in ("HOOKSHOT_JOB", "OOT_STATUS_LOCK")}
+        if job:
+            env["HOOKSHOT_JOB"] = job
+        p = subprocess.Popen([self.exe, *args], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.procs.append(p)
+        return p.pid
+
+    def test_a_game_and_a_jobs_game(self):
+        mine, jobs = self.start(), self.start(job="probe")
+        time.sleep(0.5)
+        s = dict(q.DEFAULTS)
+        games = {g["pid"]: g for g in q.game_procs(s)}
+        self.assertEqual((games[mine]["job"], games[jobs]["job"]), ("", "probe"))
+        self.assertEqual(q.argv_of(jobs)[1:], ["-n", "60", "127.0.0.1"])
+        with mock.patch.dict(os.environ, {"HOOKSHOT_QUEUE_PLAYING_FILE": ""}):
+            self.assertTrue(q.user_playing(s))
+        self.assertIn(jobs, q.tree(os.getpid()), "the test's own children are in its tree")
+
+    def test_a_build_outside_the_queue(self):
+        script = os.path.join(self.d, "nx2", "build.py")
+        os.makedirs(os.path.dirname(script))
+        with open(script, "w") as f:
+            f.write("import time\ntime.sleep(60)\n")
+        p = subprocess.Popen([sys.executable, "-I", script])
+        self.procs.append(p)
+        time.sleep(0.5)
+        self.assertIn(p.pid, q.heavy_procs(dict(q.DEFAULTS)))
+        self.assertNotIn(p.pid, q.heavy_procs(dict(q.DEFAULTS), q.tree(os.getpid())))
 
 
 @unittest.skipUnless(os.name == "nt", "Windows' job object")

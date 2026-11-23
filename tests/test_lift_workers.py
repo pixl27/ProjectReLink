@@ -3,7 +3,7 @@
 A spawned worker (Windows) peaks at 395 MB over a whole lift, a forked one at ~2 GB. Checked here, with the cores and the
 available memory stood in:
   - forked: one process per 2 GB available; spawned: one per 0.75 GB; never more than the cores (at most 16), never none;
-  - HOOKSHOT_LIFT_JOBS wins over both;
+  - HOOKSHOT_LIFT_JOBS wins over both; HOOKSHOT_JOBS (the build's count, nx2/build_jobs.py) is a ceiling under them;
   - where there is no fork, start_side runs the side work in a thread and end_side gives its result; a side run that
     raised is done again in the lift's own thread (as a failed forked process is); one process asked for: no side run.
 
@@ -27,7 +27,7 @@ class Case(unittest.TestCase):
         env = mock.patch.dict(os.environ)
         env.start()
         self.addCleanup(env.stop)
-        for k in ("HOOKSHOT_LIFT_JOBS", "HOOKSHOT_LIFT_NO_FORK"):
+        for k in ("HOOKSHOT_LIFT_JOBS", "HOOKSHOT_LIFT_NO_FORK", "HOOKSHOT_JOBS"):
             os.environ.pop(k, None)
 
     def jobs(self, cores, gb, fork):
@@ -57,6 +57,21 @@ class Workers(Case):
     def test_lift_jobs_wins(self):
         os.environ["HOOKSHOT_LIFT_JOBS"] = "2"
         self.assertEqual(self.jobs(12, 30.0, fork=False), 2)
+
+    def test_the_builds_count_is_a_ceiling(self):
+        """make_game.py --jobs / HOOKSHOT_JOBS (a launcher's Build workers): no more processes than that, the memory's rule
+        still below it, and 0 or empty is automatic (nx2/build_jobs.py)"""
+        os.environ["HOOKSHOT_JOBS"] = "4"
+        self.assertEqual(self.jobs(12, 30.0, fork=False), 4)
+        self.assertEqual(self.jobs(12, 30.0, fork=True), 4)
+        self.assertEqual(self.jobs(12, 2.0, fork=True), 1)    # (the memory's rule below it)
+        self.assertEqual(self.jobs(2, 30.0, fork=True), 2)    # (never more than the cores)
+        os.environ["HOOKSHOT_LIFT_JOBS"] = "6"
+        self.assertEqual(self.jobs(12, 30.0, fork=False), 6)  # (the lift's own variable still wins)
+        del os.environ["HOOKSHOT_LIFT_JOBS"]
+        for automatic in ("0", "", "many"):
+            os.environ["HOOKSHOT_JOBS"] = automatic
+            self.assertEqual(self.jobs(12, 30.0, fork=False), 12, automatic)
 
 
 class SideWithoutFork(Case):

@@ -50,6 +50,10 @@ CPP = r"""
 #include <cstring>
 #include <cstdio>
 #include "gpu/vk/auto_settings.h"
+#ifdef _WIN32
+static int setenv(const char* key, const char* value, int) { return _putenv_s(key, value); }
+static int unsetenv(const char* key) { return _putenv_s(key, ""); }
+#endif
 enum { VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU = 1, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU = 2 };
 struct Props { int deviceType; char deviceName[256]; unsigned vendorID; };
 static ::auto_settings::Hardware detect(const Props& p) {

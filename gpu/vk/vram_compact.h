@@ -113,6 +113,16 @@ inline uint64_t texture_min_floor(uint64_t allowed) {
     return std::max<uint64_t>(1800ull << 20, allowed / 4);
 }
 
+/// A texture floor as the rules may hold it: none once the driver's count is past its allowance. There the driver pages VRAM out
+/// to system memory and every frame reads some of it over PCIe, which costs more than textures made again: a GTX 1060 6 GB
+/// sat at 6128 MB of the 5231 it allowed with 1606 MB of textures, under the 1800 MB floor, so no rule could take one,
+/// and Hyrule Field went from 31 to 14 fps until a restart. Past it the textures used in the eviction's last 60 presents are
+/// what stays (vk_texture.cpp texture_frame's min_unused); within it the floor keeps the working set from a downward ratchet
+inline uint64_t floor_within(uint64_t floor, uint64_t used, uint64_t allowed) { return allowed && used > allowed ? 0 : floor; }
+
+/// The floor of the count line's squeeze (97% of the allowance): texture_min_floor, given way past the allowance (floor_within)
+inline uint64_t count_line_floor(uint64_t used, uint64_t allowed) { return floor_within(texture_min_floor(allowed), used, allowed); }
+
 /// Dynamic texture floor with hysteresis targeting the 86%-92% VRAM sweet spot on constrained GPUs.
 inline uint64_t update_dynamic_floor(uint64_t current_floor, uint64_t total_bytes, uint64_t used, uint64_t pressure, uint64_t allowed) {
     const uint64_t min_floor = texture_min_floor(allowed);
@@ -149,7 +159,7 @@ inline uint64_t held_budget(uint64_t budget, uint64_t total, uint64_t used, uint
     // Damped contraction (alpha = 0.25) on < 8 GB GPUs to smoothly absorb transient frame spikes without thrashing.
     const uint64_t damped_over = (allowed < GLOBAL_MIN_GRAPHICS_REQ) ? (over / 4) : over;
     uint64_t target = total > damped_over ? total - damped_over : 0;
-    const uint64_t floor = floor_override ? floor_override : texture_min_floor(allowed);
+    const uint64_t floor = floor_within(floor_override ? floor_override : texture_min_floor(allowed), used, allowed);
     if (floor && target < floor) {
         target = floor;
     }

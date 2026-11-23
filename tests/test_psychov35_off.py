@@ -117,7 +117,7 @@ int main() {
  in.format=out.format=122;assert(run(in,out));assert(bound_pipe==11 && bound_layout==12);
 }
 '''
-    signatures = ['bool temporal_scene_format(', 'bool temporal_colour_pair(', 'bool stretch(']
+    signatures = ['bool temporal_scene_format(', 'bool temporal_colour_pair(', 'bool stretch_record(', 'bool stretch(']
     # On the unfixed source this helper is absent and stretch rejects RGBA before dispatch.
     # Compile that real implementation too, so the baseline fails at the native-path assertion.
     if 'bool make_rgba_stretch(' in source:

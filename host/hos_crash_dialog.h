@@ -17,6 +17,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../gpu/vk/compat/hookshot_redact.h"   /* (the home folder and the user's name out: one implementation) */
+#define HOOKSHOT_NO_GPU_KEYS_ONLY
+#include "../gpu/vk/compat/hookshot_no_gpu.h"   /* (why Vulkan listed no GPU: the renderer's line's names) */
 
 #define HOS_CRASH_WATCH_ARG "--crash-watch"
 #define HOS_CRASH_SHOW_ARG "--crash-show"
@@ -159,6 +161,7 @@ static inline size_t hos_crash_quote_arg(char *out, size_t cap, const char *arg)
 typedef struct HosCrashLog {
     int map, preparing, prepared;   /* the stage: a map line (host/hos_main.c, a save loaded), the shaders' preparation */
     int files, vulkan, window, reserve, memory, low_memory, device_lost;
+    int no_gpu;   /* (Vulkan listed no GPU at all: 1 + its cause, HOOKSHOT_NO_GPU_*, from the renderer's line; 0 no such line) */
     char version[128], gpu[160], driver[160], devices[240], dlss[240], fsr4[240];
 } HosCrashLog;
 static inline void hos_crash_take(char *dst, size_t cap, const char *from) {
@@ -187,6 +190,12 @@ static inline void hos_crash_log_line(HosCrashLog *f, const char *line) {
         strstr(line, "] vk: create_device failed") || strstr(line, "] rx: the Vulkan back end could not start") ||
         strstr(line, "] display: the renderer did not start"))
         f->vulkan = 1;
+#define HOS_CRASH_NO_GPU_LINE "] vk: no Vulkan device (cause "   /* (gpu/vk/compat/hookshot_no_gpu.h's line: why, where the PC said) */
+    if ((at = strstr(line, HOS_CRASH_NO_GPU_LINE))) {
+        const char *key = at + sizeof HOS_CRASH_NO_GPU_LINE - 1, *end = strchr(key, ')');
+        const int cause = end ? hookshot_no_gpu_cause_of(key, (size_t)(end - key)) : -1;
+        f->vulkan = 1, f->no_gpu = 1 + (cause < 0 ? HOOKSHOT_NO_GPU_UNKNOWN : cause);
+    }
     if (strstr(line, "] display: no SDL") || strstr(line, "] display: SDL_Init: ") || strstr(line, "] display: SDL_CreateWindow: ") ||
         ((at = strstr(line, "] display: ")) && strstr(at, " failed (error ")))
         f->window = 1;
@@ -294,13 +303,17 @@ static inline int hos_crash_verdict(const HosCrashRecord *r, const HosCrashLog *
     return HOS_CRASH_QUIET;
 }
 enum { HOS_CAUSE_UNKNOWN, HOS_CAUSE_FILES, HOS_CAUSE_VULKAN, HOS_CAUSE_WINDOW, HOS_CAUSE_MEMORY, HOS_CAUSE_GPU_DRIVER,
-       HOS_CAUSE_ENDED };
-/* Why, where the record or the log says: the first that holds of the game's files, Vulkan, the window (before play), memory,
-   the graphics driver; an unclean end with nothing else known was ended from outside (or out of memory, when the start
-   warned of low memory); else not known */
+       HOS_CAUSE_ENDED, HOS_CAUSE_NO_GPU, HOS_CAUSE_NVIDIA_RT, HOS_CAUSE_NVIDIA_UNLOADED, HOS_CAUSE_NVIDIA_VULKAN };
+/* Why, where the record or the log says: the first that holds of the game's files, Vulkan (no GPU listed at all, and why
+   where the PC said: f->no_gpu), the window (before play), memory, the graphics driver; an unclean end with nothing else
+   known was ended from outside (or out of memory, when the start warned of low memory); else not known */
 static inline int hos_crash_cause(int verdict, const HosCrashRecord *r, const HosCrashLog *f, int have_exit, unsigned long exit_code) {
     if (f->files && !f->map) return HOS_CAUSE_FILES;
-    if (f->vulkan && !f->map) return HOS_CAUSE_VULKAN;
+    if (f->vulkan && !f->map)
+        return f->no_gpu == 1 + HOOKSHOT_NO_GPU_NVIDIA_RT ? HOS_CAUSE_NVIDIA_RT
+             : f->no_gpu == 1 + HOOKSHOT_NO_GPU_NVIDIA_UNLOADED ? HOS_CAUSE_NVIDIA_UNLOADED
+             : f->no_gpu == 1 + HOOKSHOT_NO_GPU_NVIDIA_VULKAN ? HOS_CAUSE_NVIDIA_VULKAN
+             : f->no_gpu ? HOS_CAUSE_NO_GPU : HOS_CAUSE_VULKAN;
     if (f->window && !f->map) return HOS_CAUSE_WINDOW;
     if (f->reserve || f->memory || r->code == 0xC0000017u || (have_exit && exit_code == 0xC0000017ul)) return HOS_CAUSE_MEMORY;
     if (!strcmp(r->reason, "device lost") || !strcmp(r->reason, "Vulkan fatal") || f->device_lost ||
@@ -328,6 +341,20 @@ static inline const char *hos_crash_cause_text(int cause) {
     case HOS_CAUSE_VULKAN:
         return "Vulkan didn't start on your graphics card. Update your graphics driver: Hookshot needs a graphics card and "
                "driver with Vulkan 1.3.";
+    case HOS_CAUSE_NO_GPU:
+        return "Vulkan found no graphics card. Check that a Vulkan driver is installed and loaded, and that Vulkan loader "
+               "filters are not hiding your card. Install or update your graphics driver and restart your PC: Hookshot needs "
+               "a graphics card and driver with Vulkan 1.3.";
+    case HOS_CAUSE_NVIDIA_RT:
+        return "NVIDIA's kernel module isn't loaded and this is a real-time kernel (PREEMPT_RT). A driver compatibility or "
+               "loading issue is possible. Check your NVIDIA driver and kernel module logs, and try a supported driver or a "
+               "standard kernel. Also check that a Vulkan driver is installed and loaded.";
+    case HOS_CAUSE_NVIDIA_UNLOADED:
+        return "NVIDIA's kernel module isn't loaded. This may be a driver loading issue. Restart your PC or reinstall the NVIDIA "
+               "driver, and check that a Vulkan driver is installed and loaded.";
+    case HOS_CAUSE_NVIDIA_VULKAN:
+        return "NVIDIA's kernel module is loaded, but Vulkan found no graphics card. Check that a Vulkan driver is installed "
+               "and loaded. NVIDIA's Vulkan files may be missing or mismatched; try restarting or reinstalling its driver.";
     case HOS_CAUSE_WINDOW: return "Hookshot couldn't open its window. Restart your PC, and update your graphics driver.";
     case HOS_CAUSE_MEMORY:
         return "Your PC ran out of memory. Close other programs and try again; Hookshot needs 16 GB of RAM, and on Windows a "

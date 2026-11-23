@@ -2,11 +2,12 @@
 // says it began and has not ended: the stage libraries' (hookshot_prepared.bin.warming), the predicted pipelines'
 // (hookshot_pipelines.bin.predicting), the warm into the pipeline cache's (hookshot_pipelines.bin.built.warming) and the
 // precompile's (hookshot_pipelines.bin.running), vk_draw.cpp. The next start reads it and, after one or two starts that ended
-// inside, goes on without that step. Only a crash (or a kill) may count. A close does not: the window's close, the Insert
-// menu's Quit and Restart now and the control socket's quit all end the process at once (ExitProcess: no destructor runs, no
-// thread is joined), so the step's file was left as if the start had crashed there, and two quits in the precompile dropped
-// its notes. The close (mkwvk_close_asked, which each of them calls first) puts every step still open back as its start found
-// it. tests/test_quit_not_crash.py.
+// inside, goes on without that step. Only a crash, or a kill that no quit asked for, may count. A quit does not: the window's
+// close, the Insert menu's Quit and Restart now and the control socket's quit all end the process at once (ExitProcess: no
+// destructor runs, no thread is joined), so the step's file was left as if the start had crashed there, and two quits in the
+// precompile dropped its notes. Nor does a process ended while it closes, after the quit (the close takes up to 10 s and more,
+// with the window not answering: a player who quits again then ends it). The close (mkwvk_close_asked, which each of them
+// calls first) puts every step still open back as its start found it, before anything else. tests/test_quit_not_crash.py.
 #pragma once
 
 #include <cstddef>
@@ -69,9 +70,12 @@ inline void end(const std::string& path) {
     std::remove(path.c_str());
 }
 
-/// The player is closing the game: every step still open has its file put back as its start found it, whether its workers
-/// stopped in time or are still at work. From then on begin() and end() do nothing: the files stay as the start found them
-/// until the process ends a moment later, whatever a worker still running does (a restart's new process may already read them)
+/// The player asked to quit (mkwvk_close_asked, first): every step still open has its file put back as its start found it,
+/// before the close saves the caches and stops the workers, so that the process ended meanwhile (Force Quit, End task, the
+/// system at a log-out) is not taken for a crash either. A worker that crashes the driver after this is not counted: one that
+/// does so at every start crashes the next start too, which counts. From then on begin() and end() do nothing: the files stay
+/// as the start found them until the process ends, whatever a worker still running does (a restart's new process may already
+/// read them)
 inline void close() {
     detail::State& s = detail::state();
     std::lock_guard lk(s.mu);

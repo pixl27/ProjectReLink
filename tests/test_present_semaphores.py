@@ -89,6 +89,7 @@ void reflex_swapchain_created(uint64_t sc) {cached.swapchain=sc;cached.latency=c
 ''' + reset + r'''
 template<class... T> void logf(const char*,T...) {}
 void present_thread_drain() {}   // (RX_VK_PRESENT_THREAD off: nothing handed over)
+void fg_latency_swapchain_gone() {}   // (RX_VK_FG_LATENCY_LOG unset: no waits for presents)
 std::atomic<bool> presenter_surface_lost{false};   // (and nothing found lost by it)
 int vkCreateSwapchainKHR(int,const CreateInfo* ci,void*,uint64_t* out) {
     if(ci->oldSwapchain) {

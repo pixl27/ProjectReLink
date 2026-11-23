@@ -9,6 +9,10 @@
      sphere  0x800a8400  a model's bounding sphere over its bones' spheres, called directly: HL_GATE
      u3      0x817d9d80  the per-body box update of the solver's last substep (u1, u2 and the segment's box inside),
                          called directly: HL_GATE; it writes through pointers it computes (run_body)
+     support 0x817472e0  the support point of a 1 to n vertex set along a direction (narrow phase), called directly (a thunk
+                         tail-calls it): HL_GATE; its answer is 16 bytes
+     relxf   0x817036a0  the placement of one precise transform relative to another (narrow phase), called directly:
+                         HL_GATE; its answer is 80 bytes
      sil     0x8182dc20  subIntegrateLastStep (u3's caller), called directly: HL_GATE; a check of its motions' steps and
                          records only, with the paths' histogram (run_sil): nothing native yet, not validated
    A call takes the native path only when the thread's guest FPCR has no bit but FZ set and the kernel finds every value
@@ -33,7 +37,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#define HL_MATH_DEFAULT 0   /* (off by default here: HL_MATH=1 on) */
+#define HL_MATH_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ 
 #define FPCR_FZ (1ull << 24)
 #define FPSR_IXC 0x10ull
 #define BOX_BIAS_PTR 0x84ca4680ULL   /* (a global pointer: 0x81a040bc adds the two floats at its +80 to every extent) */
@@ -53,7 +57,8 @@ typedef struct {
     const char *name;
     uint64_t guest;
     int validated;                        /* native under HL_MATH=1: zero mismatches over full runs in the three scenes */
-    int (*native)(const Ctx *c, void *out);   /* the 32-byte answer into out: 1, or 0 when the kernel declines */
+    int out_len;                          /* the bytes the function writes at out_at (0: 32) */
+    int (*native)(const Ctx *c, void *out);   /* the answer into out: 1, or 0 when the kernel declines */
     uint64_t (*out_at)(const Ctx *c);      /* where the function writes its 32 bytes */
     int (*inputs)(const Ctx *c, Span *s);  /* what it reads (at most SPANS ranges) */
     volatile int *gate;                    /* its gate's switch; NULL: answered through the pointer */
@@ -111,8 +116,39 @@ static int sphere_inputs(const Ctx *c, Span *s) {
     return 6;
 }
 
-extern volatile int hl_gate_on_80ba6d80, hl_gate_on_81746440, hl_gate_on_800a8400, hl_gate_on_817d9d80, hl_gate_on_8182dc20;
-enum { U2, AFFINE, U1, SPHERE, U3, SIL, UNITS };
+/* ---- support (0x817472e0): the constants the function reads from its module's data, as the native side is given them ---- */
+#define SUPPORT_JUMP 0x83eb4560ULL     /* (four bytes: the case by n & 3) */
+#define SUPPORT_SELECT 0x83eb09b0ULL   /* (eight bytes: the three-vertex case's mask to index) */
+#define SUPPORT_PAD_PTR 0x84ca4680ULL  /* (a pointer to a block holding the padding float at +0x30) */
+#define SUPPORT_LANES_PTR 0x84cb8120ULL /* (a pointer to a block holding the step at +0x40 and the lane indices at +0x50) */
+static int support_native(const Ctx *c, void *out) {
+    hl_math_support_tables t;
+    memcpy(t.jump, GP(SUPPORT_JUMP), 4);
+    memcpy(t.select, GP(SUPPORT_SELECT), 8);
+    memcpy(&t.pad, GP(G64(SUPPORT_PAD_PTR) + 0x30), 4);
+    memcpy(t.step, GP(G64(SUPPORT_LANES_PTR) + 0x40), 16);
+    memcpy(t.index, GP(G64(SUPPORT_LANES_PTR) + 0x50), 16);
+    return hl_math_support_point(GP(c->x[0]), GP(c->x[1]), &t, out);
+}
+static uint64_t support_out(const Ctx *c) { return c->x[2]; }
+static int support_inputs(const Ctx *c, Span *s) {
+    const int32_t off = (int32_t)G32(c->x[0]), n = (int32_t)G32(c->x[0] + 4);
+    s[0] = (Span){c->x[0], 8};
+    s[1] = (Span){c->x[1], 16};
+    s[2] = (Span){c->x[0] + (int64_t)off, off && n > 0 ? (uint32_t)(n < 17 ? n + 3 : 20) * 12 : 0};
+    return 3;
+}
+
+static int relxf_native(const Ctx *c, void *out) { return hl_math_relative_transform(GP(c->x[1]), GP(c->x[2]), out); }
+static uint64_t relxf_out(const Ctx *c) { return c->x[0]; }
+static int relxf_inputs(const Ctx *c, Span *s) {
+    s[0] = (Span){c->x[1], 76};
+    s[1] = (Span){c->x[2], 76};
+    return 2;
+}
+
+extern volatile int hl_gate_on_80ba6d80, hl_gate_on_81746440, hl_gate_on_800a8400, hl_gate_on_817d9d80, hl_gate_on_8182dc20, hl_gate_on_817036a0, hl_gate_on_817472e0;
+enum { U2, AFFINE, U1, SPHERE, U3, SIL, SUPPORT, RELXF, UNITS };
 /* validated: HL_MATH_CHECK=1 over full runs of kokiri-idle, castle-move and hyrule-walk (PC 3050, 2026-11-13) compared
    0.95 M (u2), 27 M (affine), 2.0 M (u1), 1.9 M (sphere) calls with no mismatch (physics-loops.md section 8); u3 over
    the three scenes on the main PC (2026-11-14): 1.01 M calls compared, no mismatch */
@@ -129,6 +165,12 @@ static Unit units[UNITS] = {
     [U3] = {.name = "u3", .guest = 0x817d9d80ULL, .validated = 1, .gate = &hl_gate_on_817d9d80},
     /* (a check only for now: run_sil below) */
     [SIL] = {.name = "sil", .guest = 0x8182dc20ULL, .gate = &hl_gate_on_8182dc20},
+    /* (the narrow-phase leaves of physics-loops.md section 12: HL_MATH_CHECK clean in kokiri-idle, castle-move and
+       hyrule-walk on the PC 3050, 2026-11-17: 1.8 M support and 0.18 M relxf calls compared, no mismatch) */
+    [SUPPORT] = {.name = "support", .guest = 0x817472e0ULL, .validated = 1, .out_len = 16, .native = support_native, .out_at = support_out,
+                 .inputs = support_inputs, .gate = &hl_gate_on_817472e0},
+    [RELXF] = {.name = "relxf", .guest = 0x817036a0ULL, .validated = 1, .out_len = 80, .native = relxf_native, .out_at = relxf_out,
+               .inputs = relxf_inputs, .gate = &hl_gate_on_817036a0},
 };
 
 /* ---- switches ---- */
@@ -240,7 +282,8 @@ static void hex(char *to, size_t cap, const uint8_t *p, size_t n) {
 static _Thread_local int bypass;   /* the check is running the translated function on this thread: its gate says 0 */
 
 /* The check: native answer computed (mine), the translated function run for real, the 32 bytes at out compared. */
-static void compare(Unit *u, Ctx *c, uint64_t out, const uint8_t mine[32]) {
+static void compare(Unit *u, Ctx *c, uint64_t out, const uint8_t *mine) {
+    const int len = u->out_len ? u->out_len : 32;
     Span s[SPANS];
     uint8_t in[SNAP];
     int ns = 0;
@@ -260,12 +303,12 @@ static void compare(Unit *u, Ctx *c, uint64_t out, const uint8_t mine[32]) {
     InterlockedIncrement64(&u->compared);
     if ((c->fpsr | FPSR_IXC) != fpsr) InterlockedIncrement64(&u->fpsr_differs);
     const uint8_t *theirs = (const uint8_t *)GP(out);
-    if (!memcmp(theirs, mine, 32)) return;
+    if (!memcmp(theirs, mine, len)) return;
     InterlockedIncrement64(&u->mismatches);
     if (!ns || InterlockedIncrement(&u->logged) > LOG_FIRST) return;
-    char a[128], b[128], h[1400];
-    hex(a, sizeof a, theirs, 32);
-    hex(b, sizeof b, mine, 32);
+    char a[256], b[256], h[1400];
+    hex(a, sizeof a, theirs, len);
+    hex(b, sizeof b, mine, len);
     hos_log("hl math: %s MISMATCH at out %#llx, fpcr %#llx: translated %s / native %s", u->name, (unsigned long long)out,
             (unsigned long long)fpcr, a, b);
     used = 0;
@@ -288,17 +331,18 @@ static int run(Unit *u, Ctx *c) {
     InterlockedAnd(&u->fpcr_and, (LONG)c->fpcr);
     /* (the scratch starts as the guest's 32 bytes: a kernel that writes part of them leaves the rest as they are) */
     const uint64_t out = u->out_at(c);
-    uint8_t mine[32];
+    uint8_t mine[96];
+    const int len = u->out_len ? u->out_len : 32;
     int answered = 0;
     if (c->fpcr & ~FPCR_FZ) InterlockedIncrement64(&u->declined_fpcr);
-    else if (!out || (memcpy(mine, GP(out), 32), !u->native(c, mine))) {
+    else if (!out || (memcpy(mine, GP(out), len), !u->native(c, mine))) {
         InterlockedIncrement64(&u->declined_inputs);
         count_why(u);
     } else if (u->check_on) {
         compare(u, c, out, mine);
         answered = 1;
     } else {
-        memcpy(GP(out), mine, 32);
+        memcpy(GP(out), mine, len);
         c->fpsr |= FPSR_IXC;   /* (sticky, and the translation sets it on any inexact operation: keeps its fast path open) */
         InterlockedIncrement64(&u->answered);
         answered = 1;
@@ -645,3 +689,7 @@ HL_GATE(81746440, "851bc99bf31be697") { return run(&units[U1], c); }
 HL_GATE(800a8400, "42b7877d24ec9c57") { return run(&units[SPHERE], c); }
 HL_GATE(817d9d80, "fff55648d2f990a0") { return run_body(&units[U3], c); }
 HL_GATE(8182dc20, "34e889a38dac6751") { return run_sil(&units[SIL], c); }
+HL_GATE(817036a0, "b55701fae919e72f") { return run(&units[RELXF], c); }
+
+/* (reached through a thunk that tail-calls it directly, f_81743538, and not through the answer table: a gate) */
+HL_GATE(817472e0, "94e7125010797ae2") { return run(&units[SUPPORT], c); }

@@ -114,7 +114,7 @@ int main(int argc, char**) {
     assert '!temporal_scene_format(color0->format)' in function(chain, 'void temporal_note_scene_draw(')
     assert '!temporal_scene_format(at.color_format[0])' in function(draw, 'static void skin_check(')
     assert '!temporal_scene_format(at.color_format[0])' in function(draw, 'void reactive_scene_draw(')
-    upscale = function(chain, 'bool temporal_upscale(')
+    upscale = function(chain, 'bool draw_engine(')
     assert '!temporal_scene_format(cam.scene_format)' in upscale
     assert '!temporal_scene_format(in->format)' in upscale
     assert '!temporal_colour_pair(in->format, out->format)' in upscale
@@ -123,8 +123,8 @@ int main(int argc, char**) {
     assert upscale.index('PsychoV35 waits') < upscale.index('engine.e->evaluate(cmd, f)')
     assert 'prep_hdr_data{16384.0f, VK_TRUE}' in chain
     assert 'out_hdr_square = VK_FALSE' in chain
-    assert 'const VkPipeline prep_pipe = hdr ? s.prep_hdr : s.prep;' in upscale
-    assert 'const VkPipelineLayout prep_layout = hdr ? s.prep_hdr_layout : s.prep_layout;' in upscale
+    assert 'const VkPipeline prep_pipe = pre ? s.prep_lin : hdr ? s.prep_hdr : s.prep;' in upscale
+    assert 'const VkPipelineLayout prep_layout = pre ? s.prep_lin_layout : hdr ? s.prep_hdr_layout : s.prep_layout;' in upscale
     assert 'rgba ? s.out_rgba' in upscale
     assert 'if (rgba && !make_rgba_output())' in upscale
     # Both translated and rejected networks must use a storage view matching the typed output shader.

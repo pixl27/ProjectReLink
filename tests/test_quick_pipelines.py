@@ -7,7 +7,7 @@ Ported from Mako, by sharkiix (8292d363). Checks, game-free:
 - a driver-fault gate that was only busy (AMD: the program's own full build in the driver) leaves the entry to be tried again,
   in quick_pipe.h and through vk_draw.cpp's quick_pipeline; a frame's budget is not overrun by more than one build;
 - vk_draw.cpp's own quick_pipeline, cut out and built against stand-ins: the caches asked without compiling before a quick
-  build, the quick build under quick_build, and RX_VK_QUICK_MS off by default on every driver, strictly read;
+  build, the quick build under quick_build, and required-only builds by default, numeric budgets and the explicit off switch;
 - build_graphics: a quick build goes into no pipeline cache, does not count towards a save nor in st_pipelines, is not made
   where the full build is made without the optimizer already, and does not wait at the driver-fault gate, which says when it
   was busy; RX_VK_TEST_SLOW_MS holds the full build inside the gate; the worker's full build replaces the quick one, and one
@@ -111,7 +111,7 @@ def main():
         subprocess.run([args.cxx, "-std=c++20", "-Wall", "-Wextra", "-Werror", "-pthread", "-I", str(tmp),
                         str(ROOT / "tests/test_quick_pipelines.cpp"), "-o", str(exe)], check=True)
         for driver, value, want in (("amd", None, "0"), ("nvidia", None, "0"), ("amd", "0", "0"), ("nvidia", "250", "250"),
-                                    ("amd", "8", "8"), ("amd", "8ms", "0"), ("nvidia", "fast", "0")):
+                                    ("nvidia", "required", "0"), ("amd", "8", "8"), ("amd", "8ms", "0"), ("nvidia", "fast", "0")):
             env = {k: v for k, v in os.environ.items() if k not in ("RX_VK_QUICK_MS", "RX_VK_PIPE_WAIT_MS")}
             if value is not None:
                 env["RX_VK_QUICK_MS"] = value

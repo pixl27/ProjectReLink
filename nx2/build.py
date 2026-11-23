@@ -51,6 +51,7 @@ import object_store
 import ui_fonts
 import toolchain
 import third_party_objects
+import tracy_funcs
 import translator_files
 import version
 import win_manifest
@@ -59,7 +60,8 @@ NX2_RT = os.path.join(kit.HERE, "rt")
 HOST = os.path.join(kit.HERE, "..", "host")
 OPUS = os.path.join(kit.HERE, "..", "third_party", "opus")
 ZSTD = os.path.normpath(os.path.join(kit.HERE, "..", "third_party", "zstd", "lib"))
-ZSTD_HOST = ("prompts.c", "hos_zstd.c", "zs.c", "hl_stream.c")   # (the host files that use it: a mod's size table; the game's stream decode)
+ZSTD_HOST = ("prompts.c", "hos_zstd.c", "zs.c", "hl_stream.c", "oot_heart_containers.c")   # (the host files that use it: a mod's
+# size table; the game's stream decode; the boss heart containers' ids, read from the map files for the Discord status)
 OBJ_CACHE = os.path.join(kit.WORK, "objcache")
 # (HOOKSHOT_OBJ_STORE: one store of objects for every work folder, nx2/object_store.py. Its folder for this work folder's compiler
 # and headers, or None)
@@ -82,8 +84,8 @@ VK_LIB = "hookshot_vk.so" if LINUX else "hookshot_vk.dll"
 
 def check_vk_symbols(so):
     """The back end is dlopened with RTLD_NOW, so one unresolved symbol stops the whole thing
-    loading -- and the only sign of that at run time is "the renderer did not start: the window
-    stays black", with no symbol named. The link itself does not fail: a shared object is allowed to
+    loading -- and the only sign of that at run time is "the renderer did not start: the game
+    ends", with no symbol named. The link itself does not fail: a shared object is allowed to
     leave symbols for its loader to supply, which is exactly what the host executable does for the
     weak hos_* ones.
 
@@ -93,7 +95,9 @@ def check_vk_symbols(so):
     globals written inside an anonymous namespace, which makes a different symbol that nothing
     defines.
     """
-    nm = shutil.which("nm") or shutil.which("llvm-nm")
+    # GNU nm on some Linux distributions omits symbol-version suffixes here,
+    # making normal libc imports look unresolved. llvm-nm keeps those suffixes.
+    nm = shutil.which("llvm-nm") or shutil.which("nm")
     if not nm:
         return True   # (not a reason to fail a build; the check is a guard, not a dependency)
     try:
@@ -108,6 +112,8 @@ def check_vk_symbols(so):
             continue
         name = parts[1]
         if "@GLIBC" in name or "@CXXABI" in name or "@GLIBCXX" in name or "@GCC" in name:
+            continue
+        if TRACY and name.startswith("___tracy_"):   # (HOOKSHOT_TRACY: the client's C API, which the executable exports)
             continue
         bad.append(name)
     if not bad:
@@ -420,6 +426,17 @@ def image_too_big(exe):
             "build it at -O1 (not -O0), or split the lifted code into more than one module" % (span >> 20, IMAGE_LIMIT >> 20))
 
 
+# (Linux) the exe's functions the Vulkan back end (hookshot_vk.so) finds by name: an executable's functions are in its dynamic
+# symbol table only when the link exports them (on Windows they are DLL exports, __declspec(dllexport)). Every name the back end
+# looks up in the exe (GetProcAddress(GetModuleHandleA(nullptr), ...), dlsym(RTLD_DEFAULT, ...)) is here:
+# tests/test_host_exports.py reads gpu/ for them. A name the Linux host does not define (hl_drop.c, hos_hostsplit.c,
+# hos_guestpages.c and hos_memsplit.c are Windows-only) is exported as nothing and still not found, as before
+HOST_EXPORTS = ("hos_posix_*", "hos_jt_mark_ext",
+                "hos_gpu_live_pools", "hos_gpu_write_live", "hos_lag_sub", "hos_lag_frames", "hos_lag_counts",
+                "hos_mem_tag", "hos_mem_untag", "hos_gp_hold", "hos_gp_dropped_in", "hos_pool_trap_release", "hos_noaccess_import",
+                "hos_drop_spill_bytes", "hos_hostsplit_totals", "hos_ledger_pages")
+
+
 def HOT_ORDER():
     p = os.path.join(kit.WORK, "hot_order.txt")
     if not os.path.exists(p) or os.environ.get("RX_NO_ORDER"):
@@ -445,14 +462,50 @@ def native_sources():
 FFMPEG = None   # (found in the CPM caches below, once cpm_dirs is defined)
 
 
-def exe_resources():
-    """(Windows) the .res with the exe's icon (and the name Windows shows for it) to link: the game's own, which the builder made
-    from its .nup (work/hookshot_game.res, nx2/game_title.py), else a developer's picture (work/hookshot.res, nx2/make_icon.py),
-    else none. Only one: both are icon 1"""
-    for name in ("hookshot_game.res", "hookshot.res"):
-        if os.path.exists(os.path.join(kit.WORK, name)):
-            return [os.path.join(kit.WORK, name)]
-    return []
+BRAND_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "red-tunic.ico")
+BRAND_RES = "hookshot_brand.res"
+
+
+def exe_resources(work=None, brand=BRAND_ICON):
+    """(Windows) the .res files to link into the exe: Hookshot's icon, always (builder/setup/hookshot.ico, the builder's and the
+    launcher's, made into work/hookshot_brand.res: icon 1, which the window loads, host/display.c), so every build has it in
+    its window and taskbar, a release's too; and the name Windows shows for the exe when the builder read the game's from its
+    .nup (work/hookshot_game.res, nx2/game_title.py: version strings only)"""
+    work = work or kit.WORK
+    out = []
+    try:
+        with open(brand, "rb") as f:
+            data = f.read()
+    except OSError:
+        data = None
+    if data:
+        import make_icon
+        res = os.path.join(work, BRAND_RES)
+        made = make_icon.res_of(make_icon.images_of_ico(data))
+        try:
+            with open(res, "rb") as f:
+                same = f.read() == made
+        except OSError:
+            same = False
+        if not same:
+            os.makedirs(work, exist_ok=True)
+            with open(res, "wb") as f:
+                f.write(made)
+        out.append(res)
+    named = os.path.join(work, "hookshot_game.res")
+    if os.path.exists(named):
+        if out:   # (a standalone build may reuse a pre-branding resource containing a game icon)
+            import game_title
+            with open(named, "rb") as f:
+                cached = f.read()
+            title_only = make_icon.without_icons(cached)
+            if title_only != cached:
+                if title_only == make_icon.res_of():
+                    return out
+                named = os.path.join(work, "hookshot_game_title_only.res")
+                game_title.write_if_changed(named, title_only)
+        out.append(named)
+    return out
 
 
 def tree_headers(*roots, skip=()):
@@ -465,7 +518,7 @@ def tree_headers(*roots, skip=()):
         # gpu/vk header change rebuilt the WebGPU renderer)
         for d, dirs, files in os.walk(root):
             dirs[:] = sorted(x for x in dirs if x not in skip)
-            found += [os.path.join(d, f) for f in files if f.endswith((".h", ".hpp", ".inc"))]
+            found += [os.path.join(d, f) for f in files if f.endswith(HEADER_EXTS)]
         for path in sorted(found):
             h.update(os.path.basename(path).encode() + open(path, "rb").read())
     return h.hexdigest().encode()
@@ -477,7 +530,10 @@ def tree_headers(*roots, skip=()):
 # says which headers it read. The next build names the object by those of them under the same folders, their names and
 # contents (renderer_deps), and the blob stays for a file with no depfile yet or one that cannot be read. What a file reads from
 # elsewhere (the Vulkan and SPIR-V headers, the compiler's) counts as before: by the flags and the system headers' stamp.
-HEADER_EXTS = (".h", ".hpp", ".inc")
+# What an #include can name: .def and .inl too (gpu/vk/switches.h includes switches.def twice). Without them a new switch row
+# compiled nothing again, and an update or a pack kept the old switch table in vk_main.o and vk_shader.o. The folders' blob
+# (tree_headers) takes the same list. An object that reads none of them keeps its key
+HEADER_EXTS = (".h", ".hpp", ".inc", ".inl", ".def")
 _HEADER_DIGESTS = {}   # (a header's path -> its name and content's sha1, once a run: many files read the same headers)
 DEPFILE_DEPS = b"depfile:"   # (what renderer_deps' dependency text starts with when it comes from a depfile)
 DEPFILE_PENDING = "depfile-pending"   # (the stamp of an object compiled now from a depfile key, until rekey_depfiles keys it)
@@ -567,6 +623,34 @@ NGX_MSVC_RT = "vk_ngx_msvc_rt.cpp"
 # it; the camera jitter it needs is in every build: nx2/oot_jitter.py). A Linux build with it compiles the back end from the
 # headers the AppImage carries (FSR_HEADERS, which make_game.py's Linux check looks for before the game is read)
 FSR = os.environ.get("HOOKSHOT_FSR", "") == "1"
+# HOOKSHOT_TRACY=1 (a developer's build, never a player's: docs/development/tracy.md): the game and the Vulkan back end with
+# the Tracy profiler's zones (host/hos_tracy.h) and Tracy's client (third_party/tracy), compiled into the executable alone,
+# which exports its C API; the back end's module calls that one client. It listens on 127.0.0.1 only and announces nothing
+# (TRACY_ONLY_LOCALHOST, TRACY_NO_BROADCAST), records only while a viewer is connected (TRACY_ON_DEMAND), leaves the
+# crashes to the host's own handlers (TRACY_NO_CRASH_HANDLER), sends no machine code (TRACY_NO_CODE_TRANSFER) and is
+# started by the game's main, not before it (TRACY_MANUAL_LIFETIME: the crash window's helper process has none). The
+# frame pointers kept, for its sampler's call stacks. Unset: none of this, the same flags and objects as before.
+TRACY = os.environ.get("HOOKSHOT_TRACY", "") == "1"
+TRACY_PUBLIC = os.path.normpath(os.path.join(kit.HERE, "..", "third_party", "tracy", "public"))
+TRACY_FLAGS = ["-DTRACY_ENABLE", "-DTRACY_ON_DEMAND", "-DTRACY_ONLY_LOCALHOST", "-DTRACY_NO_BROADCAST",
+               "-DTRACY_NO_CRASH_HANDLER", "-DTRACY_NO_CODE_TRANSFER", "-DTRACY_DELAYED_INIT", "-DTRACY_MANUAL_LIFETIME", "-fno-omit-frame-pointer", "-I" + TRACY_PUBLIC] if TRACY else []
+# (HOOKSHOT_TRACY_FIBERS=1 with it: the game's fibers told to Tracy, TRACY_FIBERS. Every zone then goes through one queue
+# under a lock, which costs a capture much of its frame rate: only for a capture whose zones cross a fiber's move
+# between threads)
+if TRACY and os.environ.get("HOOKSHOT_TRACY_FIBERS", "") == "1":
+    TRACY_FLAGS = ["-DTRACY_FIBERS"] + TRACY_FLAGS
+TRACY_IMPLIB = "hookshot_tracy.lib"   # (Windows: the executable's import library, which the back end's module links)
+
+
+def tracy_tree():
+    """Every file of Tracy's client, as one dependency blob (TracyClient.cpp includes its other .cpp files)"""
+    h = hashlib.sha1(b"tracy\0", usedforsecurity=False)
+    for d, dirs, files in os.walk(TRACY_PUBLIC):
+        dirs.sort()
+        for f in sorted(files):
+            with open(os.path.join(d, f), "rb") as fh:
+                h.update(f.encode() + fh.read())
+    return h.hexdigest().encode()
 FSR_HEADERS = os.path.join(kit.HERE, "..", "third_party", "fidelityfx")
 
 
@@ -694,12 +778,14 @@ COMPILER_MB = 1500
 # first build's compile 1,347 -> 1,057 s on a Ryzen 5 5600. "0": off; a number: the pieces' size in KB
 def split_giants_flags():
     """The flag the lifted chunks and the hot pieces carry when their giants are split (split_giants.FLAG: the piece size and
-    the splitter's own hash, so a change of either builds them again); [] when off"""
+    the splitter's own hash, so a change of either builds them again); [] when off. HOOKSHOT_SPLIT_DIRECT=0: the pieces go
+    through the dispatch loop only, never straight from one to the next (split_giants.macros)"""
     raw = os.environ.get("HOOKSHOT_SPLIT_GIANTS", "").strip()
     if raw == "0":
         return []
     import split_giants
-    return [split_giants.flag(int(raw) if raw.isdigit() else split_giants.PIECE_KB)]
+    return [split_giants.flag(int(raw) if raw.isdigit() else split_giants.PIECE_KB,
+                              os.environ.get("HOOKSHOT_SPLIT_DIRECT", "").strip() != "0")]
 
 
 # HOOKSHOT_CHUNK_OPT ("", the default: the lifted chunks at OPT as they are): "all" compiles every lifted chunk at -O2, or a
@@ -735,7 +821,7 @@ def chunk_opt_o2(gen):
                 continue
             with open(os.path.join(gen, name), "rb") as f:
                 text = f.read()
-            if any(m.group(1) in want for m in lifted_c.HEAD_BYTES.finditer(text)):
+            if any(m.group(1) in want for m in lifted_c.definitions(text)):
                 chunks.add(name)
     return chunks
 
@@ -919,14 +1005,15 @@ def rss_mb(proc):
         return 0
 
 
+# (a piece's definition in split_giants.py's copy: `static __attribute__((noinline)) s_<addr>_CC uintptr_t s_<addr>_<n>(...) {`)
+PIECE_HEAD = re.compile(rb"\nstatic __attribute__\(\(noinline\)\) (?:\w+ )?uintptr_t s_[0-9a-f]+_\d+\([^;\n]*\) \{")
+
+
 def largest_function(text):
     """The largest function of a lifted file's text, in bytes: each function from the newline before its definition, as mem_need
     was first measured; a giant's pieces are functions of their own (split_giants.py, the copy compile_one compiles)"""
-    starts = [m.start() - 1 for m in lifted_c.HEAD_BYTES.finditer(text)]
-    i = text.find(b"\nstatic __attribute__((noinline)) uintptr_t s_")
-    while i >= 0:
-        starts.append(i)
-        i = text.find(b"\nstatic __attribute__((noinline)) uintptr_t s_", i + 1)
+    starts = [m.start() - 1 for m in lifted_c.definitions(text)]
+    starts += [m.start() for m in PIECE_HEAD.finditer(text)]
     starts = sorted(starts) + [len(text)]
     return max([b - a for a, b in zip(starts, starts[1:])] or [0])
 
@@ -1102,6 +1189,10 @@ def ffmpeg_version_key():
 # instead of Windows' write watch (GetWriteWatch over the 6 GB MKW's GPU sees took ~20 ms a scan, in one thread or
 # four: the race's replay waited ~12 ms a frame for it). Always: the guest window is not write-watched
 WRITE_TRACK = ["-DA64_WRITE_TRACK"]
+# (hookshot) the lifted game's stores mark their page only where the page is a GPU page (host/mark_bitmap.c, nx2/rtgen.py
+# A64_MARK_BITMAP); the host's own marks stay. On by default; RX_MARK_BITMAP=0 builds the lifted game marking every page
+# it stores to, as before
+MARK_BITMAP = [] if os.environ.get("RX_MARK_BITMAP", "").strip().lower() in ("0", "off", "false", "no") else ["-DA64_MARK_BITMAP"]
 
 # (hookshot) the host CPU the lifted game and the runtime are built for: x86-64-v3 (AVX2, FMA, BMI1/2, LZCNT,
 # MOVBE; Haswell and Zen 1 on). With FMA the FPX1 fast paths cover double-precision FMA (RECOMP_FPX_FMA64; it took
@@ -1158,7 +1249,7 @@ def flags(gen, rt64, opt, polls):
         "-ffunction-sections", "-mllvm", "-capture-tracking-max-uses-to-explore=5000",
         # (a compiler's peak memory ~10% lower on a lifted chunk and on a hot piece, clang 23; the lifted code runs as fast)
         "-Xclang", "-disable-lifetime-markers"] + \
-        (["-DA64_POLLING"] if polls else []) + WRITE_TRACK
+        (["-DA64_POLLING"] if polls else []) + WRITE_TRACK + MARK_BITMAP
 
 
 # HOOKSHOT_LIGHT_PASSES (on by default; 0 turns it off): ordinary lifted chunks compile at -O1 without its module passes (the
@@ -1234,12 +1325,20 @@ def hot_flags(fl):
     return [("-" + os.environ.get("RX_HOT_OPT", "O2")) if f == "-" + OPT else f for f in fl] + split_giants_flags()
 
 
-def source_flags(src, gen, fl, split_fl, hot_fl, deps, bar_kb):
-    """A source's flags: the hot pieces' hot_fl; a lifted chunk's split_fl at -O2 when HOOKSHOT_CHUNK_OPT selects it (no light
-    flags), else light or not (lifted_flags); fl for the rest"""
+def a64_rt_flags(fl):
+    """Shared A64 instruction/runtime helpers (a64_rt.c, a64_suyu.c): -O2 by default, or fl's OPT when RX_A64_RT_O2 is off"""
+    rt_o2 = os.environ.get("RX_A64_RT_O2", "1").strip().lower() not in ("", "0", "false", "off", "no")
+    return [("-O2" if rt_o2 else "-" + OPT) if f == "-" + OPT else f for f in fl], rt_o2
+
+
+def source_flags(src, gen, fl, split_fl, hot_fl, deps, bar_kb, a64_rt_fl=None):
+    """A source's flags: the hot pieces' hot_fl; the shared A64 helpers' a64_rt_fl; a lifted chunk's split_fl at -O2 when
+    HOOKSHOT_CHUNK_OPT selects it (no light flags), else light or not (lifted_flags); fl for the rest"""
     name = os.path.basename(src)
     if name.startswith("code_hot"):
         return hot_fl
+    if name in ("a64_rt.c", "a64_suyu.c"):
+        return a64_rt_fl if a64_rt_fl is not None else a64_rt_flags(fl)[0]
     if name.startswith("code_") and os.path.dirname(src) == gen:
         return chunk_flags(src, split_fl) or lifted_flags(src, split_fl, deps, bar_kb)
     return fl
@@ -1624,6 +1723,24 @@ def compile_one(job):
             shutil.copyfile(cached, obj)
         open(stamp, "w").write(key)
         return src, 0.0, None
+    # (a zero byte in the source: the translation and the repository never write one into C, so the drive or the memory
+    # changed the file after it was written. A player's code_009.c (26 MB) had one where a "(" belonged, and the compiler said
+    # only "extraneous ')' before ';'" (nightly 695, 2026-11-21). Refused first, in one line with "error:": make_game names
+    # the stopped build by it, and forgets the lift when the file is the game's, so the next build writes it again. A read
+    # of a few milliseconds for the biggest file, beside a compile of seconds to minutes; a file it cannot read is the
+    # compiler's to report)
+    try:
+        with open(src, "rb") as f:
+            data = f.read()
+    except OSError:
+        data = b""
+    at = data.find(b"\0")
+    if at >= 0:
+        return src, 0.0, ("%s:%d:%d: error: this file has a zero byte, which the build never writes: the drive or the PC's "
+                          "memory changed it after it was written. Build again: the file is made again. If this keeps "
+                          "happening, check the drive for errors and test the memory"
+                          % (src, data.count(b"\n", 0, at) + 1, at - data.rfind(b"\n", 0, at)))
+    del data   # (not held while the compiler runs: a 26 MB file per job)
     c_src = src
     if any(f.startswith("-DHOOKSHOT_SPLIT_GIANTS=") for f in fl):   # (HOOKSHOT_SPLIT_GIANTS: a copy with the giants cut, if any)
         import split_giants
@@ -1655,6 +1772,18 @@ def compile_one(job):
     open(stamp, "w").write(key)
     cache_put(obj, key)
     return src, time.time() - t, None
+
+
+def copy_renhdrum(out, name):
+    """(hookshot) RenHDrum beside the game (renhdrum.dll, renhdrum.so on Linux): host/rumble_renhdrum.c loads it by full
+    path from the game's own folder, for the controllers it plays (host/vibration.h). scripts/renhdrum.py build makes it,
+    the Builder and the AppImage carry it in third_party/renhdrum/. Optional: without it every controller keeps its motors
+    or its own HD rumble"""
+    rh = os.path.join(kit.HERE, "..", "third_party", "renhdrum", name)
+    dst = os.path.join(out, name)
+    if os.path.exists(rh) and (not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(rh)):
+        import shutil
+        shutil.copyfile(rh, dst)
 
 
 def main():
@@ -1726,6 +1855,7 @@ def main():
         # (EvilOOT) host/rx_nowgpu.c stands in for the WebGPU renderer, which is built no more (the Vulkan back end is the
         # only renderer); Linux has its own stand-ins, host/posix/linux_stubs.c
         host_srcs = sorted(os.path.join(HOST, f) for f in os.listdir(HOST) if f.endswith(".c") and (f != "pgo_rt.c" or PGO == "gen")
+                           and (f != "hos_tracy_game.c" or TRACY)   # (HOOKSHOT_TRACY's alone: no other build compiles it)
                            and not (LINUX and f in ("display.c", "mf_av1.c", "rx_nowgpu.c"))
                            and (f != "dav1d_av1.c" or dav1d_windows()))
         if LINUX:   # (the window on SDL2, the Win32 calls on POSIX, no Media Foundation)
@@ -1750,6 +1880,18 @@ def main():
     # estimate calls hotter either, which is what a profile already did for the functions it knows ("pgo", the default): that
     # function alone then takes 1.9 GB, and with a matching profile the object is the same byte for byte
     hot_fl = hot_fl + ["-mllvm", "-disable-hoisting-to-hotter-blocks=all"]
+    # (hookshot, RX_HOT_CAPTURE_USES=<n>, experiment) the hot pieces' own limit for the context's capture tracking (flags() gives every
+    # file 5000): the hottest functions use the context 12 000 to 68 000 times, past the limit the compiler takes the context
+    # for escaped, and every guest load or store then may touch it (each guest register written to memory at once, read back
+    # after every guest store)
+    if os.environ.get("RX_HOT_CAPTURE_USES"):
+        hot_fl = ["-capture-tracking-max-uses-to-explore=" + os.environ["RX_HOT_CAPTURE_USES"]
+                  if f.startswith("-capture-tracking-max-uses-to-explore=") else f for f in hot_fl]
+    # The shared instruction/runtime helpers are small, unlike the cold lifted game chunks. Optimize their bodies
+    # without raising the level of those giant chunks; keep every other semantic flag unchanged.
+    a64_rt_fl, rt_o2 = a64_rt_flags(fl)
+    print("build: shared A64 runtime helpers at %s (RX_A64_RT_O2=0: cold-code level)" %
+          ("O2" if rt_o2 else OPT), flush=True)
     # (hookshot) RX_PGO=gen: code_hot.c counts its branches (host/pgo_rt.c writes them; -O1 builds much sooner, and the counters are
     # placed before the optimiser, so a profile from it fits the -O2 build). RX_PGO=<merged .prof>: built with that profile
     if PGO == "gen":
@@ -1769,11 +1911,15 @@ def main():
     split_dir = os.path.join(out, "split")
     part_mb = chunk_part_mb() if CHUNK_OPT_O2 is not None and not KEPT else 0
     split_flag = chunk_split_flag(part_mb) if part_mb else ""
+    # (hookshot) the hot pieces' native floating-point helpers (a64_hot_fp.inc, a64_lift.py NATIVE_FP): a file only they include,
+    # so it is in their keys alone and the other chunks' objects stay when it changes
+    hot_inc = os.path.join(gen, "a64_hot_fp.inc")
+    hot_deps = deps + (open(hot_inc, "rb").read() if os.path.exists(hot_inc) else b"")
     jobs, cut = [], False
     for s in srcs:
         name = os.path.basename(s)
         obj = os.path.join(obj_dir, name[:-2] + ".o")
-        sfl = source_flags(s, gen, fl, split_fl, hot_fl, deps, bar_kb)
+        sfl = source_flags(s, gen, fl, split_fl, hot_fl, deps, bar_kb, a64_rt_fl)
         selected = part_mb and name.startswith("code_") and not name.startswith("code_hot") and os.path.dirname(s) == gen \
             and (CHUNK_OPT_O2 == "*" or name in CHUNK_OPT_O2)
         parts = chunk_parts(s, part_mb, split_dir, split_flag) if selected else None
@@ -1782,7 +1928,7 @@ def main():
             for i, part in enumerate(parts):
                 jobs.append((cc, part, os.path.join(obj_dir, name[:-2] + ".p%d.o" % i), sfl + [split_flag], deps))
         else:
-            jobs.append((cc, s, obj, sfl, shim_deps if os.path.dirname(s) == NX2_RT else deps))
+            jobs.append((cc, s, obj, sfl, shim_deps if os.path.dirname(s) == NX2_RT else hot_deps if name.startswith("code_hot") else deps))
     jobs.sort(key=lambda j: -compile_cost(j[1], costs))
     if part_mb:
         print("build: HOOKSHOT_CHUNK_OPT: chunks cut into parts of about %d MB (%d part files)"
@@ -1820,7 +1966,8 @@ def main():
     # from elsewhere (FFmpeg, dav1d, the system's) is in extras, as before
     host_fl = target() + CPU + (["-I" + POSIX, "-D_GNU_SOURCE"] if LINUX else []) + \
         ["-I" + HOST, "-I" + rt64, "-I" + gen, "-I" + os.path.join(NATIVE, "include"), "-Wno-everything", "-O2", "-g0", "-mcx16",
-         "-DA64_POLLING"] + WRITE_TRACK
+         "-DA64_POLLING"] + WRITE_TRACK + \
+        (TRACY_FLAGS + ["-DTRACY_EXPORTS"] if TRACY else [])
     # (each host file's key: the headers its last compile read (its depfile, renderer_deps) under these folders, the native
     # engine's C surface (hl/c, what host/hl_*.c include) among them; every header there when it has none yet)
     host_roots = (HOST, gen, rt64, GPU, os.path.join(OPUS, "include"), ZSTD, os.path.join(NATIVE, "include"))
@@ -1854,6 +2001,57 @@ def main():
         for src in native_sources():
             name = os.path.relpath(src, os.path.join(NATIVE, "src")).replace(os.sep, "_")[:-4]
             jobs.append((ncxx, src, os.path.join(obj_dir, "native_" + name + ".o"), nflags, ndeps))
+    # (HOOKSHOT_TRACY) the lifted game code's own zones: nx2/tracy_funcs.py. The listed functions' wrappers are a file of
+    # the build's own; a chunk whose listed function's indirect calls are zones too (`calls`) is compiled again with a
+    # header that says where; the chunks' objects are given their wrappers' names after the compile (tracy_patch, below).
+    # ELF objects: Linux
+    tracy_patch = {}
+    if TRACY and LINUX and host_srcs and not a.dry_run and not a.third_party_objects and not kit.env_on("RX_VK_ONLY"):
+        entries = tracy_funcs.read_list(tracy_funcs.list_paths())
+        chunk_jobs = {j[1]: i for i, j in enumerate(jobs) if os.path.basename(j[1]).startswith("code_") and j[1].endswith(".c")}
+        where = tracy_funcs.defined_in(sorted(chunk_jobs), [tracy_funcs.name_of(e[0]) for e in entries])
+        absent = [tracy_funcs.name_of(e[0]) for e in entries if tracy_funcs.name_of(e[0]) not in where]
+        if absent:
+            print("HOOKSHOT_TRACY: %d listed functions are not functions of this game's translation, left out: %s"
+                  % (len(absent), " ".join(absent[:12])), flush=True)
+        entries = [e for e in entries if tracy_funcs.name_of(e[0]) in where]
+        if entries:
+            os.makedirs(gen_dir, exist_ok=True)
+            text = tracy_funcs.wrappers(entries)
+            wsrc = os.path.join(gen_dir, "tracy_funcs.c")
+            if not os.path.exists(wsrc) or open(wsrc, encoding="utf-8").read() != text:
+                with open(wsrc, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(text)
+            with open(os.path.join(HOST, "hos_tracy.h"), "rb") as f:
+                tracy_h = f.read()
+            jobs.append((cc, wsrc, os.path.join(obj_dir, "host_tracy_funcs.o"), host_fl, text.encode() + tracy_h + deps))
+            sizes = tracy_funcs.extents(os.path.join(gen, "a64_table.c"), [e[0] for e in entries if e[1]])
+            ranges = {}
+            for addr, calls, _label in entries:
+                src = where[tracy_funcs.name_of(addr)]
+                tracy_patch.setdefault(jobs[chunk_jobs[src]][2], []).append(tracy_funcs.name_of(addr))
+                if calls:
+                    ranges.setdefault(src, []).append((addr, sizes[addr]))
+            for src, rs in sorted(ranges.items()):
+                header = tracy_funcs.calls_header(rs)
+                hpath = os.path.join(gen_dir, "tracy_calls_%s.h" % os.path.basename(src)[:-2])
+                if not os.path.exists(hpath) or open(hpath, encoding="utf-8").read() != header:
+                    with open(hpath, "w", encoding="utf-8", newline="\n") as f:
+                        f.write(header)
+                j = jobs[chunk_jobs[src]]
+                jobs[chunk_jobs[src]] = (j[0], j[1], j[2], j[3] + ["-include", hpath, "-DHOOKSHOT_TRACY_CALLS=0x" + tracy_funcs.digest(header)],
+                                         j[4] + header.encode())
+            print("HOOKSHOT_TRACY: %d lifted functions are zones (%d chunks' objects renamed at the link); the indirect calls of "
+                  "%d of them too (%d chunks compiled again: %s)" % (
+                      len(entries), len(tracy_patch), sum(1 for e in entries if e[1]), len(ranges),
+                      " ".join(sorted(os.path.basename(x) for x in ranges))), flush=True)
+    # (HOOKSHOT_TRACY) Tracy's client, the process's one, in the executable
+    if TRACY and host_srcs:
+        print("the game: with the Tracy profiler's client (HOOKSHOT_TRACY: 127.0.0.1 only, a developer's build)", flush=True)
+        jobs.append((toolchain.need(toolchain.find("clang++")), os.path.join(TRACY_PUBLIC, "TracyClient.cpp"),
+                     os.path.join(obj_dir, "host_tracy_client.o"),
+                     target() + CPU + ["-std=c++17", "-O2", "-g0", "-DNDEBUG", "-Wno-everything"] + TRACY_FLAGS + ["-DTRACY_EXPORTS"],
+                     tracy_tree()))
     # libopus 1.5.2 (third_party/opus, from TOTKPort): nn::codec's hardware Opus decoder (host/nn_codec.c)
     # (hookshot: built for the same CPU target as the rest (CPU), so its float code can be vectorized where the target has
     # AVX2: the vendored copy has no x86 intrinsics files of its own)
@@ -1944,14 +2142,15 @@ def main():
         vdeps = tree_headers(*vdeps_roots)
         output_device_deps = open(os.path.join(HOST, "audio_output_devices.h"), "rb").read()
         # (hookshot) Dear ImGui (third_party/imgui) draws the overlays over the window's image (gpu/vk/vk_imgui.cpp; vk_menu.cpp
-        # draws with it). Its objects see only its own headers; its headers are a dependency of the two files that include them
+        # draws with it). Its objects see only its own headers; its headers are a dependency of the files that include them
+        # (vk_wheel.cpp: its stb_truetype draws the item wheel's labels off Windows, vk_wheel_text.h)
         imgui = os.path.normpath(os.path.join(kit.HERE, "..", "third_party", "imgui"))
         zbic = os.path.join(kit.ROOT, "third_party", "zbic")
         imgui_flags = ["-I" + imgui, "-DIMGUI_IMPL_VULKAN_NO_PROTOTYPES", "-DIMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS",
                        "-DIMGUI_DISABLE_WIN32_FUNCTIONS", "-DIMGUI_DISABLE_DEMO_WINDOWS", "-DIMGUI_DISABLE_DEBUG_TOOLS"]
         imgui_deps = b"".join(open(os.path.join(d, f), "rb").read() for d in (imgui, os.path.join(imgui, "backends"), zbic)
                               for f in sorted(os.listdir(d)) if f.endswith(".h"))
-        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp")
+        imgui_users = ("vk_imgui.cpp", "vk_menu.cpp", "vk_wheel.cpp")
         for f in ("imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp", "backends/imgui_impl_vulkan.cpp"):
             vk_jobs.append((cxx, os.path.join(imgui, *f.split("/")),
                             os.path.join(obj_dir, "vk_imgui_" + os.path.basename(f)[:-4] + ".o"), tp_vflags + imgui_flags,
@@ -1977,6 +2176,14 @@ def main():
                 vk_pgo_flags = ["-fprofile-instr-use=" + vk_pgo,
                                 "-DHOOKSHOT_VK_PROFILE_SHA1=" + hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:16]]
             print("the Vulkan back end: built with the profile %s" % vk_pgo, flush=True)
+        # (HOOKSHOT_TRACY: the back end's own files' zones call the client in the executable. With the profile's flags, which
+        # those files alone take. host/hos_tracy.h, which they include then from outside the folders their keys follow: its
+        # contents in a flag. No other build reads it)
+        if TRACY:
+            with open(os.path.join(HOST, "hos_tracy.h"), "rb") as f:
+                vk_pgo_flags = vk_pgo_flags + TRACY_FLAGS + [
+                    "-DTRACY_IMPORTS", "-DHOOKSHOT_TRACY_H=0x" + hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:16]]
+            print("the Vulkan back end: with the Tracy profiler's zones (HOOKSHOT_TRACY)", flush=True)
         for src in vk_sources():
             name = os.path.relpath(src, vk).replace(os.sep, "_")[:-4]
             lib = os.path.relpath(src, vk).split(os.sep)[0] in ("eden", "sirit")
@@ -2138,16 +2345,31 @@ def main():
         write_kept(gen, jobs)
     vk_objs = {j[2] for j in vk_jobs}
     objs = [j[2] for j in jobs if j[2] not in vk_objs]
+    if tracy_patch and not vk_only:   # (HOOKSHOT_TRACY: the listed functions' chunks, as copies whose symbols name the wrappers)
+        renamed = {}
+        for obj, names in sorted(tracy_patch.items()):
+            renamed[obj] = os.path.join(obj_dir, "tracyfn_" + os.path.basename(obj))
+            done = tracy_funcs.patch_object(obj, renamed[obj], names)
+            if sorted(done) != sorted(names):
+                print("HOOKSHOT_TRACY: %s does not define %s as a global function: no zone for it" % (
+                    os.path.basename(obj), " ".join(sorted(set(names) - set(done)))), flush=True)
+                return 1
+        objs = [renamed.get(o, o) for o in objs]
     rsp = os.path.join(out, "objs.rsp")
     open(rsp, "w", encoding="utf-8").write("\n".join('"%s"' % o.replace("\\", "/") for o in objs))
     if a.standalone and not vk_only and LINUX:
         exe = os.path.join(out, EXE)   # (+ hookshot.map: crash offsets -> f_<guest address>)
         t = time.time()
-        # (--export-dynamic-symbol: the window's state, which the Vulkan back end's own Win32 calls read by name)
+        # (--export-dynamic-symbol: HOST_EXPORTS, the functions the Vulkan back end looks up in the exe by name: the window's
+        # state its own Win32 calls read, the frame-timeline marks, the live pools and their checked write and the others)
         # (the instrumented objects hold the counters and host/pgo_rt.c writes them: -fprofile-instr-generate at this
         # final Linux link would make clang look for libclang_rt.profile, which the packaged tools need not have)
-        r = run_link([cc] + target() + ["-fuse-ld=lld", "-o", exe] + linker("-Map=" + exe + ".map") +
-                     ["-Wl,--gc-sections", "-Wl,--export-dynamic-symbol=hos_posix_*", "@" + rsp] + HOT_ORDER() +
+        # (HOOKSHOT_TRACY: Tracy's client is C++, so the C++ driver links, its runtime inside as the back end's is, and the
+        # client's C API is exported for the back end's module)
+        r = run_link([toolchain.need(toolchain.find("clang++")) if TRACY else cc] + target() + ["-fuse-ld=lld", "-o", exe] +
+                     linker("-Map=" + exe + ".map") +
+                     ["-Wl,--gc-sections"] + ["-Wl,--export-dynamic-symbol=" + s for s in HOST_EXPORTS] + ["@" + rsp] + HOT_ORDER() +
+                     (["-Wl,--export-dynamic-symbol=___tracy_*", "-static-libstdc++", "-static-libgcc"] if TRACY else []) +
                      (FFMPEG_LX[1] if FFMPEG_LX else []) + HOST_LIBS +
                      (["-l:libstdc++.a"] if SYSROOT else ["-lstdc++"]), exe)   # (native/'s C++: static with the AppImage's sysroot)
         undefined = sorted({l.strip() for l in (r.stdout + r.stderr).splitlines() if "undefined symbol" in l})
@@ -2164,6 +2386,7 @@ def main():
         if sdl and os.path.exists(sdl):
             import shutil
             shutil.copyfile(sdl, os.path.join(out, "libSDL2-2.0.so.0"))
+        copy_renhdrum(out, "renhdrum.so")
     elif a.standalone and not vk_only:
         exe = os.path.join(out, "hookshot.exe")   # (+ hookshot.map: crash offsets -> f_<guest address>)
         t = time.time()
@@ -2176,7 +2399,11 @@ def main():
                            ([os.path.join(FFMPEG, "lib", l + ".lib") for l in ("avcodec", "swscale", "swresample", "avutil")] +
                             ["-lbcrypt", "-lmfplat", "-lmfuuid", "-lstrmiids", "-lole32"] if FFMPEG else []) +
                            ([os.path.join(dav1d_windows(), "lib", "libdav1d.a")] if dav1d_windows() else []) +
-                           (["-lc++", "-lunwind"] if toolchain.mingw() else []),   # (llvm-mingw: the C++ parts' runtime, linked in; MSVC's comes by itself)
+                           (["-lc++", "-lunwind"] if toolchain.mingw() else []) +   # (llvm-mingw: the C++ parts' runtime, linked in; MSVC's comes by itself)
+                           # (HOOKSHOT_TRACY: the client's sockets, the user name it shows the viewer (GetUserNameExA, which
+                           # TracySystem.cpp asks secur32 for only under MSVC), and its exported C API's import library
+                           # for the back end)
+                           (["-lws2_32", "-lsecur32"] + linker("/implib:" + os.path.join(out, TRACY_IMPLIB)) if TRACY else []),
                            exe)
         undefined = sorted({l.strip() for l in (r.stdout + r.stderr).splitlines() if "undefined symbol" in l})
         if r.returncode:
@@ -2207,6 +2434,7 @@ def main():
         if os.path.exists(sdl3) and (not os.path.exists(sdl3_dst) or os.path.getsize(sdl3_dst) != os.path.getsize(sdl3)):
             import shutil
             shutil.copyfile(sdl3, sdl3_dst)
+        copy_renhdrum(out, "renhdrum.dll")
     if vk_jobs:   # (hookshot_vk.dll beside the exe: loaded by host/rx_backend.c)
         vdll = os.path.join(out, VK_LIB)
         vrsp = os.path.join(out, "vk_objs.rsp")
@@ -2221,7 +2449,8 @@ def main():
             link = [cc] + toolchain.native_target() + toolchain.native_link() + \
                 ["-shared", "-o", vdll] + linker("/map:" + vdll[:-4] + ".map") + ["@" + vrsp, "-luser32", "-lgdi32", "-lole32"] + \
                 (linker("/nodefaultlib:clang_rt.profile.lib") if os.environ.get("RX_VK_PGO") == "gen" else []) + \
-                (["-lc++", "-lunwind"] if toolchain.mingw() else []) + ngx_link(NGX_SDK, toolchain.mingw())
+                (["-lc++", "-lunwind"] if toolchain.mingw() else []) + ngx_link(NGX_SDK, toolchain.mingw()) + \
+                ([os.path.join(out, TRACY_IMPLIB)] if TRACY else [])   # (the client in the executable: its import library)
         r = run_link(link, vdll)
         if r.returncode:
             undefined = sorted({l.strip() for l in (r.stdout + r.stderr).splitlines() if "undefined symbol" in l})

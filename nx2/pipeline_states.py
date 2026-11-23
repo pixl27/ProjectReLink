@@ -112,8 +112,11 @@ COMPUTE = 1           # (StateRec2::kCompute)
 # 2026-11-14: scripts/pipeline_tour.py's tour (every map, actor and cutscene) meets 2,104 programs with the shipped list's 233,
 # half of the game's, and its list is shipped whole: raised from 1024 (four times play) to 2560. By the measurement above
 # (0.6 to 1 MB a program) those 2,104 cost 1.2 to 2.1 GB more than none kept and some 6.5 s of precompile at each start; not
-# measured again yet. Past 2560, measure again and raise this, or prune the list
-COMPUTE_MOST = 2560
+# measured again yet.
+# 2026-11-18: the 38 lists players sent in add 1,110 programs their play dispatched (3,309 with the tour's and the
+# earlier lists'; 80 % of the game's 4,127): raised to 3584. By the same measurement those cost some 1.1 GB and 2 to 3 s of
+# precompile more at each start than at 2560; not measured again yet. Past 3584, measure again and raise this, or prune the list
+COMPUTE_MOST = 3584
 # One list someone sent: more than the game has programs (twice 4,127, rounded up) was not written by the game. The merge's bound
 # above is the one that counts what a release costs; this one only keeps a made-up file small
 SENT_COMPUTE_MOST = 8192

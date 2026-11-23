@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/red-tunic.png" alt="Red Tunic logo" width="200"></p>
 
-# Red Tunic 4.0.0
+# Red Tunic 4.0.2
 
 Red Tunic is an unofficial native PC recompilation of the Nintendo Switch 2 remake of *The Legend of Zelda: Ocarina of Time*. It builds locally from your own copy of the game. Red Tunic is based on Hookshot and focuses on integrated AMD Radeon graphics, starting with the Ryzen 5 5625U with 16 GB of shared memory.
 
@@ -13,6 +13,16 @@ Get new Windows Builder archives from [Red Tunic Releases](https://github.com/sp
 ### Latest development build
 
 For development snapshots, use the source at the latest commit you want to test and record its commit ID with your results.
+
+## Changes in 4.0.2
+
+Read the [4.0.2 release notes](RELEASE_NOTES_4.0.2.md) for installation, upstream changes and verification.
+
+If 4.0.0 reports `A portable game needs the packaged Builder setup launcher`, close the Builder and apply `RedTunic-v4.0.0-portable-build-fix.zip` from the release assets. Extract it beside the existing `RedTunicBuilder` directory and replace `tools/nx2/make_game.py`. Reopen the Builder and retry the build.
+
+The ZIP distribution now builds a game that launches directly through `hookshot.exe`. Rebuild an existing game by selecting its output folder in the Red Tunic Builder. The archive's own Python, compiler and portable home remain in use.
+
+Version 4.0.2 integrates Hookshot through commit `38b90dfe` (fetched 23 November 2026), including 547 upstream commits since the Red Tunic 4.0.0 base. Red Tunic retains its AMD APU resolution and cache policies, native CPU tuning, FP16 sharpening, procedural loading fire and red UI. The merged source requires fresh validation before performance comparisons with 4.0.0.
 
 ## Changes in 4.0.0
 
@@ -45,7 +55,7 @@ Clone the [Red Tunic source](https://github.com/spacefarergames/RedTunic), then 
 
 ### On Windows
 
-1. Download `RedTunic-v4.0.0-Windows-x64.zip` and its SHA-256 file from [Red Tunic Releases](https://github.com/spacefarergames/RedTunic/releases). Use `Get-FileHash .\RedTunic-v4.0.0-Windows-x64.zip -Algorithm SHA256` to verify the archive.
+1. Download `RedTunic-v4.0.2-Windows-x64.zip` and its SHA-256 file from [Red Tunic Releases](https://github.com/spacefarergames/RedTunic/releases). Use `Get-FileHash .\RedTunic-v4.0.2-Windows-x64.zip -Algorithm SHA256` to verify the archive.
 2. Extract the entire archive into a short path such as `C:\RedTunicBuilder` and open `HookshotBuilder.exe`. The archive includes the Windows build tools and the Builder runtime.
 3. Select your own supported `.nup` or extracted game folders, choose a separate game output folder, and build. Open the generated `hookshot.exe` in that folder to play.
 
@@ -82,7 +92,7 @@ With Insert or F1, or with F1 only, <kbd>Esc</kbd> does not open the menu: it on
 an older version on Insert or F1, the default then, move to Insert, F1 or Esc; F1 only stays.
 <kbd>F12</kbd> saves a screenshot of the game's picture as a PNG in the game folder's `screenshots` folder, menu open or not
 (the menu and the FPS counter are not in it); not while a control waits for its key, and not when a control is bound to F12.
-The menu has five tabs, Graphics, Audio, Gameplay, Controls and Debug:
+The menu's tabs are Graphics, Audio, Gameplay, Controls, NFC and Debug, and Mods when you have mods:
 <kbd>Q</kbd> and <kbd>E</kbd> (or <kbd>Tab</kbd> and <kbd>Shift</kbd>+<kbd>Tab</kbd>) switch between them, LB and RB on
 a controller (or the triggers). <kbd>Up</kbd> and <kbd>Down</kbd> choose a row, <kbd>Left</kbd> and <kbd>Right</kbd>
 change it (<kbd>Enter</kbd> changes it too); beside the rows, the help says what the row is and, on a line of its own,
@@ -121,6 +131,7 @@ Camera, Mouse, Movement and Menu. The table lists those tabs' rows in that order
 | | Profile | Docked, Handheld (after a restart) | Docked |
 | | Upscaler | Game's own, NVIDIA DLSS, NVIDIA DLAA (only in builds with NVIDIA's DLSS SDK, below; DLSS and DLAA on RTX GPUs), AMD FSR 3.1 (every build, on GPUs it runs on, below), AMD FSR 4, AMD FSR 4 Native AA (only in builds with FSR 4, below), Off (no upscaling) | Game's own |
 | | DLSS model | Transformer (K) (CNN (E) in its place on cards with less than 7 GB of video memory), Transformer 2 (M), Transformer 2 (L), NVIDIA default (shown where DLSS runs; used by DLSS and DLAA) | Transformer (K); CNN (E) under 7 GB |
+| | DLAA before the bloom | Off, On: where NVIDIA DLAA smooths the picture, after the game's bloom and tone map or before them (shown with NVIDIA DLSS or DLAA; changeable with the Upscaler on NVIDIA DLAA only; changes at once; `RX_VK_DLSS_PRE_BLOOM` over it for one run) | Off |
 | | Render resolution | Auto (the game's own dynamic resolution), 100%, 75%, 67%, 50% (each with its size). With DLSS, FSR 3.1 or FSR 4: Auto, Quality (67%), Balanced (58%), Performance (50%), Ultra Performance (33%). With DLAA or FSR 4 Native AA: Native. With Off: Auto, 100%, 75%, 67%, 50%, 33% | Auto |
 | | Sharpness | 0 to 100%, in steps of 10 | 0% |
 | | Frame generation | Off, Auto (it shows who makes its frames: FSR 3.1 FG or Built-in FG), 2x to 8x; with DLSS FG up to what NVIDIA's runtime makes on the GPU (6x on an RTX 50, 2x on an RTX 40) | Off |
@@ -178,7 +189,9 @@ Camera, Mouse, Movement and Menu. The table lists those tabs' rows in that order
 | Controls | Controls | Opens the Controls page | |
 | | Controller in background | Off, On | Off |
 | | Stick dead zone | Default (24%), 5%, 10%, 15%, 20%, 30% | Default (24%) |
-| | Rumble strength | Off, 25% to 150%, in steps of 25 | 100% |
+| | Vibration | Auto, Basic, Off | Auto |
+| | Vibration strength | 25% to 200%, in steps of 25 | 100% |
+| | Test vibration | an action: Confirm buzzes the controller used last; the value says what plays it | Motors |
 | | Motion | Opens the Motion page: Motion controls (Off, On; On), Motion sensitivity X (10% to 600%) and Y (10% to 300%; 100%), Invert motion X and Y (Off, On; Off), Motion deadzone (Low, Standard, High; Standard) | |
 | | Camera speed | 50% to 400%, in steps of 25 | 100% |
 | | Invert camera X | Off, On | Off |
@@ -202,11 +215,12 @@ Camera, Mouse, Movement and Menu. The table lists those tabs' rows in that order
 | | Scan tag on controller | Reads a tag you own with a Switch 2 Pro Controller (USB) and saves it in your NFC folder | |
 | Debug | Debug tools | Off, On (the tools below it while on) | Off |
 | | Developer: Frame pacing | Off, On | Off |
-| | Developer: Threaded rendering | Auto, On, Off (after a restart). Auto is On with 8 or more processor threads for the game | Auto |
+| | Developer: Threaded rendering | Auto, On, Off (after a restart). Auto is On with 6 or more processor cores for the game, and the render thread alone with 4 or 5 | Auto |
 | | Developer: Descriptor reuse | Off, On (after a restart) | On |
 | | Developer: Sampler cache | Off, On (after a restart) | Off |
 | | Developer: Robust buffers | Auto, Off, On (after a restart) | Auto |
 | | Developer: Uncap detail sliders | Off, On: the four detail rows above past their safe max | Off |
+| | Developer: Present queue | Off, On (after a restart) | Off |
 | | Developer: ASTC as RGBA8 | Off, On (after a restart) | Off |
 
 - **Quality preset** sets Render resolution, Window scaling filter, Sharpness, Frame pacing, Game speed, Profile
@@ -236,9 +250,10 @@ Camera, Mouse, Movement and Menu. The table lists those tabs' rows in that order
   over the menu.
 - **Threaded rendering:** On draws the picture on threads of its own (a render thread and a recorder thread) while
   the game goes on to its next frame, for a higher frame rate on a processor with threads to spare; it is still being
-  tested and can show flashes. Off draws it on the game's own thread, as before. Auto chooses by the processor
-  (On with 8 or more threads for the game, Off with fewer, and Off wherever the mode is not safe). It applies after
-  a restart. `RX_VK_ASYNC` and `RX_VK_RECORDER`, when set, choose for one run.
+  tested and can show flashes. Off draws it on the game's own thread, as before. Auto chooses by the processor's cores
+  for the game, each core counted once however many threads it runs: On with 6 or more, the render thread alone with 4
+  or 5 (where the recorder thread beside it was slower), Off with fewer, and Off wherever the mode is not safe. It
+  applies after a restart. `RX_VK_ASYNC` and `RX_VK_RECORDER`, when set, choose for one run.
 - **Frame generation** makes extra frames between the game's own. It adds a little input delay, and fast motion can
   show artifacts. **Frame generation by** chooses who makes them: **DLSS FG**, NVIDIA DLSS Frame Generation where it
   runs (RTX 40 and newer, at 2x up to what NVIDIA's runtime makes on the GPU: 6x on an RTX 50, 2x on an RTX 40; the
@@ -360,6 +375,12 @@ Camera, Mouse, Movement and Menu. The table lists those tabs' rows in that order
 - **Robust buffers** (Debug tab, Developer): a read past a buffer's end is dropped instead of stopping the GPU. Auto is
   on, on every card; Off can be faster on some NVIDIA cards.
 - **ASTC as RGBA8** (Debug tab, Developer): the AMD texture workaround below.
+- **Present queue** (Debug tab, Developer): the presents on a GPU queue of their own. Off by default; On makes frame
+  generation's frames more even with V-Sync Off on some cards (an RTX 5090), but lost the GPU on others with frame
+  generation on (an RTX 5080). It applies after a restart; `RX_VK_PRESENT_QUEUE` in `hookshot_env.txt` or the environment
+  chooses over it at every start while it is set (the row then shows it and cannot be changed). If the game crashes or
+  the screen goes black with it on and you cannot reach the menu, put `RX_VK_PRESENT_QUEUE=0` in `hookshot_env.txt`, then
+  turn the row off and take the line out.
 - **Game speed:** with Per frame, the game runs slower whenever it is below 60 fps. Real time keeps it at normal speed
   down to 15 fps.
 - **FPS counter** shows in a corner (**FPS counter position**; at the top right while the menu is open), at one of
@@ -432,8 +453,14 @@ Camera, Mouse, Movement and Menu. The table lists those tabs' rows in that order
   its own) is not kept. Letting go of the stick or pressing A again stops it (a long hold keeps it again). Only while
   Link is yours to move: an event (a talk, a cutscene), the pause menu, the map, the Insert menu and the ocarina's notes
   end it, so A never picks an entry, skips text or plays a note there.
-- **Rumble strength** scales the controller's rumble: 100% is the game's own, Off turns it off. The game's HD rumble
-  goes to a controller's heavy and light motors by its frequency.
+- **Vibration** picks how the controllers vibrate. Auto, the default, plays the best each one can: a DualSense on a USB
+  cable its voice coils (the game's fine vibration, both bands as they are), a Switch Pro Controller or Joy-Con its own
+  HD rumble, every other controller its two motors. Basic plays the two motors on every controller. Off stops it all.
+- **Vibration strength** scales it, every controller's: 100% is what the game asks for, from 25% to 200%. A change gives
+  a short buzz at the new strength. The game's bands go to a controller's heavy and light motors by their frequency.
+- **Test vibration** buzzes the controller used last for half a second, and its value says what plays that controller now
+  (Motors, HD rumble, Fine haptics (cable), ...); its help line says why, for example a DualSense whose sound card was not
+  found, or RenHDrum missing.
 - **Motion controls** (Controls tab, Motion page): the controller's gyroscope aims where the game uses motion, as on the Switch. It works with
   Switch Pro controllers and pads in Switch mode, DualSense and DualShock 4 (through SDL). Its row
   says whether the connected pad has a gyroscope; Off leaves the game seeing a pad lying still. **Motion sensitivity X/Y**
@@ -474,13 +501,26 @@ play on a controller or the keyboard, until the mouse moves.
 **Rumble:** a Nintendo Switch Pro Controller or Joy-Con plays the game's HD rumble as the Switch does, each side and
 both frequency bands as the game asks, with SDL3 (the Windows game brings it; on Linux the system's SDL3, where it has
 one). Other controllers, Switch 2 controllers, a pair of Joy-Cons used as one controller, and SDL2's own library get
-the game's rumble on their two motors. The menu's Rumble strength scales it too. `HOS_HD_RUMBLE=0` sends the Switch
+the game's rumble on their two motors. The menu's Vibration strength scales it too. `HOS_HD_RUMBLE=0` sends the Switch
 controllers the motor rumble too. On Linux, SDL talks to the Switch controller itself through its hidraw device, which
 needs read and write access for your user; Steam's udev rules (the `steam-devices` package on most distributions) give
 it. Without them the kernel's hid-nintendo driver runs the controller, and it gets the motor rumble. HD rumble goes to
 anything SDL reports as a Switch Pro Controller or Joy-Con, and that includes third-party controllers in Switch mode
 (8BitDo, GameSir and others; SDL gives them Nintendo's ids). Some of them may turn it into weak rumble or none: set
 `HOS_HD_RUMBLE=0` to give them the plain motor rumble.
+
+**DualSense haptics (RenHDrum):** a DualSense on a USB cable is also a four-channel 48 kHz sound card, and its third and
+fourth channels drive its voice coils. With RenHDrum beside the game (`renhdrum.dll`, `renhdrum.so` on Linux), Hookshot
+sends them the game's own vibration values as they are (both bands, both sides, no flattening to two motors), so the pad
+plays the game's fine vibration instead of a rough imitation of it; Vibration's Auto does it, and Vibration strength
+scales it. On Linux, the sound card is opened through the system's SDL as on Windows. Without RenHDrum, or with no sound
+card found, nothing breaks: the pad gets its motors, and Test vibration says why. RenHDrum is MIT OR Apache-2.0
+(`third_party/renhdrum/NOTICE`), built from its source in `third_party/renhdrum/` with
+`python -I scripts/renhdrum.py build`; a build places the library beside the game when it is in `third_party/renhdrum/`.
+
+RenHDrum can also play a DualSense over Bluetooth (its voice coils, through HID report 0x32), an Xbox One or Series
+controller's four motors (the triggers' too) and a Switch controller's HD rumble. Those are being tested: set
+`HOS_RUMBLE_BACKEND=renhdrum` to try them (`motors` and `hd` pick the others for every pad).
 
 **NFC tags:** where the game asks for a figure's NFC tag, the Insert menu's **NFC** tab gives it one. The tags are files
 in a folder of yours, dumps of tags you own: `.bin` (an NTAG215's 540 bytes; 532 and 572 byte ones too) or a Flipper
@@ -524,7 +564,8 @@ key_a=69,13
 16 the triggers, -1 none. `key_<button>` is one or two
 [Windows key codes](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes) in decimal (69 is
 <kbd>E</kbd>, 13 <kbd>Enter</kbd>), 0 none; the mouse's buttons are 1 (left), 2 (right), 4 (middle), 5 and 6 (side
-buttons), and count while the mouse is captured. The buttons are `a` `b` `x` `y` `l` `r` `zl` `zr` `plus` `minus` `ls`
+buttons), and count while the mouse is captured; the side buttons also in the game's own menus, where the other three
+click. The buttons are `a` `b` `x` `y` `l` `r` `zl` `zr` `plus` `minus` `ls`
 `rs` `left` `up` `right` `down`, for keys only the left stick's and the camera's directions and walking: `move_up`
 `move_down` `move_left` `move_right` `cam_up` `cam_down` `cam_left` `cam_right` `walk`, and the ocarina's five notes,
 which also take a `pad_` line: `note_l` `note_r` `note_a` `note_y` `note_x`. A button the file leaves out keeps
@@ -571,6 +612,29 @@ left out, and the file's line there says how many.
 **Cheats** of the mods that are on are listed under them on the Mods tab and switched there, at once. Cheats that change
 memory run as Atmosphere runs them, every frame (opcodes 0 to A and C0 to C3); a cheat that writes the game's code is
 listed as not supported (make it an ExeFS patch instead). `{Master}` codes are always on.
+
+On Windows, Hookshot Builder's **Mods + Editor** page (beside Play) does the same with the mouse: tick a mod to use it,
+move it with its ▲ and ▼ buttons (a mod lower in the list wins a file two mods have), **Add mods…** or **Open mods folder**. When the
+code patches you have on change, it rebuilds the game, or uses a build of that same mix kept from before.
+
+## Save editor
+
+Hookshot Builder's **Mods + Editor** page (Windows, beside Play) has a **Save editor** tab for your game folder's saves.
+Close the game first. Pick a save slot, then:
+
+- **Stats**: hearts, magic, rupees and the other numbers on the save.
+- **Inventory**: search the items, then **Give** or **Take away** the selected one, or **Give everything missing**. With
+  "Taking away also forgets it was found" ticked, taking an item also clears the flag saying you found it.
+- **Progress**: search the story flags (a temple, a talk, Navi...) and turn them on or off.
+- **All entries**: every entry of the save by name, with "Edited only" to see what you changed, for anything the other
+  tabs don't cover.
+
+**Save** writes the save, **Save and play** writes it and starts the game, and **Undo changes** goes back to what is on
+disk. A backup of the save is kept each time the editor saves.
+
+In the game, the **Debug** tab has its own tools (turn on **Debug tools** first): the **Inventory** editor (unlock or
+relock equipment, items, upgrades and quest items, and change amounts), **Rupees**, **Teleport** and **Travel**,
+**Switch age**, **Free camera**, **No-clip flight**, **Set time**, **Movement speed** and damage settings.
 
 ## Build from source
 
@@ -831,8 +895,8 @@ switch that stands in for a menu row (`RX_VK_PACE`, `RX_VK_UPSCALE`, `RX_VK_FRAM
 
 To enable the debug tools, turn **Debug tools** on in the menu's Debug tab (or add `HOS_OOT_CHEATS=1` to
 `hookshot_env.txt` in the game folder). The tools then show below it on the same tab. The tab's Developer section,
-always shown, has the Frame pacing, Threaded rendering, Descriptor reuse, Sampler cache, Robust buffers and ASTC as RGBA8
-rows.
+always shown, has the Frame pacing, Threaded rendering, Descriptor reuse, Sampler cache, Robust buffers, Present queue and ASTC as
+RGBA8 rows.
 
 **Travel** (a debug tool, beside Teleport) opens a page of 190 places to go to: villages, dungeons' entrances, shops,
 warp points and story spots, grouped by area, for Link's age (Tab, X on a pad, or the Child and Adult buttons show the other

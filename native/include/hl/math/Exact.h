@@ -127,6 +127,13 @@ struct Guard {
             fail((bits(t) & 0x7f800000u) == 0x7f800000u ? Why::mul_overflow : Why::mul_underflow, bits(a), bits(b), bits(t));
         return t;
     }
+    double mul(double a, double b) {
+        const double t = a * b;
+        if (!(big(t) || (is_zero(t) && (is_zero(a) || is_zero(b)))))
+            fail((bits(t) & 0x7ff0000000000000ull) == 0x7ff0000000000000ull ? Why::mul_overflow : Why::mul_underflow,
+                 bits(a), bits(b), bits(t));
+        return t;
+    }
     // FMLA / FMADD: w + a * b rounded once, through binary64: the product is exact there, and the sum's one rounding
     // differs from Arm's single rounding only when the binary64 sum was inexact and fell on a binary32 midpoint. A
     // midpoint the sum reached exactly (its rounding error, by Knuth's two-sum, is zero) rounds to nearest-even as

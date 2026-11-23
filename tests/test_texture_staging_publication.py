@@ -43,8 +43,8 @@ def main():
     assert cpu[start:].startswith("                }")
     start = cpu.index("\n", start) + 1
     end = cpu.index("                copies.push_back(c);", start) + len("                copies.push_back(c);")
-    # The publication site must remain after conversion workers joined and before a copy is queued.
-    assert cpu.index("for (std::thread& t : pool) t.join();") < start < cpu.index("vkCmdCopyBufferToImage(upload_cmd(), buffer, tex.image", start)
+    # The publication site must remain after conversion workers joined (fork_join returns joined) and before a copy is queued.
+    assert cpu.index('fork_join("texture unswizzle"') < start < cpu.index("vkCmdCopyBufferToImage(upload_cmd(), buffer, tex.image", start)
     actual += "\nvoid cpu_slice(Staging st, uint64_t out_bytes) {\n" + cpu[start:end] + "\n}\n"
     fixture = (ROOT / "tests/texture_staging_publication_test.cpp").read_text(encoding="utf-8").replace("/* ACTUAL */", actual)
     with tempfile.TemporaryDirectory(prefix="texture-staging-") as temp:

@@ -231,18 +231,18 @@ def check_dlss():
                  "prep_hdr_entries[2] = {{0, 0, sizeof(float)}, {1, sizeof(float), sizeof(VkBool32)}};",
                  "out_hdr_square = VK_FALSE;", "out_hdr_entry{0, 0, sizeof(VkBool32)};",
                  "s.prep_hdr, &prep_hdr_spec))", "s.out_hdr, &out_hdr_spec))",
-                 "if (s.prep && s.prep_hdr && s.out && s.out_hdr && s.point && s.linear) return true;"):
+                 "if (s.prep && s.prep_hdr && s.prep_lin && s.out && s.out_hdr && s.point && s.linear) return true;"):
         if want not in pipes:
             sys.exit("FAIL: vk_temporal.cpp's HDR pipelines (linear light in, linear out) are not as this check expects: " + want)
-    upscale = function(chain, "bool temporal_upscale(")
-    for want in ("const bool hdr = engine.e->hdr && engine.e->hdr();", "prep_pipe = hdr ? s.prep_hdr : s.prep",
+    upscale = function(chain, "bool draw_engine(")
+    for want in ("const bool hdr = engine.e->hdr && engine.e->hdr();", "prep_pipe = pre ? s.prep_lin : hdr ? s.prep_hdr : s.prep",
                  "out_pipe = rgba ? s.out_rgba : hdr ? s.out_hdr : s.out", "vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, prep_pipe);",
                  "vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, out_pipe);"):
         if want not in upscale:
-            sys.exit("FAIL: temporal_upscale does not give an engine made for HDR colour the HDR pair: " + want)
+            sys.exit("FAIL: draw_engine does not give an engine made for HDR colour the HDR pair: " + want)
     dlss = (VK / "vk_dlss.cpp").read_text(encoding="utf-8")
     prepare = function(dlss, "int prepare(")
-    if "const bool hdr = present_native_pq.load(std::memory_order_relaxed);" not in prepare or \
+    if "const bool hdr = present_native_pq.load(std::memory_order_relaxed) || temporal_hdr_input();" not in prepare or \
             "opts.hdr" in prepare or \
             "s.feature_hdr == hdr" not in prepare or \
             "NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure" not in prepare:

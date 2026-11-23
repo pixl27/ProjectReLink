@@ -1,8 +1,10 @@
 /* (linux) psapi: the process's memory counters, from /proc/self/status (the working set is the resident set, private
-   memory the anonymous part of it), for the back end's memory log lines */
+   memory the anonymous part of it, the page faults those of getrusage: minor and major, as Windows counts soft and hard
+   ones together), for the back end's memory log lines */
 #ifndef HOOKSHOT_POSIX_PSAPI_H
 #define HOOKSHOT_POSIX_PSAPI_H
 #include <windows.h>
+#include <sys/resource.h>
 typedef struct {
     DWORD cb, PageFaultCount;
     SIZE_T PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage, QuotaPeakNonPagedPoolUsage,
@@ -28,6 +30,8 @@ static inline BOOL K32GetProcessMemoryInfo(HANDLE p, PROCESS_MEMORY_COUNTERS *ou
     fclose(f);
     memset(out, 0, cb);
     out->cb = cb, out->WorkingSetSize = rss, out->PeakWorkingSetSize = hwm, out->PagefileUsage = anon;
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) == 0) out->PageFaultCount = (DWORD)(ru.ru_minflt + ru.ru_majflt);
     if (cb >= sizeof(PROCESS_MEMORY_COUNTERS_EX)) ((PROCESS_MEMORY_COUNTERS_EX *)out)->PrivateUsage = anon;
     return TRUE;
 }

@@ -98,6 +98,7 @@ int output_for_aspect(int) { CHECK(false); return 0; }
 // (the Frame generation rows in set_row: DLSS FG offered (framegen_by_dlss_offered); no DLSS FG top here (vk_dlss.cpp
 // dlss_fg_most, vk_framegen.cpp framegen_capped))
 bool framegen_by_dlss_offered() { return true; }
+bool env_on(const char*) { return false; }
 int dlss_fg_most() { return 0; }
 int framegen_capped(int framegen, int) { return framegen; }
 bool aspect_follows_host(int) { return false; }
@@ -110,6 +111,7 @@ unsigned upscalers_available() { return ur::bit(ur::GAME) | ur::dlss_bits(true);
 bool filter_needed() { return true; }
 const char* dlss_preset_env() { return nullptr; }
 bool framegen_by_fixed() { return false; }   // (vk_menu.cpp: Frame generation by with nothing to choose)
+bool pre_bloom_env() { return false; }   // (RX_VK_DLSS_PRE_BLOOM unset: the DLAA before the bloom row decides)
 /* ROW_FIXED */
 /* STOPS */
 /* AUTO_STATE */

@@ -306,6 +306,12 @@ inline bool resolution_fixed(int upscaler) { return full_scale(upscaler); }
 inline bool model_shown(bool dlss_ok) { return dlss_ok; }
 /// (env_set: RX_VK_DLSS_PRESET names a preset, which wins over the row for this run)
 inline bool model_fixed(int upscaler, bool env_set) { return !is_dlss(upscaler) || env_set; }
+/// (hookshot) The DLAA before the bloom row (opts.dlss_pre_bloom): shown with NVIDIA DLSS chosen where it runs (DLSS or
+/// DLAA), and changeable with DLAA alone: in DLSS's other modes the scene, the bloom and the tone map are drawn smaller than
+/// the output DLSS draws, so its picture cannot go back into the scene (vk_temporal.cpp temporal_pre_bloom)
+inline bool pre_bloom_shown(bool dlss_ok, int upscaler) { return dlss_ok && is_dlss(upscaler); }
+/// (env_set: RX_VK_DLSS_PRE_BLOOM is set, and wins over the row for this run)
+inline bool pre_bloom_fixed(int upscaler, bool env_set) { return upscaler != DLAA || env_set; }
 /// The Window scaling filter does something only when the window's size is not the game's picture's (the Output resolution);
 /// a size not known yet (0) counts as different
 inline bool filter_needed(unsigned picture_w, unsigned picture_h, unsigned window_w, unsigned window_h) {

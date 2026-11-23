@@ -20,6 +20,8 @@ from pathlib import Path
 RUN_ALL_ARGS = ["--cc", "gcc"]
 
 ROOT = Path(__file__).resolve().parents[1]
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(ROOT / "gpu" / "vk" / "compat" / "hookshot_env.h")
 sys.path.insert(0, str(ROOT / "nx2"))
 import oot_wide  # noqa: E402
 
@@ -262,7 +264,7 @@ def main():
         c = Path(tmp) / "fixture.c"
         exe = Path(tmp) / "fixture"
         c.write_text(src, encoding="utf-8")
-        cc = subprocess.run([a.cc, "-std=c11", "-O1", "-Wall", "-Wno-unused-function", "-o", str(exe), str(c), "-lm"],
+        cc = subprocess.run([a.cc, "-std=c11", "-O1", "-include", ENV_ON_H, "-Wall", "-Wno-unused-function", "-o", str(exe), str(c), "-lm"],
                             capture_output=True, text=True)
         check(cc.returncode == 0, "fixture did not compile:\n" + cc.stdout + cc.stderr)
         run = subprocess.run([str(exe)], capture_output=True, text=True)

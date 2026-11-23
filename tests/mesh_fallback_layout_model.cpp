@@ -242,11 +242,15 @@ int main(int argc, char** argv) {
         RunCase(("random " + std::to_string(i)).c_str(), p, MakeMeshlets(rng, p, 1 + rng() % 64, false));
         cases++;
     }
-    // (past the area: full meshlets of a wide record, as Kokiri's hot programs, until the area is cut)
+    // (past the area: full meshlets of a wide record, as Kokiri's hot programs, a fifth more than the area holds, so it is cut
+    // whatever MESH_FALLBACK_RECORD_WORDS is)
     for (u32 vertex_lines : {21U, 26U}) {
         Program p{MakeProgram(rng, 4, vertex_lines, 0)};
         p.mesh.max_vertices = 64, p.mesh.max_primitives = 126;
-        RunCase(("past the area " + std::to_string(vertex_lines)).c_str(), p, MakeMeshlets(rng, p, 2400, true));
+        const u32 meshlet_records{p.mesh.max_primitives * p.mesh.Corners()};
+        const size_t n{(size_t)MeshFallbackFit(p.words()) / meshlet_records * 6 / 5};
+        Check(n * meshlet_records > MeshFallbackFit(p.words()), "past the area " + std::to_string(vertex_lines) + ": its meshlets fit the area");
+        RunCase(("past the area " + std::to_string(vertex_lines)).c_str(), p, MakeMeshlets(rng, p, n, true));
         cases++;
     }
     std::printf("mesh fallback layouts: %d cases, %d failed\n", cases, fails);

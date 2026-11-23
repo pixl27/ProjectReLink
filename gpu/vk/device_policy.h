@@ -34,6 +34,7 @@
 #include "astc_bc_policy.h"
 #include "auto_settings.h"
 #include "fallback_size_policy.h"
+#include "gpu_arch.h"
 #include "gpu_clock.h"
 #include "intel_compiles.h"
 #include "mesh_mode.h"
@@ -52,7 +53,7 @@ struct DeviceFacts {
     VkDriverId driver_id{};
     VkPhysicalDeviceType device_type = VK_PHYSICAL_DEVICE_TYPE_OTHER;
     const char* driver_info = "";   // (VkPhysicalDeviceDriverProperties::driverInfo: AMD's Windows driver names its compiler here)
-    const char* device_name = "";   // (the Steam Deck's APU and the RTX and RX 9000 cards are told by name)
+    const char* device_name = "";   // (the Steam Deck's APU, RTX cards, and fallback RDNA 4 detection by name)
     bool windows = false;           // (the build's OS)
     bool steam_deck_env = false;    // (SteamDeck=1, as auto_profile reads it)
     // memory
@@ -64,6 +65,7 @@ struct DeviceFacts {
     bool rebar = false;             // (a discrete card with a DEVICE_LOCAL | HOST_VISIBLE memory type on its VRAM heap; no rule reads it yet)
     // CPU
     unsigned cpus_all = 0, cpus_usable = 0;   // (hardware_concurrency; usable_cpus, the affinity mask's count)
+    unsigned cores_usable = 0;   // (hookshot: usable_cores, the physical cores among those, SMT siblings counted once; 0 unknown)
     // what Vulkan says the card can do, whatever this run turns on
     bool mesh_shader = false;       // (task and mesh shaders: dev.mesh_capable)
     bool mesh_queries = false;      // (their counts in pipeline statistics, as this run has them: off with the Compute mode)
@@ -81,10 +83,17 @@ struct DeviceFacts {
     bool nvidia() const { return vendor_id == 0x10DE; }
     bool amd() const { return vendor_id == 0x1002; }
     bool intel() const { return vendor_id == 0x8086; }
+    bool amd_win() const { return windows && driver_id == VK_DRIVER_ID_AMD_PROPRIETARY; }
     bool radv() const { return driver_id == VK_DRIVER_ID_MESA_RADV; }
     bool radv_gcn() const { return radv() && !storage_io16; }
     bool deck_apu() const { return gpu_clock::deck_apu(device_name); }
     bool handheld() const { return (steam_deck_env && integrated()) || deck_apu(); }   // (auto_profile's hw.handheld)
+    GpuArch arch() const { return classify_gpu_arch(vendor_id, device_id, device_name, radv_gcn()); }
+    const char* arch_name() const { return gpu_arch_name(arch()); }
+    bool rdna1() const { return arch() == GpuArch::AmdRdna1; }
+    bool rdna2() const { return arch() == GpuArch::AmdRdna2; }
+    bool rdna3() const { return arch() == GpuArch::AmdRdna3; }
+    bool rdna4() const { return arch() == GpuArch::AmdRdna4; }
 };
 
 // The rules that are a number or a yes from one or two facts, each as its site has it. device_policy() calls them with
@@ -95,13 +104,27 @@ constexpr uint64_t kMB = 1ull << 20, kGB = 1ull << 30;
 
 /// RX_VK_NATIVE_FADD unset: the drivers the GPU's own float add was run on (vk_main.cpp native_fadd_wanted has the runs).
 /// NVIDIA's driver; Intel's Windows driver on Meteor Lake and Arrow Lake (0x7Dxx) from 101.9175, Battlemage (0xE2xx) from
-/// 101.9154 and Panther Lake (0xB0xx) from 101.9150
+/// 101.9154, Panther Lake (0xB0xx) from 101.9150 and Lunar Lake (0x64xx: 0x6420, 0x64A0, 0x64B0) from 101.8991 (with the loop
+/// Arc 140Vs lost the device, at 499dbfd0 among other programs: Hookshot issues 844, 878, 1027 and 1225). Intel's Windows driverVersion is
+/// 101 << 14 | build on every family; Mesa's Intel driver numbers its versions otherwise and is never listed
 inline bool native_fadd_listed(VkDriverId driver, uint32_t device, uint32_t version) {
     if (driver == VK_DRIVER_ID_NVIDIA_PROPRIETARY) return true;
     if (driver != VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS) return false;
     return ((device & 0xFF00u) == 0x7D00u && version >= (101u << 14 | 9175u)) ||
            ((device & 0xFF00u) == 0xE200u && version >= (101u << 14 | 9154u)) ||
-           ((device & 0xFF00u) == 0xB000u && version >= (101u << 14 | 9150u));
+           ((device & 0xFF00u) == 0xB000u && version >= (101u << 14 | 9150u)) ||
+           ((device & 0xFF00u) == 0x6400u && version >= (101u << 14 | 8991u));
+}
+
+/// Default depth-bias margin for EQUAL colour passes after a Z-prepass (vk_draw.cpp dynamic_state).
+/// Intel's Windows driver needs 64 units on older/integrated families where depth and colour programs do not match to the
+/// last bit (issue 17, Arc B390). On discrete Battlemage (0xE2xx, e.g. Arc B570 / B580) the margin's LESS_OR_EQUAL lets
+/// alpha-tested Z-prepass cutouts (fallen leaves, Link's hair, distant tree cards) pass depth where the prepass
+/// discarded them, rendering opaque rectangles; keep it 0 there.
+inline float equal_depth_bias(VkDriverId driver, uint32_t device) {
+    if (driver != VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS) return 0.0f;
+    if ((device & 0xFF00u) == 0xE200u) return 0.0f;
+    return 64.0f;
 }
 
 /// The mirrors' budget (vk_memory.cpp mirror_budget): a third of the card, at most 1700 MB, on a card of 6.5 GB or less,
@@ -113,17 +136,19 @@ inline uint64_t mirror_budget(uint64_t vram) {
 
 /// An integrated GPU's texture budget from its share of the allowance (texture_budget.h integrated_bytes) and the PC's
 /// RAM, which it draws from (vk_texture.cpp texture_frame): a third of the RAM is left to the game and the system (8 GB at
-/// least, 16 at most), then a cap by the RAM (1.5 GB at 8, 2 at 12, 2.5 at 16, 3.5 at 24, 4 at 32, 6 above), 1 GB at least,
-/// and never more than the share. RAM not known: taken as 8 GB
+/// least, 16 at most), then a cap by the RAM (1.5 GB at 8, 2 at 12, 2.5 at 16, 3.5 at 24, 4 at 32, 6 above; when ASTC is
+/// decoded on the CPU, 6 GB at 24 and 8 above, as RGBA8 textures take ~4x the space of BC3), 1 GB at least, and never
+/// more than the share. RAM not known: taken as 8 GB
 inline uint64_t integrated_reserved(uint64_t ram) {   // (what of the RAM is left to the game, its targets and the system)
     return std::max<uint64_t>(std::min<uint64_t>(ram / 3, 16 * kGB), 8 * kGB);
 }
-inline uint64_t integrated_texture_budget(uint64_t share, uint64_t ram) {
+inline uint64_t integrated_texture_budget(uint64_t share, uint64_t ram, bool astc_on_cpu = false) {
     if (!ram) ram = 8 * kGB;
     const uint64_t reserved = integrated_reserved(ram);
     const uint64_t available = ram > reserved ? ram - reserved : 0;
     uint64_t b = std::min(available, share);
     const uint64_t cap = ram <= 8 * kGB ? 1536 * kMB : ram <= 12 * kGB ? 2048 * kMB : ram <= 16 * kGB ? 2560 * kMB
+                       : astc_on_cpu ? (ram <= 24 * kGB ? 6144 * kMB : 8192 * kMB)
                        : ram <= 24 * kGB ? 3584 * kMB : ram <= 32 * kGB ? 4096 * kMB : 6144 * kMB;
     b = std::min(b, cap);
     b = std::max<uint64_t>(b, 1024 * kMB);
@@ -131,9 +156,9 @@ inline uint64_t integrated_texture_budget(uint64_t share, uint64_t ram) {
 }
 
 /// The texture cache's budget at the first look (texture_frame): texture_budget.h by the card, an integrated GPU's by the RAM too
-inline uint64_t texture_budget(uint64_t allowed, uint64_t vram, uint64_t ram, bool integrated) {
+inline uint64_t texture_budget(uint64_t allowed, uint64_t vram, uint64_t ram, bool integrated, bool astc_on_cpu = false) {
     if (!integrated) return texture_rule::dedicated_bytes(allowed, vram, ram);
-    return integrated_texture_budget(texture_rule::integrated_bytes(allowed, vram), ram);
+    return integrated_texture_budget(texture_rule::integrated_bytes(allowed, vram, astc_on_cpu), ram, astc_on_cpu);
 }
 
 /// Whether the card counts as small for the textures' top levels (vk_texture.cpp low_vram_texture_mips, with Minimum's
@@ -225,6 +250,7 @@ inline bool parse_decimal(const char* text, double hi, double& out) {
 enum class Sw : unsigned {
     astc_on_cpu, batch_submits, compute_builds_serial, pcache_fetch_lock, split_before_draw, ub_snapshot, split_ub_flush,
     occ_copy, mirrors, fsr4_tune, position_invariant, equal_depth_bias, cap_spare_max, staging_keep, workers,
+    mesh_fallback_strict_fmul, bc_copy_per_layer,
     fetch_bounds, nan_bits, gather_offset,   // (device_policy_fixes_env's three)
     count
 };
@@ -255,6 +281,24 @@ struct DevicePolicy {
     // Players of OoT ports on those cards saw black and white blocks where a NaN test did not hold. The colour outputs'
     // NaN guard is such a test too. RX_VK_NAN_BITS. Read (coopmat_init)
     bool nan_bits = false;
+    // AMD's older Windows shader compiler (RDNA 1 and 2, RX 5000 and RX 6000: same driverInfo check as nan_bits): in
+    // compute-fallback mesh stages, where gl_Position cannot be decorated Invariant, the compiler ignores NoContraction
+    // (even with DISABLE_OPTIMIZATION_BIT) and reassociates fma(t, v * rsq, add) into fma(rsq * t, v, add) in depth-only
+    // passes where v * rsq has one use while keeping v * rsq in the colour pass. The 1-ULP shift on grass blade tips
+    // fails the colour pass's EQUAL depth test and flashes white (sky) triangles (issues 1710, 1799, 1934; seen on
+    // 0x800161 / 26.11.2). Emitting NoContraction f32 multiplies as fma(a, b, -0.0f) (IEEE-754 bit-exact, single
+    // v_fmaak_f32) blocks the reassociation. RX_VK_MESH_STRICT_FMUL. Read (coopmat_init; in the program cache's stamp)
+    bool mesh_fallback_strict_fmul = false;
+    // AMD's Windows driver (diagnosed on RDNA 2: RX 6700 XT, RX 6600, driver 0x800161): a single multi-layer
+    // VkBufferImageCopy (layerCount > 1) into a block-compressed (BC3/BC7) mip-tail level whose extent is not a multiple
+    // of 4 (e.g. 5x5 mip 8 on the 1365 x 1365 x 90 terrain material arrays, 6x6 on 1536/768, 9x9 on 300) truncates the
+    // copy to floor(w/4) x floor(h/4) blocks per layer, leaving the right and bottom edge blocks zeroed (pure black) even
+    // with explicit bufferRowLength/bufferImageHeight. Splitting non-4-aligned multi-layer copies into one
+    // VkBufferImageCopy region per layer inside the same call uses the single-layer copy path at zero measurable cost while
+    // keeping 8-layer decode/encode runs intact; enabled across AMD's Windows driver (matching bc_small_runs) so untested
+    // AMD Windows generations (RDNA 1, RDNA 3, GCN) cannot regress there. RX_VK_BC_COPY_PER_LAYER. Read
+    // (vk_texture.cpp bc_encode_into)
+    bool bc_copy_per_layer = false;
     // AMD's and Intel's drivers and the mobile ones Eden runs on: gathers nudged by 1/512 of a texel, so that the four
     // texels a gather picks match Maxwell's at texel edges (emit_spirv_image.cpp ImageGatherSubpixelOffset, Eden's, which
     // Hookshot had never turned on). Eden and Lichii turn it on for these drivers: shadow edges drawn as dashed lines
@@ -269,10 +313,12 @@ struct DevicePolicy {
     // pass the same position. By the vendor, so NVK goes without them as NVIDIA's own compiler does: whether Mesa's
     // compiler needs them wants a run on NVK. RX_VK_NO_INVARIANT turns them off. Read (vk_coopmat.cpp coopmat_init)
     bool position_invariant = false;
-    // Intel: a colour pass tests EQUAL against what another program wrote, and Intel's compiler does not give the two the
-    // same position to the last bit (holes in the ground); 64 units towards the camera. By the vendor: the site names no
-    // GPU, driver or version, so which of Intel's two compilers it is wants a run. RX_VK_EQ_BIAS=<units>, 0 off. Read
-    // (vk_draw.cpp dynamic_state)
+    // Intel's Windows driver (except discrete Battlemage, 0xE2xx): a colour pass tests EQUAL against what another
+    // program wrote, and its compiler does not give the two the same position to the last bit (holes in the ground,
+    // issue 17, Arc B390); 64 units towards the camera. Not Mesa's (Iris Xe, Mesa 26.2.7: Kakariko, the Death Mountain
+    // gate and trail without a hole) and not Battlemage (Arc B570, 101.9175: Castle Town Market and Hyrule Field without
+    // a hole), where the margin's LESS_OR_EQUAL passes discarded alpha-tested Z-prepass cutouts as opaque rectangles
+    // or draws terrain in front of rocks. RX_VK_EQ_BIAS=<units>, 0 off. Read (vk_draw.cpp dynamic_state)
     float equal_depth_bias = 0;
     // AMD but RADV: task and mesh programs built without the driver's optimizer, which hung the GPU (RX 6600, issues 461
     // and 484); on RADV they reset it built without (issue 1000). RX_VK_MESH_OPT. Site (vk_draw.cpp), step 4
@@ -364,7 +410,7 @@ struct DevicePolicy {
     bool split_ub_flush = true;
     // The GPU's own float add on storage buffers, where the card has it and a run has shown it right
     // (policy_rule::native_fadd_listed, the one list: NVIDIA's driver; Intel's Windows driver from 101.9175 on Meteor Lake
-    // and Arrow Lake, 101.9154 on Battlemage, 101.9150 on Panther Lake); elsewhere the compare-exchange loop.
+    // and Arrow Lake, 101.9154 on Battlemage, 101.9150 on Panther Lake, 101.8991 on Lunar Lake); elsewhere the compare-exchange loop.
     // RX_VK_NATIVE_FADD, read at the site. Site (create_device, which asks the list itself), step 5
     bool native_float_add = false;
     // A subgroup can have more than 32 lanes: the long warp path for the stages the GPU does not pin to 32 (the site's
@@ -372,13 +418,16 @@ struct DevicePolicy {
     bool warp64 = false;
 
     // ---- measured on one card ----
-    // RADV but on GCN 1-4: the replay's submits held and sent as one (a Radeon 8060S on Bazzite, the submit 70 -> 6 ms a
+    // RADV but on GCN 1-4 and on a discrete RDNA 4 card: the replay's submits held and sent as one (a Radeon 8060S on Bazzite, the submit 70 -> 6 ms a
     // frame, issue 413; an RX 580 lost 4 fps). GCN is DeviceFacts::radv_gcn, the one definition; it was "no stage pinned
     // to 32 lanes and 64-lane waves" until this rule moved here, which RX_VK_NO_SUBGROUP_PIN made true of every 64-lane
-    // card and which took Vega (GFX9) for GCN too. RX_VK_BATCH. Read (vk_replay.cpp batch_on)
+    // card and which took Vega (GFX9) for GCN too. On an RX 9070 XT the gaps between held submits let the card's
+    // clock drop (median 1715 MHz held, 2589 MHz sent at once) and the frame was a quarter longer (62 -> 81 fps sent at
+    // once). RX_VK_BATCH. Read (vk_replay.cpp batch_on)
     bool batch_submits = false;
-    // RADV: the software matrix multiplies' unrolled forms are tried (measured on the Steam Deck); a test shader on the
-    // device then says which is used. RX_VK_MMA_UNROLL. Site (vk_coopmat.cpp), step 7
+    // RADV and AMD RDNA 4 on AMD's proprietary driver: the software matrix multiplies' unrolled forms are tried (measured on the
+    // Steam Deck and an RX 9060 XT); a test shader on the device then says which is used. RX_VK_MMA_UNROLL. Site
+    // (vk_coopmat.cpp), step 7
     bool mma_unroll_try = false;
     // Mesa's Intel driver, with dynamic indexing of storage buffer arrays: the tables searched in loops, as Mesa inlines
     // the written-out form (Windows not tried). RX_VK_GM_LOOP. Site (vk_coopmat.cpp table_loop_wanted), step 7
@@ -458,7 +507,7 @@ struct DevicePolicy {
     int auto_tier = 0;
     // An integrated GPU beside 4 threads or fewer: Auto's Render resolution is 33% (auto_settings.h choose). Site, step 2
     bool auto_render_third = false;
-    // An NVIDIA card named RTX, an AMD one named RX 9 or GFX12: Auto picks DLSS or FSR 4 where the build has it. Site
+    // An NVIDIA card named RTX, or an AMD RDNA 4 card (is_rdna4): Auto picks DLSS or FSR 4 where the build has it. Site
     // (auto_profile), step 2
     bool rtx = false, rdna4 = false;
     // The background workers (policy_rule::workers). RX_VK_WORKERS=<n>, 1 to 16. Read (vk_jobs.cpp start)
@@ -470,12 +519,15 @@ struct DevicePolicy {
     unsigned texture_threads = 1, texture_gather_threads = 1;
     // The preparation's workers in play (policy_rule::program_workers_in_play). No switch. Read (vk_draw.cpp prepare_run)
     unsigned program_workers_in_play = 2;
-    // Threaded rendering's Auto is on from 12 CPUs the process may use, where the mode is safe on this run
-    // (threaded_rendering.h). Site (vk_menu.cpp), step 7
-    bool threaded_auto_cpus = false;
+    // Threaded rendering's Auto by the cores the process may use, where the mode is safe on this run (threaded_rendering.h):
+    // the render thread from 4 cores, the recorder thread too from 6. Site (vk_menu.cpp), step 7
+    bool threaded_auto_render = false, threaded_auto_recorder = false;
     // Linux with 20 GB of RAM or less: the shader modules are let go after the precompile (1.5-1.8 GB); a memory shortfall
     // then does the same on any PC, at the site. RX_VK_DROP_MODULES, RX_VK_KEEP_MODULES. Site (vk_draw.cpp), step 2
     bool drop_modules_small_ram = false;
+    // An unset HOS_NATIVE_ZSTD keeps the zstd decode's virtual core on an Intel integrated GPU (its load freezes) and gives
+    // it up elsewhere. Site (host/hos_zstd.c, through HOS_OPT_NATIVE_ZSTD)
+    bool native_zstd_keep_core = false;
 };
 
 /// The defaults this PC gets, with no switch read
@@ -488,6 +540,8 @@ inline DevicePolicy device_policy(const DeviceFacts& f) {
     // one driver's bug
     p.fetch_bounds = !f.nvidia();
     p.nan_bits = f.driver_id == VK_DRIVER_ID_AMD_PROPRIETARY && f.driver_info && std::strstr(f.driver_info, "proprietary shader compiler");
+    p.mesh_fallback_strict_fmul = p.nan_bits;
+    p.bc_copy_per_layer = f.amd_win();
     switch (f.driver_id) {
     case VK_DRIVER_ID_AMD_PROPRIETARY:
     case VK_DRIVER_ID_AMD_OPEN_SOURCE:
@@ -503,7 +557,7 @@ inline DevicePolicy device_policy(const DeviceFacts& f) {
     }
     p.frag_shuffle_fallback = f.driver_id == VK_DRIVER_ID_AMD_PROPRIETARY || f.driver_id == VK_DRIVER_ID_MESA_RADV;
     p.position_invariant = !f.nvidia();
-    p.equal_depth_bias = f.intel() ? 64.0f : 0.0f;
+    p.equal_depth_bias = policy_rule::equal_depth_bias(f.driver_id, f.device_id);
     p.mesh_no_optimizer = f.amd() && !f.radv();
     // (corrected: the driver the deadlock is in, RADV, and not "AMD off Windows", which also took AMDVLK. To go back:
     // !f.windows && f.amd(), here and in create_device)
@@ -544,8 +598,8 @@ inline DevicePolicy device_policy(const DeviceFacts& f) {
 
     // measured on one card
     // (corrected: GCN by the one definition, radv_gcn. To go back: f.radv() && !(f.sg32_stages == 0 && f.subgroup_size > 32))
-    p.batch_submits = f.radv() && !f.radv_gcn();
-    p.mma_unroll_try = f.radv();
+    p.batch_submits = f.radv() && !f.radv_gcn() && !(f.rdna4() && f.discrete());
+    p.mma_unroll_try = f.radv() || (f.rdna4() && f.driver_id == VK_DRIVER_ID_AMD_PROPRIETARY);
     p.global_table_loop = f.driver_id == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA && f.storage_buffer_array_dynamic_indexing;
     p.occ_copy = f.windows && ((f.amd() && f.integrated()) ||
                               (f.driver_id == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS && f.discrete()));
@@ -557,7 +611,7 @@ inline DevicePolicy device_policy(const DeviceFacts& f) {
     // sizes
     p.small_vram_textures = small_vram_textures(allowed, integrated, f.ram);
     p.astc_bc_all = astc_bc_policy::all(allowed, integrated);
-    p.texture_budget = texture_budget(allowed, heap, f.ram, integrated);
+    p.texture_budget = texture_budget(allowed, heap, f.ram, integrated, p.astc_on_cpu);
     p.mirror_budget = mirror_budget(heap);
     p.target_pool_mb = target_pool::default_mb(allowed);
     p.compact_min_free = vram_compact::default_min_free(allowed);
@@ -579,14 +633,18 @@ inline DevicePolicy device_policy(const DeviceFacts& f) {
     }
     p.auto_render_third = integrated && f.cpus_all > 0 && f.cpus_all <= 4;
     p.rtx = f.nvidia() && std::strstr(f.device_name, "RTX");
-    p.rdna4 = f.amd() && (std::strstr(f.device_name, "RX 9") || std::strstr(f.device_name, "GFX12"));
+    p.rdna4 = f.rdna4();
     p.workers = workers(f.cpus_all);
     p.capture_helpers = capture_helpers(f.cpus_all);
     p.texture_threads = texture_threads(f.cpus_all);
     p.texture_gather_threads = texture_gather_threads(f.cpus_all);
     p.program_workers_in_play = program_workers_in_play(f.cpus_all, f.cpus_usable);
-    p.threaded_auto_cpus = threaded::auto_picks(f.cpus_usable);
+    {
+        const threaded::Choice cpu = threaded::auto_picks(f.cores_usable);
+        p.threaded_auto_render = cpu.render_thread, p.threaded_auto_recorder = cpu.recorder_thread;
+    }
     p.drop_modules_small_ram = !f.windows && f.ram > 0 && f.ram <= 20 * kGB;
+    p.native_zstd_keep_core = f.intel() && f.integrated();
     return p;
 }
 
@@ -634,11 +692,15 @@ template <class Get> void device_policy_env(DevicePolicy& p, const DeviceFacts& 
     flag(Sw::split_ub_flush, "RX_VK_SPLIT_UBFLUSH", p.split_ub_flush);
     flag(Sw::ub_snapshot, "RX_VK_UB_SNAPSHOT", p.ub_snapshot);
     flag(Sw::astc_on_cpu, "RX_VK_ASTC_CPU", p.astc_on_cpu);
+    // (the integrated GPU's texture budget follows whether ASTC is decoded on the CPU)
+    p.texture_budget = policy_rule::texture_budget(f.allowed_at_start, f.vram_heap, f.ram, f.integrated(), p.astc_on_cpu);
     flag(Sw::batch_submits, "RX_VK_BATCH", p.batch_submits);
     flag(Sw::compute_builds_serial, "RX_VK_COMPUTE_SERIAL", p.compute_builds_serial);
     flag(Sw::pcache_fetch_lock, "RX_VK_PCACHE_FETCH_LOCK", p.pcache_fetch_lock);
     flag(Sw::split_before_draw, "RX_VK_SPLIT_BEFORE_DRAW", p.split_before_draw);
     flag(Sw::occ_copy, "RX_VK_OCC_COPY", p.occ_copy);
+    flag(Sw::mesh_fallback_strict_fmul, "RX_VK_MESH_STRICT_FMUL", p.mesh_fallback_strict_fmul);
+    flag(Sw::bc_copy_per_layer, "RX_VK_BC_COPY_PER_LAYER", p.bc_copy_per_layer);
     {   // (off only: the tuning rewrites AMD's shaders for AMD's GPUs, and a value that says on leaves the default)
         const char* e = nullptr;
         if (word("RX_VK_FSR4_TUNE", e) == 0) p.fsr4_tune = false, mark(Sw::fsr4_tune, "RX_VK_FSR4_TUNE", e);
@@ -710,12 +772,12 @@ template <class Line> void device_policy_log(const DevicePolicy& p, const Device
     const auto mb = [](uint64_t bytes) { return (unsigned long long)(bytes >> 20); };
     {
         PolicyLine l("facts");
-        l.add(" %04x:%04x, driver id %d, version %#x (%.100s), type %d, %s; VRAM %llu MB, allowed at the start %llu MB, RAM %llu MB,"
-              " resizable BAR %d; CPUs %u (%u usable); mesh shaders %d, float add %d, cooperative matrices %d, 16-bit stage"
+        l.add(" %04x:%04x (arch %s), driver id %d, version %#x (%.100s), type %d, %s; VRAM %llu MB, allowed at the start %llu MB, RAM %llu MB,"
+              " resizable BAR %d; CPUs %u (%u usable, %u cores); mesh shaders %d, float add %d, cooperative matrices %d, 16-bit stage"
               " inputs %d, lanes %u to %u (32 on stages %#x)",
-              (unsigned)f.vendor_id, (unsigned)f.device_id, (int)f.driver_id, (unsigned)f.driver_version, f.driver_info, (int)f.device_type,
+              (unsigned)f.vendor_id, (unsigned)f.device_id, f.arch_name(), (int)f.driver_id, (unsigned)f.driver_version, f.driver_info, (int)f.device_type,
               f.windows ? "Windows" : "not Windows", mb(f.vram_heap), mb(f.allowed_at_start), mb(f.ram), (int)f.rebar, f.cpus_all,
-              f.cpus_usable, (int)f.mesh_shader, (int)f.float32_atomic_add, (int)f.coop_matrix_ext, (int)f.storage_io16,
+              f.cpus_usable, f.cores_usable, (int)f.mesh_shader, (int)f.float32_atomic_add, (int)f.coop_matrix_ext, (int)f.storage_io16,
               (unsigned)f.subgroup_size, (unsigned)f.subgroup_max, (unsigned)f.sg32_stages);
         line(l.text);
     }
@@ -724,6 +786,8 @@ template <class Line> void device_policy_log(const DevicePolicy& p, const Device
         l.add(" on driver version %#x:", (unsigned)f.driver_version);
         l.flag("fetch_bounds", p.fetch_bounds, p.set(Sw::fetch_bounds));
         l.flag("nan_bits", p.nan_bits, p.set(Sw::nan_bits));
+        l.flag("mesh_fallback_strict_fmul", p.mesh_fallback_strict_fmul, p.set(Sw::mesh_fallback_strict_fmul), "0x800161");
+        l.flag("bc_copy_per_layer", p.bc_copy_per_layer, p.set(Sw::bc_copy_per_layer), "0x800161");
         l.flag("gather_offset", p.gather_offset, p.set(Sw::gather_offset));
         l.flag("frag_shuffle_fallback", p.frag_shuffle_fallback);
         l.flag("position_invariant", p.position_invariant, p.set(Sw::position_invariant));
@@ -754,7 +818,7 @@ template <class Line> void device_policy_log(const DevicePolicy& p, const Device
         l.add(" import_chunk=%u MB", (unsigned)p.import_chunk_mb);
         l.flag("ub_snapshot", p.ub_snapshot, p.set(Sw::ub_snapshot));
         l.flag("split_ub_flush", p.split_ub_flush, p.set(Sw::split_ub_flush));
-        l.flag("native_float_add", p.native_float_add, false, f.nvidia() ? nullptr : "Intel 101.9150 to 101.9175 by family");
+        l.flag("native_float_add", p.native_float_add, false, f.nvidia() ? nullptr : "Intel 101.8991 to 101.9175 by family");
         l.flag("warp64", p.warp64);
         l.flag("batch_submits", p.batch_submits, p.set(Sw::batch_submits));
         l.flag("mma_unroll_try", p.mma_unroll_try);
@@ -794,8 +858,10 @@ template <class Line> void device_policy_log(const DevicePolicy& p, const Device
         l.flag("rdna4", p.rdna4);
         l.add("; workers %u%s, capture helpers %u, texture threads %u (gather %u), program workers in play %u", p.workers,
               p.set(Sw::workers) ? "*" : "", p.capture_helpers, p.texture_threads, p.texture_gather_threads, p.program_workers_in_play);
-        l.flag("threaded_auto_cpus", p.threaded_auto_cpus);
+        l.flag("threaded_auto_render", p.threaded_auto_render);
+        l.flag("threaded_auto_recorder", p.threaded_auto_recorder);
         l.flag("drop_modules_small_ram", p.drop_modules_small_ram);
+        l.flag("native_zstd_keep_core", p.native_zstd_keep_core);
         line(l.text);
     }
     {

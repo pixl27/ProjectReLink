@@ -40,7 +40,8 @@ class ColdCacheCheckTests(unittest.TestCase):
         run = block(DRAW, "void precompile_run(void (*progress)(size_t done, size_t total))")
         guard = run.index("notes_lost_by_driver()")
         self.assertIn('!env_on("HOOKSHOT_PREPARE_ONLY")', run[run.rindex("if (", 0, guard):guard])
-        self.assertLess(guard, run.index("if (!precompile_covers_notes()) precompile_warm(progress);"))
+        self.assertLess(guard, run.index("const bool warms = !precompile_covers_notes();"))
+        self.assertIn("if (warms) precompile_warm(", run)
         self.assertIn("remove(precompile_built_path().c_str());", run[guard:guard + 120])
 
 

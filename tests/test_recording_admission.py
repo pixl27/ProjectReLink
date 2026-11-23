@@ -37,7 +37,10 @@ def main():
     start = draw.index('    VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};', draw.index('bool bind_descriptors('))
     end = draw.index('\n    return true;\n}', start) + len('\n    return true;')
     fixture = fixture.replace('/* RES */', record).replace('/* STREAM */', stream)
-    fixture = fixture.replace('/* POOL */', block(draw, 'VkDescriptorPool make_pool('))
+    pool = block(draw, 'VkDescriptorPool make_pool(')
+    if 'uint32_t pool_shift_first() {' in draw:   # (a slot's pool at half its size first, made whole after one ran out)
+        pool = 'std::atomic<uint64_t> pools_grown{0};\n' + block(draw, 'uint32_t pool_shift_first() {') + '\n' + pool
+    fixture = fixture.replace('/* POOL */', pool)
     fixture = fixture.replace('/* BEGIN */', block(draw, 'void draw_begin_recording(')).replace('/* DESCRIPTORS */', draw[start:end])
     fixture = fixture.replace('/* BANK_CACHE */', block(draw, 'struct BankCache {') + ';')
     fixture = fixture.replace('/* BANK_BRANCH */', block(block(draw, 'VkDescriptorBufferInfo uniform_range('), 'if (index == 0 || index == 2)'))

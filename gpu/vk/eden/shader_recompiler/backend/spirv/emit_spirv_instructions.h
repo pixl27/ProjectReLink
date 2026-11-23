@@ -13,6 +13,7 @@
 namespace Shader::IR {
 enum class Attribute : u64;
 enum class Patch : u64;
+class Block;
 class Inst;
 class Value;
 } // namespace Shader::IR
@@ -617,6 +618,11 @@ Id EmitImageAtomicXor32(EmitContext& ctx, IR::Inst* inst, const IR::Value& index
                         Id value);
 Id EmitImageAtomicExchange32(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id coords,
                              Id value);
+// (hookshot, mma_layout.h mesh_fallback_shared_warp: emit_spirv_warp.cpp) the shared warp's start in the entry block, and the
+// region an if with a warp operation inside opens for its body
+void WarpPrologue(EmitContext& ctx);
+void WarpOpenRegion(EmitContext& ctx, const IR::Block* body, Id cond);
+void WarpCloseRegion(EmitContext& ctx);
 Id EmitLaneId(EmitContext& ctx);
 Id EmitVoteAll(EmitContext& ctx, Id pred);
 Id EmitVoteAny(EmitContext& ctx, Id pred);

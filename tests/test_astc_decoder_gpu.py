@@ -1,101 +1,90 @@
-"""Compile an authored ASTC GPU fixture; --run also compares the shipped shader on a selected Vulkan device.
-
-Default CI execution only compiles the fixture. Hardware execution needs a local
-Vulkan loader/device and the pinned baseline Git object (or --baseline-header).
-No game files, saves, caches or encoder download are used.
-"""
 # SPDX-License-Identifier: GPL-3.0-or-later
+"""Game-free Vulkan ASTC decoder verification against Hookshot's CPU ASTC reference.
+
+Default mode (used by run_all.py, no GPU or Vulkan loader required):
+  Compiles tests/astc_decoder_gpu.cpp against gpu/vk/host_shaders/astc_decoder_comp_spv.h
+  and gpu/third_party/suyu/video_core/textures/astc.cpp, validates the embedded SPIR-V
+  header, and runs the CPU ASTC reference across all 14 ASTC block sizes.
+
+GPU mode (--gpu or --gpu-device <substr>):
+  Dispatches the real compiled ASTC_DECODER_COMP_SPV compute shader on Vulkan across all
+  14 ASTC block sizes (4x4..12x12), odd image dimensions, linear and Switch 2 native
+  tiling, 1-4 partitions, dual-plane (all 4 secondary channels), void-extent LDR, and
+  error blocks, comparing every decoded RGBA8 pixel against the CPU reference
+  (0 tolerance on replicated-byte void-extent and error blocks; <=1 LSB on
+  interpolated LDR to account for astc.cpp's 255*C/65536 vs Vulkan UNORM8 C/65535 rounding).
+"""
 import argparse
-import hashlib
 import os
 from pathlib import Path
-import re
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
 
 RUN_ALL_ARGS = ["--cxx", "{cxx}", "--headers", "{vulkan_headers}"]
+
 ROOT = Path(__file__).resolve().parents[1]
-HEADER = "gpu/vk/host_shaders/astc_decoder_comp_spv.h"
-BASELINE = "51da0464b4cf0c7f56b81ebd6bb309325835e175"
-BASELINE_SPIRV_SHA256 = "acb9f5c0e30f7ebd3dc0c39c709a62a32a3b7724aeccce85cebdff1705e2afc4"
-
-
-def spirv(header):
-    body = re.search(r"ASTC_DECODER_COMP_SPV\s*\[\s*\]\s*=\s*\{(.*?)\};", header, re.S)
-    if not body:
-        raise RuntimeError("ASTC generated-header array was not found")
-    words = [int(x, 16) for x in re.findall(r"0x[0-9a-fA-F]+", body.group(1))]
-    if not words or words[0] != 0x07230203:
-        raise RuntimeError("ASTC header does not contain a SPIR-V module")
-    return struct.pack("<" + "I" * len(words), *words)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cxx", default="clang++")
-    parser.add_argument("--headers", type=Path, required=True)
-    parser.add_argument("--run", action="store_true", help="execute Vulkan work; default only compiles")
-    parser.add_argument("--device", default="", help="case-insensitive device-name substring; empty selects hardware")
-    parser.add_argument("--baseline-header", type=Path, help="GPL baseline header for a checkout without the pinned Git object")
-    parser.add_argument("--candidate-spirv", type=Path, help="explicit shader override for semantic negative controls")
+    parser.add_argument("--cxx", default=os.environ.get("CXX") or shutil.which("clang++") or shutil.which("g++") or "g++")
+    parser.add_argument("--headers", type=Path, required=True, help="path to Vulkan-Headers include directory")
+    parser.add_argument("--gpu", action="store_true", help="dispatch astc_decoder_comp_spv.h on a Vulkan device")
+    parser.add_argument("--gpu-device", help="case-insensitive device-name substring for --gpu")
     args = parser.parse_args()
-    compiler = shutil.which(args.cxx) or (str(args.cxx) if Path(args.cxx).is_file() else None)
-    if not compiler:
-        raise RuntimeError("C++ compiler unavailable: " + args.cxx)
-    if not (args.headers / "vulkan/vulkan_core.h").is_file():
-        raise RuntimeError("Vulkan core headers unavailable: " + str(args.headers))
-    env = os.environ.copy()
-    if os.name == "nt":
-        env["PATH"] = str(Path(compiler).resolve().parent) + os.pathsep + env.get("PATH", "")
+    args.gpu = args.gpu or bool(args.gpu_device)
+
+    fixture_cpp = ROOT / "tests/astc_decoder_gpu.cpp"
+    astc_cpu_cpp = ROOT / "gpu/third_party/suyu/video_core/textures/astc.cpp"
+    inc_flags = [
+        "-I", str(args.headers),
+        "-I", str(ROOT / "gpu/vk"),
+        "-I", str(ROOT / "gpu/compat"),
+        "-I", str(ROOT / "gpu/third_party/suyu"),
+        "-I", str(ROOT / "gpu/vk/compat"),
+    ]
+
     with tempfile.TemporaryDirectory(prefix="hookshot-astc-gpu-") as directory:
-        directory = Path(directory)
-        executable = directory / ("fixture.exe" if os.name == "nt" else "fixture")
-        flags = ["-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-missing-field-initializers"]
+        tmp = Path(directory)
+        astc_obj = tmp / "astc_cpu.o"
+        exe = tmp / ("astc_decoder_gpu.exe" if os.name == "nt" else "astc_decoder_gpu")
+
+        # Compile third_party CPU ASTC reference with -DNDEBUG so error-block cases return FillError zeros.
+        subprocess.run(
+            [args.cxx, "-std=c++20", "-O1", "-DNDEBUG", *inc_flags, "-c", str(astc_cpu_cpp), "-o", str(astc_obj)],
+            check=True,
+        )
+
+        link_flags = ["-pthread"]
+        if os.name == "nt" and "mingw" in args.cxx.lower():
+            link_flags += ["-static"]
+        libraries = ["-ldl"] if os.name != "nt" else []
+
+        subprocess.run(
+            [args.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-missing-field-initializers",
+             *inc_flags, str(fixture_cpp), str(astc_obj), "-o", str(exe), *link_flags, *libraries],
+            check=True,
+        )
+
+        env = os.environ.copy()
         if os.name == "nt":
-            # CI's clang can use MSVC headers: keep the standard, portable fopen API,
-            # as the existing native-font fixtures do, without disabling warnings.
-            flags.append("-D_CRT_SECURE_NO_WARNINGS")
-        libraries = [] if os.name == "nt" else ["-ldl"]
-        subprocess.run([compiler, *flags, "-I" + str(args.headers), str(ROOT / "tests/astc_decoder_gpu.cpp"),
-                        "-o", str(executable), *libraries], check=True, timeout=120, env=env)
-        if not args.run:
-            print("PASS: ASTC GPU fixture compiled; no Vulkan loader/device work executed (use --run)")
-            return
-        if args.baseline_header:
-            baseline_header = args.baseline_header.read_text(encoding="utf-8")
+            cxx_dir = str(Path(args.cxx).resolve().parent)
+            if Path(cxx_dir).is_dir():
+                env["PATH"] = cxx_dir + os.pathsep + env.get("PATH", "")
+
+        cmd = [str(exe)]
+        if args.gpu:
+            cmd.append("--gpu")
+            if args.gpu_device:
+                cmd += ["--device", args.gpu_device]
         else:
-            reference = subprocess.run(["git", "-C", str(ROOT), "show", BASELINE + ":" + HEADER],
-                                       capture_output=True, text=True, encoding="utf-8", timeout=30)
-            if reference.returncode:
-                raise RuntimeError("Pinned GPL baseline Git object unavailable; fetch " + BASELINE +
-                                   " or supply --baseline-header. No automatic fetch is performed.")
-            baseline_header = reference.stdout
-        baseline = spirv(baseline_header)
-        if hashlib.sha256(baseline).hexdigest() != BASELINE_SPIRV_SHA256:
-            raise RuntimeError("Baseline shader differs from the pinned Vulkan 1.1 module")
-        candidate = args.candidate_spirv.read_bytes() if args.candidate_spirv else spirv(
-            (ROOT / HEADER).read_text(encoding="utf-8"))
-        first, second = directory / "baseline.spv", directory / "candidate.spv"
-        first.write_bytes(baseline)
-        second.write_bytes(candidate)
-        command = [str(executable), str(first), str(second)]
-        if args.device:
-            command.append(args.device)
-        result = subprocess.run(command, capture_output=True, text=True, env=env, timeout=120)
-        print(result.stdout, end="")
-        print(result.stderr, end="", file=sys.stderr)
-        if result.returncode == 77:
-            raise RuntimeError("Explicit --run could not execute a compatible Vulkan device; this is not a GPU pass")
-        if result.returncode:
-            raise RuntimeError("ASTC GPU fixture failed with exit " + str(result.returncode))
-        if "PASS full ASTC RGBA8 GPU equality: 88 cases" not in result.stdout:
-            raise RuntimeError("Fixture did not report the complete 88-case comparison")
-        print("Baseline SPIR-V SHA-256:", hashlib.sha256(baseline).hexdigest())
-        print("Candidate SPIR-V SHA-256:", hashlib.sha256(candidate).hexdigest())
+            cmd.append("--cpu-only")
+
+        subprocess.run(cmd, check=True, timeout=60 if args.gpu else 20, env=env)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

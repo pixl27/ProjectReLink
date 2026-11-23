@@ -84,7 +84,8 @@ def main():
     loop = cut[cut.index("record_job(last);"):cut.index("par_pool.done.wait(")]
     need("submit_job(j);" in loop and "submit_ready();" in loop, "the replay thread's own submits are not in order")
     sj = function(e, "const auto submit_job = [&init_lost](Job* j)")
-    need("vkQueueSubmit2(dev.queue, 1, &si, j->r->fence)" in sj and sj.index("queue_flush_locked();") < sj.index("vkQueueSubmit2("),
+    sub = "submit_or_retry(si, j->r->fence)" if "submit_or_retry(si, j->r->fence)" in sj else "vkQueueSubmit2(dev.queue, 1, &si, j->r->fence)"
+    need(sub in sj and sj.index("queue_flush_locked();") < sj.index(sub),   # (submit_or_retry: a refusal for want of memory made again)
          "submit_job: the held recordings (rec_cur among them) do not go first")
 
     sr = e[e.index("const auto submit_ready = [&] {"):]

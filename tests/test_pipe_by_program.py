@@ -33,7 +33,7 @@ def main():
         assert need in gp, "graphics_pipeline: " + need
     assert gp.index("if (made_for && made_for != &p) {") < gp.index("pipelines.emplace(key")
     assert "e->prog.store(p, std::memory_order_release);   // (whose pipeline it is: graphics_pipeline)" in draw
-    assert "kept_ready.emplace(key, std::make_pair(pl, made_from))" in draw
+    assert "kept_ready.try_emplace(key, std::make_pair(pl, made_from))" in draw
     assert "pipeline_keep_ready(r.key, pl, &p)" in draw   # (the load at create calls' pass: precompile_at_create)
     progs = (ROOT / "gpu/vk/vk_programs.cpp").read_text(encoding="utf-8")
     assert "pipeline_keep_ready(n.key, pl, p.get())" in progs

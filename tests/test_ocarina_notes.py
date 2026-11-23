@@ -301,7 +301,7 @@ class OcarinaNotesTests(unittest.TestCase):
             tmp = Path(tmp)
             (tmp / "t.c").write_text(PRELUDE + code + MAIN, encoding="utf-8")
             binary = tmp / ("t.exe" if sys.platform == "win32" else "t")
-            build = subprocess.run([compiler, "-std=gnu11", "-Wall", "-Wno-unused-function", "-I", str(ROOT / "gpu" / "vk"), "-I", str(ROOT / "host"),
+            build = subprocess.run([compiler, "-std=gnu11", "-Wall", "-Wno-unused-function", "-include", str(ROOT / "gpu" / "vk" / "compat" / "hookshot_env.h"), "-I", str(ROOT / "gpu" / "vk"), "-I", str(ROOT / "host"),
                                     "-I", str(ROOT / "gpu"), str(tmp / "t.c"), "-o", str(binary)], text=True, capture_output=True)
             self.assertEqual(build.returncode, 0, build.stderr)
             run = subprocess.run([str(binary), str(tmp)], text=True, capture_output=True, timeout=30)

@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-16 | fix/side-buttons-in-game-menus b59bcab3 (main 6d72ca93 + this change; `v3.0.0-rc.4-227-gb59bcab3`), a `dev_packs.py` pack over the base at e090cc48 | Windows 10 Pro 22H2 (19045), a window or fullscreen: unknown; played by hand with a mouse | RTX 4090 24 GB, 617.42 | Core i9-13900K, 32 GB | A on E and Mouse 4 (`key_a=69,5`), Mouse camera As the stick; other settings unknown | A copied save; a choice of the text box, the mouse captured before it | Run by hand (cuecuemoar): Mouse 4 confirms the choice. No log kept |

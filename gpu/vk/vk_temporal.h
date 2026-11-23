@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 #include "vk_internal.h"
 
@@ -70,6 +71,21 @@ int temporal_hidden_mesh_mode();
 /// (hookshot) Whether `depth` is the depth target of the scene the chain has taken in this frame (its camera's)
 bool temporal_scene_depth_is(const Texture* depth);
 
+/// (hookshot) NVIDIA DLAA before the game's bloom and tone map (pre_bloom.h has where and why): with DLAA and the
+/// Upscaler's DLAA before the bloom row on only (RX_VK_DLSS_PRE_BLOOM over it); off, DLAA stays at the gameplay upscale.
+/// A draw of program key that samples what its descriptors list (sampled: vk_draw.cpp gfx_sampled) and draws into colors
+/// (n of them): the frame's passes for the learning,
+/// and at the learned one DLAA on the scene's linear colour, its picture written back into the scene before that draw reads it
+/// (outside a pass: the open one is ended first). The gameplay upscale then copies its input (temporal_upscale). Without DLAA
+/// or for a draw that neither reads nor writes the scene it costs two atomic loads and a look through the lists. True: it
+/// recorded commands of its own (the pass ended, DLAA's passes and its actor motion's draws, whether DLAA then drew or not):
+/// the pipeline, viewport, vertex streams and descriptors bound are not the draw's any more (vk_draw.cpp: bound().reset())
+bool temporal_pre_bloom(VkCommandBuffer cmd, uint64_t key, const std::vector<const Texture*>& sampled, Texture* const* colors,
+                        int n);
+/// (hookshot) The engine takes the scene's linear colour before the tone map (temporal_pre_bloom wanted for this run and
+/// mode): DLSS makes its feature for HDR colour then, with its own exposure (vk_dlss.cpp prepare)
+bool temporal_hdr_input();
+
 /// A gameplay upscale's dispatch (program `key`; vk_draw.cpp's temporal_stand_in finds them: the 4/3 network fd029a317a9a4b94
 /// at the game's usual 3/4, the same-size pass 9dc98871eb7fc101 at full size, and one network of its own for each other
 /// share): its input as it samples it (in, in_view) and its output's storage view (out at level 0). known: one of the
@@ -84,6 +100,21 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
 /// engine's own state, the chain's images and deferred frees are let go, so their video memory comes back. Nothing to do
 /// costs one atomic load
 void temporal_idle();
+/// (hookshot, smoothness) RX_VK_DLSS_PREWARM (on by default; 0: off): DLSS's feature made before the game's first 3D frame. Its creation (NGX's
+/// CreateFeature, 70-120 ms of the replay thread in play, 33-50 ms headless) and the chain's first evaluate and pipelines were
+/// all in the first gameplay frame after a load. temporal_prewarm makes them in a light frame (the title, the file select, a
+/// loading screen: fewer draws than texture_ahead::kLightDraws) once NGX has started, for the size the game presents at
+/// (temporal_note_present) and the Upscaler row's DLSS or DLAA, with one evaluate (reset) on the chain's cleared images.
+/// The first gameplay frame then finds it made. A key that misses is made again there, as before, and logged with its why.
+/// Also (vk_dlss.cpp prepare): DLSS at a full-size frame takes the scaled mode that holds it, not a DLAA-mode feature
+bool temporal_prewarm_on();
+/// At each recording's start on the replay thread (cmd: its first command buffer). With RX_VK_DLSS_PREWARM=0 it only asks
+/// the upscalers at the first one in a run with no window (HOS_HEADLESS: no start-up screen asks them, and NGX's ~450 ms start
+/// fell into the first gameplay frame of every test run; RX_VK_PROBE_HEADLESS=0: not asked)
+void temporal_prewarm(VkCommandBuffer cmd);
+/// The draws of the last frame (vk_replay.cpp status_tick) and the size of the picture the game presented (do_present)
+void temporal_note_frame(int64_t draws);
+void temporal_note_present(uint32_t width, uint32_t height);
 /// (hookshot) The game asked for its gameplay upscale (temporal_upscale) in this frame or the two before: it draws a 3D
 /// scene now, whether or not an engine then drew it (failed, refused, not this frame). Not in its own menus, movies and
 /// loading screens. Without the lock (an atomic frame number)

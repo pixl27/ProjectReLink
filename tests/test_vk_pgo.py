@@ -105,7 +105,10 @@ def check_dev_packs():
                                 ("game", {"RX_VK_PGO": "gen"}, "game", "a game change still builds both modules"),
                                 ("renderer", {}, "renderer", "a renderer change, as before"),
                                 (None, {"RX_PGO": "gen"}, "game", "the game's counting build of an unchanged tree is built"),
-                                ("renderer", {"RX_PGO": "/p.prof"}, "game", "a game profile builds the game")):
+                                ("renderer", {"RX_PGO": "/p.prof"}, "game", "a game profile builds the game"),
+                                (None, {"HOOKSHOT_TRACY": "1"}, "game", "a Tracy pack of an unchanged tree builds the game"),
+                                ("renderer", {"HOOKSHOT_TRACY": "1"}, "game", "Tracy's client is in the game's executable"),
+                                (None, {"HOOKSHOT_TRACY": "0"}, None, "HOOKSHOT_TRACY=0 is off")):
         check("pack_route: " + why, packs.pack_route(how, env) == want)
     text = (ROOT / "scripts" / "dev_packs.py").read_text(encoding="utf-8")
     check("the renderer's own build takes it", '**renderer_profile(b["work"], os.environ)' in text)

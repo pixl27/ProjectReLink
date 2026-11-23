@@ -24,8 +24,10 @@
    changes decoder in its middle. A stream that cannot start on the host (a misaligned workspace, no free entry, a
    dictionary libzstd does not take) runs lifted from its start, as before.
 
-   The default (and HOS_NATIVE_ZSTD=1) also gives the thread's virtual core up while libzstd runs (as a sleep does:
-   hos_vcore_away/back), so the game's other threads can have it; HOS_NATIVE_ZSTD=2 decodes on the host and keeps the core.
+   The default (and HOS_NATIVE_ZSTD=2) keeps the thread's virtual core while libzstd runs. HOS_NATIVE_ZSTD=1 gives it up
+   meanwhile (as a sleep does: hos_vcore_away/back), so the game's other threads can have it; on an Arc 155H iGPU that
+   froze the game at loads in 7 runs of 10 (the game read no controller for 20 s to 5 min, lr 0x83489670), keeping the core
+   in none of 3, with loading screens no longer (RTX 4070 SUPER tours, docs/tested/2026-11-17-native-zstd-default-*).
 
    The game's other zstd path, the resource loaders' whole-buffer decode (the ARes_Loading threads: about a fifth of a core
    while an area loads, more than the stream decode there), is zstd's decompressMultiFrame inlined in f_8010b380 (x0 the
@@ -35,7 +37,8 @@
    in f_8010b380 does the call with libzstd's own (ZSTD_decompress_usingDDict, the same multi-frame decode: skippable frames skipped,
    frames one after the other) and answers 1, x0 the result: the content size, or zstd's error code as the game's gives it
    (callers test only that it is one). The game's DDict is taken as above; the game's context is not written; the thread
-   keeps its core. A raw dictionary, or a context the game set to another format, runs lifted.
+   gives up its core for buffers of at least one maximum zstd block. Smaller decodes keep it.
+   A raw dictionary, or a context the game set to another format, runs lifted.
 
    What differs from the game's decoder:
      - the up to 32 bytes of output room just past what is decoded: both decoders' fast copies may over-write there (the
@@ -48,6 +51,7 @@
 #include "hos.h"
 #ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
 #include "../gpu/vk/compat/hookshot_env.h"
+#include "../gpu/vk/vk_api.h"   /* (HOS_OPT_NATIVE_ZSTD; the check -includes both) */
 #endif
 #define ZSTD_STATIC_LINKING_ONLY
 #include "zstd.h"
@@ -99,14 +103,25 @@ static int zs_wanted(const char *name) {
     return !e || !*e || env_on(name);
 }
 
+int rx_option(int id, int otherwise);   /* (host/rx_backend.c) */
+/* HOS_NATIVE_ZSTD unset or empty: the renderer's default for its GPU (device_policy.h native_zstd_keep_core). Until it has
+   one, a call keeps the core and the next asks again */
 static int zs_mode(void) {
     static int mode = -1;
     int m = __atomic_load_n(&mode, __ATOMIC_RELAXED);
     if (m < 0) {
-        m = zs_wanted("HOS_NATIVE_ZSTD") ? (env_int("HOS_NATIVE_ZSTD", 1) == 2 ? 2 : 1) : 0;
+        const char *e = getenv("HOS_NATIVE_ZSTD");
+        int chosen = 0;   /* (the GPU's default) */
+        if (!zs_wanted("HOS_NATIVE_ZSTD")) m = 0;
+        else if (e && *e) m = env_int("HOS_NATIVE_ZSTD", 2) == 1 ? 1 : 2;
+        else {
+            const int r = rx_option(HOS_OPT_NATIVE_ZSTD, 0);
+            if (r != 1 && r != 2) return 2;   /* (not known yet: kept for this call) */
+            m = r, chosen = 1;
+        }
         if (zs_publish(&mode, m) && m)
-            hos_log("zstd: the game's stream decode on the host's libzstd %s (HOS_NATIVE_ZSTD=%d%s)", ZSTD_versionString(), m,
-                    m == 1 ? ": the core given up while it decodes" : "");
+            hos_log("zstd: the game's stream decode on the host's libzstd %s (HOS_NATIVE_ZSTD=%d%s%s)", ZSTD_versionString(), m,
+                    chosen ? ", this GPU's default" : "", m == 1 ? ": the core given up while it decodes" : "");
     }
     return m;
 }
@@ -400,9 +415,13 @@ int hos_zstd_frames(Ctx *c) {
         zs_note(!ok ? "a dictionary libzstd does not take as the game's" : "no libzstd context");
         return 0;
     }
+    /* z and d are held exclusively or by reference until the call completes. No guest
+       registers or dictionary-table locks are needed while libzstd fills the output. */
+    const int away = (room >= ZSTD_BLOCKSIZE_MAX || n >= ZSTD_BLOCKSIZE_MAX) && hos_vcore_away();
     const size_t r = d ? ZSTD_decompress_usingDDict(z, GP(dst), room, GP(src), n, d->dd)
                        : ZSTD_decompress_usingDict(z, GP(dst), room, GP(src), n, NULL, 0);
     HOS_WRITTEN(GP(dst), room);   /* (the whole room: libzstd may keep literals in its far end while it decodes) */
+    if (away) hos_vcore_back();
     zs_lock();
     zs_dict_put(d);
     if (zs_nspare < ZS_STREAMS) zs_spare[zs_nspare++] = z, z = NULL;

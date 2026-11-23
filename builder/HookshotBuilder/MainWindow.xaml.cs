@@ -114,7 +114,7 @@ public partial class MainWindow : Window
         }
         if (LaunchArg() is { } launchFolder)   // (Hookshot Launcher.exe in the game folder)
         {
-            SplashText.Text = "Starting Hookshot…";
+            SplashText.Text = "Starting Red Tunic…";
             await Task.Delay(700);
             ShowMain();
             ShowLauncher(launchFolder);
@@ -259,7 +259,7 @@ public partial class MainWindow : Window
         OutPath.Text = folder;
         StepPill.Visibility = Visibility.Collapsed;
         var game = GameVersion(folder) ?? ReadVersion(folder);
-        LaunchVersion.Text = (game != null ? $"Hookshot {game}" : "Hookshot") + " · " + folder;
+        LaunchVersion.Text = (game != null ? $"Red Tunic {game}" : "Red Tunic") + " · " + folder;
         LaunchPlay.IsEnabled = File.Exists(GameExe(folder));
         ShowPage(LaunchPage);
         latestTag = await NewestTag();
@@ -588,7 +588,7 @@ public partial class MainWindow : Window
                 BuildNote.Text = "About 19 minutes left · your PC stays usable";
                 break;
             case "ready":
-                finished = OutPath.Text;
+                finished = @"C:\Games\RedTunic";
                 ShowReady();
                 break;
             case "problem":
@@ -669,8 +669,8 @@ public partial class MainWindow : Window
             if (i == on)
             {
                 text.Foreground = Brushes.White;
-                pill.Background = new LinearGradientBrush(Color.FromRgb(0x4B, 0x70, 0xF0), Color.FromRgb(0x35, 0x57, 0xD6), 90);
-                pill.Effect = new DropShadowEffect { Color = Color.FromRgb(0x3D, 0x63, 0xE6), BlurRadius = 18, ShadowDepth = 6, Direction = 270, Opacity = 0.6 };
+                pill.Background = new LinearGradientBrush(Color.FromRgb(0xB8, 0x41, 0x50), Color.FromRgb(0x82, 0x2D, 0x3C), 90);
+                pill.Effect = new DropShadowEffect { Color = Color.FromRgb(0x9C, 0x34, 0x45), BlurRadius = 18, ShadowDepth = 6, Direction = 270, Opacity = 0.6 };
             }
             StepItems.Children.Add(pill);
         }

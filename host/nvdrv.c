@@ -93,6 +93,8 @@ static int map_floor(uint64_t va) {
 static volatile LONG maps_changed = 1;   /* the mappings changed since hos_gpu_guest_ranges last merged them */
 volatile LONG maps_generation = 1;   /* bumped by every change (hos_gpu_ptr's per-thread cache, the renderer's gpu_read) */
 static void map_add(uint64_t va, uint64_t size, uint64_t guest) {
+    void hos_gpu_pages_set(uint64_t guest, uint64_t size);   /* (local, mark_bitmap.c: set before the mapping counts) */
+    if (va == guest) hos_gpu_pages_set(guest, size);
     maps_changed = 1;
     InterlockedIncrement(&maps_generation);
     MAP_LOG("nvdrv: map GPU %#llx..%#llx -> %#llx", (unsigned long long)va, (unsigned long long)(va + size),
@@ -134,7 +136,7 @@ int hos_gpu_pools(uint64_t (*out)[2], int max) {
     UNLOCK();
     return n;
 }
-uint32_t hos_gpu_maps_generation(void) { return (uint32_t)maps_generation; }
+uint32_t hos_gpu_maps_generation(void) { return (uint32_t)__atomic_load_n(&maps_generation, __ATOMIC_ACQUIRE); }
 
 /* The native NVN layer's memory pools (GPU address = guest address): mapped here only for the renderer's change
    tracking (hos_gpu_ptr resolves native addresses itself) */
@@ -318,7 +320,7 @@ uint8_t *hos_gpu_ptr(uint64_t va, uint64_t *avail) {
     /* direct-mapped by 64 KB page (a draw touches more mappings than a short list holds: constant buffers in several
        pools, the header pools, vertex data; a miss is a locked search over ~4000 mappings) */
     static _Thread_local struct { uint64_t lo, hi, guest; LONG generation; } recent[1024];
-    const LONG generation = maps_generation;
+    const LONG generation = (LONG)hos_gpu_maps_generation();
     const unsigned k = (unsigned)(va >> 16) & 1023;
     if (recent[k].generation == generation && va >= recent[k].lo && va < recent[k].hi) {   /* (most calls) */
         *avail = recent[k].hi - va;

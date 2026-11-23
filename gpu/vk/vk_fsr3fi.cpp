@@ -1264,4 +1264,16 @@ VkImage made_image(uint32_t i) { return i < g.ready ? g.made[i].image : VK_NULL_
 
 void reset() { g.first_frame = true; }
 
+void release() {
+    if (g.ready) {
+        size_t n = 0;
+        for (Image* t : all_images()) n += t->image != VK_NULL_HANDLE, drop_image(*t);
+        for (Image& t : g.made) n += t.image != VK_NULL_HANDLE, drop_image(t);
+        g.ready = 0;
+        g.width = g.height = g.render_width = g.render_height = 0;
+        logf("vk: fsr3fi: frame generation off: its %zu images let go", n);
+    }
+    if (!dead.empty()) free_dead();
+}
+
 } // namespace mkwvk::fsr3fi

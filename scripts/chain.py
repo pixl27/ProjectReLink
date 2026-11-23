@@ -27,15 +27,23 @@ def load(path):
         if f.readline().strip() != b"HOSCHAIN1":
             sys.exit("%s: not a HOS_CHAIN recording" % path)
         while True:
-            line = f.readline().decode("utf-8", "replace").split()
-            if not line:
+            raw = f.readline()
+            line = raw.decode("utf-8", "replace").split()
+            if not line and raw:   # (a blank line goes; the end of the file before "records" is a cut-off header, below)
                 continue
-            if line[0] == "thread":
-                names[int(line[1])] = line[2] if len(line) > 2 else "thread %s" % line[1]
-            elif line[0] == "records":
-                n = int(line[1])
-                break
+            try:
+                if line[0] == "thread":
+                    names[int(line[1])] = line[2] if len(line) > 2 else "thread %s" % line[1]
+                elif line[0] == "records":
+                    n = int(line[1])
+                    if n < 0:
+                        raise ValueError("negative record count")
+                    break
+            except (IndexError, ValueError):
+                sys.exit("%s: invalid HOS_CHAIN header" % path)
         data = f.read(n * REC.size)
+        if len(data) != n * REC.size:
+            sys.exit("%s: truncated HOS_CHAIN records" % path)
     recs = [REC.unpack_from(data, i * REC.size) for i in range(len(data) // REC.size)]
     recs.sort(key=lambda r: r[0])
     return names, recs
@@ -276,6 +284,8 @@ def main():
         sys.exit("no presents recorded")
     pth = max(presents, key=lambda k: len(presents[k]))
     ps = presents[pth]
+    if len(ps) < 2:
+        sys.exit("at least two presents on one thread are needed for a frame")
     acc = Acc()
     frames = 0
     for k in range(1, len(ps)):

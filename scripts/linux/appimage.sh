@@ -9,7 +9,8 @@
 # Built on the oldest system it is for (CI: Ubuntu 22.04): the sysroot it carries is that system's C library, so the
 # game it builds runs on glibc 2.35 and newer. work/ (hot_funcs.txt, hot_order.txt, hookshot_pieces.prof,
 # image/chunks.txt: addresses and counts from playing, no game code; hookshot_vk.profdata: a developer's own renderer
-# profile, used in place of the committed assets/profiles/ one) is carried along when it is there. No Vulkan back end is
+# profile, used in place of the committed assets/profiles/ one) is carried along when it is there. assets/profiles/ carries the
+# committed hot list too, whose functions every player's build compiles at -O2 (nx2/make_game.py hot_list_for). No Vulkan back end is
 # built here: every player's build compiles it from the sources carried below, for that PC's CPU and with the renderer's
 # play profile, with or without DLSS and FSR 4 (one way to build it).
 set -euo pipefail
@@ -48,11 +49,24 @@ cp -a gpu/render/*.h "$T/gpu/render/"
 # (every gpu/vk header the host's sources include: v2.0.6 shipped without oot_cheat_items.h and no Linux build finished, issue 990.
 # tests/test_appimage_headers.py checks that this covers what host/ includes)
 for h in $(grep -rhoE 'gpu/vk/[A-Za-z0-9_/]+[.]h' host | sort -u); do if [ -f "$h" ]; then mkdir -p "$T/$(dirname "$h")" && cp -a "$h" "$T/$h"; fi; done
+# (RenHDrum's C header: host/rumble_renhdrum.c, which every player's build compiles, includes it)
+mkdir -p "$T/third_party/renhdrum/include"
+cp third_party/renhdrum/include/renhdrum.h "$T/third_party/renhdrum/include/"
 cp -a third_party/opus "$T/third_party/"
+# (RenHDrum, which some controllers' vibration plays through (host/rumble_renhdrum.c): renhdrum.so, built by the workflow
+# (scripts/renhdrum.py build --target linux) and named by RENHDRUM_SO; a player's build puts it beside the game. Without it
+# every controller keeps its motors or its own HD rumble)
+if [ -n "${RENHDRUM_SO:-}" ]; then
+    mkdir -p "$T/licenses/renhdrum"
+    cp "$RENHDRUM_SO" "$T/third_party/renhdrum/renhdrum.so"
+    cp third_party/renhdrum/LICENSE-MIT third_party/renhdrum/LICENSE-APACHE third_party/renhdrum/NOTICE \
+       third_party/renhdrum/PROVENANCE.md "$T/licenses/renhdrum/"
+fi
 cp -a third_party/kenney_input "$T/third_party/"
 cp -a third_party/kenney_input_keyboard "$T/third_party/"
 # (the Vulkan back end's sources, which every player's build compiles (nx2/build.py), and, for NVIDIA DLSS when ticked in the
-# builder, scripts/ngx_sdk.py, compiled with HOOKSHOT_NGX_SDK. assets/ above carries its play profile, assets/profiles/)
+# builder, scripts/ngx_sdk.py, compiled with HOOKSHOT_NGX_SDK. assets/ above carries its play profile and the hot list,
+# assets/profiles/)
 mkdir -p "$T/scripts"
 cp scripts/ngx_sdk.py "$T/scripts/"
 cp -a gpu/vk gpu/compat gpu/third_party "$T/gpu/"
@@ -91,11 +105,13 @@ for d in "$DEPS"/cpm/*/*; do
 done
 cp -a "$DEPS/licenses" "$T/licenses"   # (LLVM, FFmpeg, dav1d, SDL2: what this AppImage carries besides Hookshot)
 # ---- the licences of the third-party parts compiled into hookshot_vk.so (tests/test_appimage_licenses.py) ----
-mkdir -p "$T/licenses/imgui" "$T/licenses/zstd" "$T/licenses/libertinus" "$T/licenses/fidelityfx"
+mkdir -p "$T/licenses/imgui" "$T/licenses/zstd" "$T/licenses/libertinus" "$T/licenses/fidelityfx" "$T/licenses/fidelityfx-sdk"
 cp third_party/imgui/LICENSE.txt third_party/imgui/PROVENANCE.md "$T/licenses/imgui/"
 cp third_party/zstd/LICENSE third_party/zstd/PROVENANCE.md "$T/licenses/zstd/"
 cp third_party/fonts/libertinus/OFL.txt third_party/fonts/PROVENANCE.md "$T/licenses/libertinus/"
 cp third_party/fidelityfx/LICENSE.md third_party/fidelityfx/PROVENANCE.md "$T/licenses/fidelityfx/"   # (with AMD FSR 4)
+# (AMD's FidelityFX SDK shaders, compiled into gpu/vk/shaders' FSR 3.1 headers that every build has: scripts/fsr3_shaders.py)
+cp third_party/fidelityfx-sdk/LICENSE.txt third_party/fidelityfx-sdk/PROVENANCE.md "$T/licenses/fidelityfx-sdk/"
 # ---- end of the licences ----
 
 # the sysroot: this system's C library (headers, start files, the libraries to link against) and GCC's runtime pieces

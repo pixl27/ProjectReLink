@@ -62,7 +62,7 @@ def main():
             raise SystemExit(why)
     # (stages pinned to 32 lanes keep the short path: the long one in every compute program was new, longer SPIR-V that AMD
     # compiled for hours, and they need none of it)
-    if "EmitSPIRV(profile_pinned(), rt, t->program, bindings)" not in shader:
+    if "EmitSPIRV(profile_pinned(uint64_t(wg[0]) * wg[1] * wg[2]), rt, t->program, bindings)" not in shader:
         raise SystemExit("compute programs take the long warp path though they are pinned to 32 lanes")
     if shader.count("EmitSPIRV(fallback ? profile_pinned() : profile_graphics(") != 2:
         raise SystemExit("the mesh fallback's compute stages take the long warp path though they are pinned to 32 lanes")
@@ -71,7 +71,7 @@ def main():
     graphics = graphics[:graphics.index("\n}\n")]
     for needle, why in (
         ("q.warp_size_potentially_larger_than_guest = false, q.max_subgroup_size = 32", "a pinned graphics stage takes the long path"),
-        ("!forced && (dev.sg32_stages & stage) ? pinned : profile()", "the stage's pinning does not pick its path"),
+        ("!forced && pins_32(stage) ? pinned : profile()", "the stage's pinning does not pick its path"),
         ('getenv("RX_VK_WARP64")', "RX_VK_WARP64 no longer sets every graphics stage"),
     ):
         if needle not in graphics:

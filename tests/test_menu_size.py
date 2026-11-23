@@ -3,8 +3,8 @@
     python -I -B tests/test_menu_size.py [--cxx g++]
 
 It was Auto by default, Large in fullscreen at 1080 lines and up while a controller opened the menu: the menu changed size
-with the input that opened it. And the banner's version, too long beside five tabs for a source build, shrinks to fit at
-Small and Medium (vk_ui.h fit_px) instead of going. gpu/vk/vk_ui.h's unit and fit_px and vk_menu.cpp's tx_menu_size, cut out
+with the input that opened it. And the banner's version (at its right; the logo and the name at its left), too long beside
+five tabs for a source build, shrinks to fit at Small and Medium (vk_ui.h fit_px) instead of going. gpu/vk/vk_ui.h's unit and fit_px and vk_menu.cpp's tx_menu_size, cut out
 and compiled; the rest read from the source. Game-free.
 """
 import argparse
@@ -43,8 +43,14 @@ def main():
     banner = banner[:banner.index("\n    }\n")]
     check("ui::fit_px(px, opts.menu_size == 3 ? px : kVersionMinPt * s, 0.5f * s, room, width)" in banner and "if (fit > 0)" in banner,
           "the banner's version is not shrunk to fit at Small and Medium (and kept at its size at Large)")
-    check('std::string("Red Tunic ") + version_text(HOOKSHOT_VERSION)' in banner and "(source" not in banner.split("ui::fit_px(")[0].split("version_text")[1],
+    check("const std::string ver = version_text(HOOKSHOT_VERSION);" in banner and "(source" not in banner.split("ui::fit_px(")[0].split("version_text")[1],
           "the banner's version is not shown as players see it (version_text: no source fingerprint)")
+    check("ui::text_mid_right(c, c.f.body, fit, right," in banner and "right = c.w - c.safe" in banner,
+          "the banner's version is not at its right")
+    check('getenv("HOOKSHOT_BUILD_NAME")' in banner, "the banner does not show a development run's HOOKSHOT_BUILD_NAME")
+    title = menu[menu.index("the banner's left: the Hookshot logo"):menu.index("which build, at the banner")]
+    check("ui::logo(&aspect)" in title and '"Hookshot"' in title and "px = 24 * s" in title,
+          "the banner's left is not the Hookshot logo and name")
     check("constexpr float kVersionMinPt = 10;" in menu, "the version's smallest size is not 10 points")
 
     src = "#include <cmath>\n#include <cstdio>\n#include <cstring>\n" + block(ui, "inline float unit(") + "\n" + \

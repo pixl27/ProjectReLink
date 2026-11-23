@@ -89,7 +89,7 @@ def check_source():
                    "if (d.spare.made && sparse_spare_cap()) {", "keep.push_back(std::move(d));", "continue;", "destroy_sparse_buffer(d.buffer);",
                    "for (VmaAllocation a : d.blocks) free_sparse_block(a);", "if (keep.empty()) return;",
                    "if (!d.unbind.empty()) infos.push_back({d.buffer, (uint32_t)d.unbind.size(), d.unbind.data()});",
-                   "if (!sparse_bind_infos(infos, &after)) {", "destroy_sparse_buffer(d.buffer);", "for (VmaAllocation a : d.blocks) free_sparse_block(a);",
+                   "if (!sparse_bind_infos(std::move(infos), &after)) {", "destroy_sparse_buffer(d.buffer);", "for (VmaAllocation a : d.blocks) free_sparse_block(a);",
                    "return;", "if (!after) after = sparse_tl_value.load(std::memory_order_relaxed);", "d.spare.after = after;",
                    "sparse_spares.put(d.spare, sparse_spare_cap(), &gone)", "for (const auto& g : gone) sparse_buffer_doom(g.buffer, g.after);",
                    "sparse_frees.push_back({after, std::move(blocks)});"], "sparse_reap()'s freed mirrors")

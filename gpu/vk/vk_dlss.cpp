@@ -334,7 +334,13 @@ int prepare(VkCommandBuffer cmd, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t
                                           kPresetSettle);
     // (the game's native HDR: State::feature_hdr. What the game presents, not the option and the swapchain: with Native
     // picked and the game's picture not PQ, the scene is LDR, and an HDR feature would get LDR colour)
-    const bool hdr = present_native_pq.load(std::memory_order_relaxed);
+    // (hookshot) and DLAA before the game's bloom and tone map (vk_temporal.cpp temporal_pre_bloom): the scene's linear light,
+    // past 1 at every highlight, before the exposure. The same feature takes the tone-mapped picture, made linear, in a frame
+    // that runs it at the network instead
+    const bool hdr = present_native_pq.load(std::memory_order_relaxed) || temporal_hdr_input();
+    // (for the log: which of the two it is. Not the game's native HDR: DLAA before the bloom asks for it)
+    const char* const hdr_by = present_native_pq.load(std::memory_order_relaxed) ? "the game's native HDR"
+                                                                                : "DLAA before the bloom";
     if (s.feature && s.feature_ow == ow && s.feature_oh == oh && rw <= s.feature_rw && rh <= s.feature_rh &&
         rw >= s.min_rw && rh >= s.min_rh && s.feature_preset == preset && s.feature_hdr == hdr &&
         (!native_aa || s.feature_aa))
@@ -343,7 +349,9 @@ int prepare(VkCommandBuffer cmd, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t
     char why[160];
     if (!s.feature && !s.features_made) snprintf(why, sizeof why, "the first");
     else if (!s.feature) snprintf(why, sizeof why, "again after it was let go");
-    else if (s.feature_hdr != hdr) snprintf(why, sizeof why, "the game's native HDR turned %s", hdr ? "on" : "off");
+    else if (s.feature_hdr != hdr)
+        snprintf(why, sizeof why, "HDR colour %s: %s", hdr ? "on" : "off",
+                 hdr ? hdr_by : "neither the game's native HDR nor DLAA before the bloom");
     else if (s.feature_ow != ow || s.feature_oh != oh)
         snprintf(why, sizeof why, "the output went from %ux%u to %ux%u", s.feature_ow, s.feature_oh, ow, oh);
     else if (s.feature_preset != preset)
@@ -359,7 +367,12 @@ int prepare(VkCommandBuffer cmd, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t
     static const NVSDK_NGX_PerfQuality_Value scaled[] = {NVSDK_NGX_PerfQuality_Value_MaxQuality, NVSDK_NGX_PerfQuality_Value_DLAA,
                                                         NVSDK_NGX_PerfQuality_Value_Balanced, NVSDK_NGX_PerfQuality_Value_MaxPerf,
                                                         NVSDK_NGX_PerfQuality_Value_UltraPerformance};
-    const bool aa = rw == ow && rh == oh;
+    // (hookshot, RX_VK_DLSS_PREWARM, on by default) DLSS, not DLAA (native_aa false), at a full-size frame: the scaled mode whose range holds
+    // the full size too (MaxQuality's, 1280x720 to 2560x1440 at a 2560x1440 output), DLAA's only where none does. The first
+    // frames after a load are full size at the Render resolution's Auto, and a DLAA-mode feature made for them was made again
+    // 17 frames later once the game's size dropped ("the render size 2382x1340 left its range": 119 ms, then 29.5 ms more)
+    const bool full = rw == ow && rh == oh;
+    const bool aa = dlss_checks::dlaa_feature(full, native_aa, temporal_prewarm_on());
     NVSDK_NGX_PerfQuality_Value mode = NVSDK_NGX_PerfQuality_Value_DLAA;
     unsigned max_w = ow, max_h = oh, min_w = ow, min_h = oh;   // (DLAA: the render size is the output's, one size)
     unsigned create_w = ow, create_h = oh;
@@ -377,7 +390,9 @@ int prepare(VkCommandBuffer cmd, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t
         }
         dlss_checks::ModeRange took;
         const int k = dlss_checks::mode_for(rw, rh, ow, oh, ranges, n, &took);
-        if (k < 0) {   // (the size in the log; the feature kept for the sizes it takes, not let go and made again)
+        if (k < 0 && full) {
+            // (no scaled mode holds the full size: DLAA's, as before RX_VK_DLSS_PREWARM)
+        } else if (k < 0) {   // (the size in the log; the feature kept for the sizes it takes, not let go and made again)
             // (vk_temporal.cpp's fail() logs a reason again only when its pointer changes: two buffers, the other one for a
             // new size, so each refused size is logged once, by fail() as any reason)
             static char refused[2][112];
@@ -390,10 +405,10 @@ int prepare(VkCommandBuffer cmd, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t
             }
             return *fail = refused[at], 0;
         }
-        mode = which[k], max_w = took.max_w, max_h = took.max_h, min_w = took.min_w, min_h = took.min_h;
-        create_w = optimal[k][0], create_h = optimal[k][1];
-        if (took.max_w != ranges[k].max_w || took.max_h != ranges[k].max_h || took.min_w != ranges[k].min_w ||
-            took.min_h != ranges[k].min_h)
+        if (k >= 0) mode = which[k], max_w = took.max_w, max_h = took.max_h, min_w = took.min_w, min_h = took.min_h;
+        if (k >= 0) create_w = optimal[k][0], create_h = optimal[k][1];
+        if (k >= 0 && (took.max_w != ranges[k].max_w || took.max_h != ranges[k].max_h || took.min_w != ranges[k].min_w ||
+                       took.min_h != ranges[k].min_h))
             logf("vk: NVIDIA DLSS: the render size %ux%u is a little outside quality mode %d's range (%ux%u to %ux%u): taken by "
                  "it (a rounded size)", rw, rh, (int)mode, ranges[k].min_w, ranges[k].min_h, ranges[k].max_w, ranges[k].max_h);
     }
@@ -445,9 +460,9 @@ int prepare(VkCommandBuffer cmd, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t
     s.features_made++;
     logf("vk: NVIDIA DLSS: feature create size %ux%u (recommended), input resources %ux%u", create_w, create_h, max_w, max_h);
     logf("vk: NVIDIA DLSS: feature %llu made (%s; frame %llu, %.1f ms of CPU): %ux%u (%ux%u to %ux%u) -> %ux%u, mode %d, "
-         "preset %c%s%s", (unsigned long long)s.features_made, why, (unsigned long long)texture_frame_no(), made_ms, rw, rh,
+         "preset %c%s%s%s%s", (unsigned long long)s.features_made, why, (unsigned long long)texture_frame_no(), made_ms, rw, rh,
          min_w, min_h, max_w, max_h, ow, oh, (int)mode, upscaler_rows::preset_letter(preset),
-         preset ? "" : " (NVIDIA's default)", hdr ? ", HDR colour, linear (the game's native HDR)" : "");
+         preset ? "" : " (NVIDIA's default)", hdr ? ", HDR colour, linear (" : "", hdr ? hdr_by : "", hdr ? ")" : "");
     *in_w = s.feature_rw, *in_h = s.feature_rh;
     return 2;   // (a new history)
 }
@@ -552,6 +567,14 @@ void dlss_device_extensions(std::vector<const char*>& want, const std::vector<Vk
 }
 
 void dlss_retry() { st().refused = 0; }
+
+int dlss_ngx_ready() {
+    if (dlss_why() != DLSS_OK) return 0;
+    State& s = st();
+    std::unique_lock lk(s.mu, std::try_to_lock);
+    if (!lk.owns_lock() || !s.ngx_tried) return -1;
+    return s.ngx_ok ? 1 : 0;
+}
 
 void dlss_probe() {
     if (dlss_why() != DLSS_OK || g_why.load(std::memory_order_relaxed) >= 0 || !dev.device) return;
@@ -1225,6 +1248,7 @@ bool dlss_built() { return false; }
 const TemporalEngine* dlss_engine() { return nullptr; }
 void dlss_probe() {}
 void dlss_retry() {}
+int dlss_ngx_ready() { return 0; }
 void dlss_instance_extensions(std::vector<const char*>&, const std::vector<VkExtensionProperties>&) {}
 void dlss_device_extensions(std::vector<const char*>&, const std::vector<VkExtensionProperties>&) {}
 bool dlss_fg_wanted() { return false; }

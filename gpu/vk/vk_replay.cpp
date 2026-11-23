@@ -41,6 +41,9 @@
 #include "vk_fsr3.h"          // (retire old FSR 3.1 images after leaving its upscaler)
 #include "status_line.h"
 #include "vk_reflex.h"
+#ifdef TRACY_ENABLE
+#include "../../host/hos_tracy.h"   // (HOOKSHOT_TRACY: the profiler's zones; nothing in any other build)
+#endif
 #include "vk_antilag.h"
 #include "vk_draw.h"
 #include "vk_dump.h"
@@ -72,8 +75,10 @@
 #endif
 #include "vk_programs.h"
 #include "readback_late.h"
+#include "cxx_escape.h"   // (the replay's threads: their exceptions said, a start that fails at the commit limit stops as out of memory)
 #include "hold_gpu.h"   // (hookshot: sync_watch's rule for queues stopped past hold_ms)
 #include "frame_overlap.h"   // (hookshot: when the game's frame wait is answered, and where the presents are made)
+#include "submit_retry.h"    // (hookshot: a submit refused for want of memory made again)
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
 namespace mkwvk {
@@ -212,6 +217,55 @@ void note_timeline_sent(uint64_t v) {
     uint64_t was = timeline_sent.load(std::memory_order_relaxed);
     while (v > was && !timeline_sent.compare_exchange_weak(was, v, std::memory_order_relaxed)) {}
 }
+// ---- (hookshot) a submit the driver refused for want of memory: memory given back and the submit made again
+// (submit_retry.h). The replay's vkQueueSubmit2 calls go through submit_or_retry, each under dev.present_mu ----
+bool submit_retry_on() {
+    static const bool on = [] {
+        const bool v = env_on_or("RX_VK_SUBMIT_RETRY", 1);   // (hookshot_env.h: unset is on)
+        if (!v) logf("vk: a submit refused for want of memory is dropped, as before (RX_VK_SUBMIT_RETRY=0)");
+        return v;
+    }();
+    return on;
+}
+/// (a test: RX_VK_TEST_SUBMIT_REFUSE=<n> answers the first try of every n-th submit with VK_ERROR_OUT_OF_DEVICE_MEMORY without
+/// making it, as AMD's Windows driver answered a Legion Go's, so any card plays the refusal and what follows it. Unset: never)
+bool test_submit_refused() {
+    static const uint64_t every = getenv("RX_VK_TEST_SUBMIT_REFUSE") ? (uint64_t)std::max(0, atoi(getenv("RX_VK_TEST_SUBMIT_REFUSE"))) : 0;
+    static uint64_t submits = 0;   // (dev.present_mu)
+    return every && ++submits % every == 0;
+}
+/// What a refused submit does before it is made again (dev.present_mu held, so the queue is this thread's): it waits for the
+/// GPU's work before it, so nothing in flight holds memory resident, and tells the next present (texture_memory_refused) to
+/// free the idle staging arenas and the reaper's queue. Not here: under the queue's lock nothing may be destroyed (a destroy's
+/// rec::boundary can wait for the recorder, whose part's submit waits for this lock), and the arenas are the replay thread's
+void submit_give_back(int tried, VkResult res) {
+    const auto t0 = std::chrono::steady_clock::now();
+    vkQueueWaitIdle(dev.queue);
+    texture_memory_refused();
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1, std::memory_order_relaxed) < 16)
+        logf("vk: a submit refused for want of memory (%d): the GPU's work before it waited for (%.1f ms), the idle staging and "
+             "the reaper's queue freed at the next present; made again (try %d of %d)", (int)res,
+             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(), tried + 1, submit_retry::kTries);
+}
+/// vkQueueSubmit2 of one submit (dev.present_mu held), made again after submit_give_back while the driver refuses it for want
+/// of memory (submit_retry.h)
+VkResult submit_or_retry(const VkSubmitInfo2& si, VkFence fence) {
+    int tries = 0;
+    VkResult last = VK_SUCCESS;
+    const VkResult res = submit_retry::submit(
+        [&] {
+            const bool refuse = !tries++ && test_submit_refused();
+            return last = refuse ? VK_ERROR_OUT_OF_DEVICE_MEMORY : vkQueueSubmit2(dev.queue, 1, &si, fence);
+        },
+        [&](int tried) { submit_give_back(tried, last); }, [] { return submit_retry_on(); });
+    if (tries > 1) {
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1, std::memory_order_relaxed) < 16)
+            logf("vk: the refused submit %s on try %d", res == VK_SUCCESS ? "was taken" : "was refused again, dropped", tries);
+    }
+    return res;
+}
 // ---- (hookshot) recordings by number: a second timeline, signalled at the end of every recording with its number, and the
 // recording each submission was finished in. The timeline above is signalled only as far as no older submission is stopped
 // at a wait, and every NVN queue's submissions share its numbers: a fence taken on one queue waited for the other queues'
@@ -275,6 +329,9 @@ std::atomic<uint64_t> q_values{0};   // the fence values handed out (a submit or
 // sibling = the reserved core itself (shares it with the replay thread), or a hex mask; unset: not pinned
 const bool rec_thread_hook = (::mkwvk::rec::g_thread_start_hook = [] {
     SetThreadDescription(GetCurrentThread(), L"mkw_vk recorder");
+#ifdef TRACY_ENABLE
+    HT_THREAD_NAME("mkw_vk recorder");
+#endif
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     const char* pin = getenv("RX_VK_RECORDER_PIN");
     if (!pin || !*pin) return;
@@ -352,6 +409,9 @@ int recording_index = 0;
 
 /// (a recording slot's last submit done: before it is used again)
 void recording_wait(Recording& r) {
+#ifdef TRACY_ENABLE
+    HT_WAIT(ht_w, "recording_wait");
+#endif
     if (!r.submitted) return;
     FpsRtWait rt_wait(fps_stats::kRtGpu);   // (the FPS counter's render lane)
     if (r.batch) {
@@ -519,7 +579,7 @@ void queue_flush_locked() {   // (dev.present_mu held)
     si.pNext = reflex_submit_id(nullptr, pend.reflex);   // (NVIDIA Reflex: the game frame of the batch's first command buffer)
     VkSemaphoreSubmitInfo sparse_wait;   // (hookshot: after the sparse mirrors' binds, RX_VK_MIRROR_SPARSE)
     if (memory_sparse_wait(&sparse_wait)) si.waitSemaphoreInfoCount = 1, si.pWaitSemaphoreInfos = &sparse_wait;
-    const VkResult res = vkQueueSubmit2(dev.queue, 1, &si, VK_NULL_HANDLE);
+    const VkResult res = submit_or_retry(si, VK_NULL_HANDLE);
     static int failures;
     if (res != VK_SUCCESS && failures++ < 8) logf("vk: batched submit %llu failed (%d)", (unsigned long long)batch_next, (int)res);
     if (res == VK_ERROR_DEVICE_LOST) device_lost();
@@ -532,6 +592,9 @@ void queue_flush_locked() {   // (dev.present_mu held)
     pend_held.store(false, std::memory_order_release);
 }
 void queue_flush() {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("queue_flush");
+#endif
     std::lock_guard lk(dev.present_mu);
     queue_flush_locked();
 }
@@ -1451,6 +1514,9 @@ void host_read_barrier(VkCommandBuffer cmd) {
     vkCmdPipelineBarrier2(cmd, &d);
 }
 void submit_recording(Recording& r, bool signal_value = true, uint64_t signal_at = 0) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("submit_recording");
+#endif
     occ_part_lo = UINT64_MAX, occ_part_hi = 0;   // (RX_VK_OCC_COPY: copied only if occ_copy_part did, else read from the pool)
     draw_flush_recording(r.slot);
     const bool uploads = texture_uploads_recorded();
@@ -1545,7 +1611,7 @@ void submit_recording(Recording& r, bool signal_value = true, uint64_t signal_at
     si.pNext = reflex_submit_id(nullptr);   // (NVIDIA Reflex: the frame being made)
     VkSemaphoreSubmitInfo sparse_wait;   // (hookshot: after the sparse mirrors' binds, RX_VK_MIRROR_SPARSE)
     if (memory_sparse_wait(&sparse_wait)) si.waitSemaphoreInfoCount = 1, si.pWaitSemaphoreInfos = &sparse_wait;
-    const VkResult res = vkQueueSubmit2(dev.queue, 1, &si, r.fence);
+    const VkResult res = submit_or_retry(si, r.fence);
     r.submitted = res == VK_SUCCESS;
     static int failures;
     if (res != VK_SUCCESS && failures++ < 8) logf("vk: submit %llu failed (%d)", (unsigned long long)r.value, (int)res);
@@ -3100,6 +3166,9 @@ bool early_end_asked = false;   // (early_split asked for the part's end: counte
 
 /// The recording's part ends here and the submission goes on in a new one (maybe_split says when)
 void split_part(VkCommandBuffer& cmd) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("split_part");
+#endif
     part_end_wanted = false;
     // (asked for in another command buffer of the submission, or before a parallel replay's segments took their parts:
     // what maybe_split refuses is refused here too, and it asks again at the next draw it would cut after)
@@ -3143,6 +3212,9 @@ void split_part(VkCommandBuffer& cmd) {
 /// read waits for a little more than its writer, never less, and no part begins with a mesh draw or a dispatch. With no
 /// plain draw left in the submission its end comes first, and the read waits for the whole submission, as without the switch
 void early_split(VkCommandBuffer& cmd) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("early_split");
+#endif
     early_end_asked = true;
     if (part_ends_before_draw()) {   // (at the next plain draw: replay())
         part_end_wanted = true;
@@ -3241,6 +3313,9 @@ void par_worker_ideal(int index) {
 }
 void par_worker_main(int index) {
     SetThreadDescription(GetCurrentThread(), L"mkw_vk replay worker");
+#ifdef TRACY_ENABLE
+    HT_THREAD_NAME("mkw_vk replay worker");
+#endif
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     par_worker_ideal(index);
     std::deque<std::function<void()>>& own = par_pool.own[index & 7];
@@ -3253,6 +3328,9 @@ void par_worker_main(int index) {
             fn = std::move(q.front());
             q.pop_front();
         }
+#ifdef TRACY_ENABLE
+        HT_SCOPE("replay worker job");
+#endif
         fn();
         std::lock_guard lk(par_pool.mu);
         if (--par_pool.pending == 0) par_pool.done.notify_all();
@@ -3329,6 +3407,9 @@ struct Segment {
 /// One segment recorded into cmd from the state at its start (any thread: the replay thread's own included)
 
 void record_segment(VkCommandBuffer& cmd, const Segment& g) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("record_segment");
+#endif
     rmode = Mode::Worker;
     par_stats_segment(true);
     NvnState s = *g.s;
@@ -3580,7 +3661,7 @@ const uint8_t* replay_handle_early(VkCommandBuffer& cmd, const uint8_t* h, bool 
         std::lock_guard lk(dev.present_mu);
         queue_flush_locked();
         gpu_time_segment_submitted(*j->r);   // (the blits' places among the timed recordings)
-        const VkResult res = vkQueueSubmit2(dev.queue, 1, &si, j->r->fence);
+        const VkResult res = submit_or_retry(si, j->r->fence);   // (hookshot: a refusal for want of memory made again)
         j->r->submitted = res == VK_SUCCESS;
         if (res != VK_SUCCESS) logf("vk: segment submit %llu failed (%d)", (unsigned long long)j->r->value, (int)res);
         if (res == VK_ERROR_DEVICE_LOST) device_lost();
@@ -4028,7 +4109,7 @@ const uint8_t* replay_handle(VkCommandBuffer& cmd, const uint8_t* h, bool may_st
         si.pNext = reflex_submit_id(nullptr);   // (NVIDIA Reflex: the frame being made; after the flush, which tags its own)
         VkSemaphoreSubmitInfo sparse_wait;   // (hookshot: after the sparse mirrors' binds, RX_VK_MIRROR_SPARSE)
         if (memory_sparse_wait(&sparse_wait)) si.waitSemaphoreInfoCount = 1, si.pWaitSemaphoreInfos = &sparse_wait;
-        const VkResult res = vkQueueSubmit2(dev.queue, 1, &si, j->r->fence);
+        const VkResult res = submit_or_retry(si, j->r->fence);   // (hookshot: a refusal for want of memory made again)
         j->r->submitted = res == VK_SUCCESS;
         static std::atomic<int> failures{0};   // (hookshot: once lost, every segment failed: thousands of lines in a log)
         if (res != VK_SUCCESS && failures++ < 8)
@@ -4252,6 +4333,9 @@ struct SlowWatch {
 /// (replay_mu held). In the order of the submits: one behind its queue's stopped one (submit_job) has it done as it comes.
 void submit_memory_work(uint64_t value) {
     WallAdd wall_mem(rwall.mem_ns);
+#ifdef TRACY_ENABLE
+    HT_SCOPE("submit_memory_work");
+#endif
     PROF(PROF_MEMSYNC);
     jt_mark(15, value);
     struct JtEnd { ~JtEnd() { jt_mark(16, 0); } } jt_end;
@@ -4440,6 +4524,9 @@ void rb_span_begin(uint64_t value, uint64_t part);   // (RX_VK_LOG_RB_WRITERS: b
 void rb_span_end(uint64_t value, uint64_t part);
 /// The recording being made: ended and submitted, the timeline signalled as far as no older submission is unfinished
 void finish_recording(uint64_t value) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("finish_recording");
+#endif
     (void)value;
     Recording& r = *rec_cur;
     rec_cur = nullptr;
@@ -4484,7 +4571,13 @@ struct ReplayPin {
         if (async_on()) return;
         counted = true;
         if (replay_pin_depth++) return;   // (the outermost one: a submit's replay inside its capture's)
-        if (const uint64_t m = replay_pin_mask()) replay_pin_prev = SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)m);
+        if (const uint64_t m = replay_pin_mask()) {
+            replay_pin_prev = SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)m);
+            static std::atomic<bool> told{false};   // (refused: a mask outside the process's. Said once, not every replay)
+            if (!replay_pin_prev && !told.exchange(true, std::memory_order_relaxed))
+                logf("vk: a replay was NOT kept to logical processors %#llx (error %lu): replays run where their threads may",
+                     (unsigned long long)m, (unsigned long)GetLastError());
+        }
     }
     ~ReplayPin() {
         if (!counted || --replay_pin_depth) return;
@@ -4548,6 +4641,7 @@ bool run_submit(const uint64_t* handles, int n, uint64_t value, uint64_t queue, 
         rec_open(tag);
         if (rb_writers_on()) rb_span_begin(tag, first.part);
         texture_ahead_run();   // (hookshot, RX_VK_TEX_AHEAD: into this recording's uploads, while the frames are light)
+        temporal_prewarm(first.cmd);   // (hookshot, RX_VK_DLSS_PREWARM: DLSS's feature, in a light frame before the first 3D one)
     }
     VkCommandBuffer cmd = rec_cur->cmd;
     const uint8_t* stop = nullptr;
@@ -4755,6 +4849,9 @@ bool sync_waits_on() {
     return !async_on() && !dump_on();
 }
 void sync_drain(int why) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("sync_drain");
+#endif
     if (!blocked_n.load()) return;
     std::lock_guard lk(sync_order_mu);
     drain(why);
@@ -4762,6 +4859,9 @@ void sync_drain(int why) {
 }
 /// (hookshot) The stopped queues whose waits are met go on; none is forced past its wait
 void sync_settle() {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("sync_settle");
+#endif
     if (!blocked_n.load()) return;
     std::lock_guard lk(sync_order_mu);
     burst_begin(0);
@@ -4840,6 +4940,9 @@ void sync_watch() {
 // doc: docs/design.md#4-the-lessons-from-mkw-as-rules-here (rule 1: cross-queue event waits are honoured)
 /// A submit on the replay thread: replayed as far as its waits allow, or (its queue stopped) after its queue's
 void submit_job(std::vector<uint64_t>& handles, uint64_t value, uint64_t queue) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("submit_job");
+#endif
     const bool may_stop = !dump_on();
     if (!may_stop) drain(2);
     auto it = qruns.find(queue);
@@ -4868,6 +4971,9 @@ uint64_t get_replayed() {
 /// timeline: true when that recording is known (the result in *ok), false when it is not (f not finished yet)
 static void wait_rec_seq(uint64_t seq, uint64_t timeout_ns, int* ok);
 bool wait_recorded(uint64_t f, uint64_t timeout_ns, int* ok) {
+#ifdef TRACY_ENABLE
+    HT_WAIT(ht_w, "wait_recorded");
+#endif
     if (!rec_timeline) return false;
     uint64_t seq = 0;
     {
@@ -4885,6 +4991,9 @@ bool wait_recorded(uint64_t f, uint64_t timeout_ns, int* ok) {
 /// the thread that replays it: a read from another thread in between waits for that submit here (250 ms at most, then
 /// false: the caller waits as it did before parts were known)
 bool wait_recorded_part(uint64_t part, uint64_t timeout_ns, int* ok) {
+#ifdef TRACY_ENABLE
+    HT_WAIT(ht_w, "wait_recorded_part");
+#endif
     if (!rec_timeline || per_queue_fences_off() || !part) return false;
     uint64_t seq = 0;
     {
@@ -4920,6 +5029,9 @@ void rec_close() {
 /// wrote ~1170 of its bytes later in the same submission. Once the recording is finished every write of that submission is
 /// noted (memory_in_place_writer_part), the uniform updates of its last part's flush too. *ms: the time waited.
 bool early_recorded_wait(uint64_t whole, double* ms) {
+#ifdef TRACY_ENABLE
+    HT_WAIT(ht_w, "early_recorded_wait");
+#endif
     *ms = 0;
     if (rec_open_tag.load(std::memory_order_acquire) != whole) return true;
     const auto t0 = std::chrono::steady_clock::now();
@@ -6223,16 +6335,15 @@ void invalidate(uint64_t gpu, uint64_t size) {
 /// on it and queued to get one back, for nothing to wait for. On the console the call is a cache operation and the thread
 /// runs on. It takes no lock but memory_note_cpu_read's (wb_learn_mu, a leaf, only with RX_VK_WB_MAX_KB) and never waits,
 /// so holding the core here cannot keep another guest thread from what it waits for. Not with invalidate's diagnostics on
-/// (RX_VK_LOG_INVALIDATE, RX_VK_LOG_READBACK); ranges
-/// past 512 GB (virtual pools, not followed) always go the slow way. RX_VK_INVALIDATE_QUICK=0: never, as before
+/// (RX_VK_LOG_INVALIDATE, RX_VK_LOG_READBACK); ranges past 512 GB (virtual pools, not followed) always go the slow way.
+/// RX_VK_INVALIDATE_QUICK=0: never, as before
 int invalidate_quick(uint64_t gpu, uint64_t size) {
     static const bool on = [] {
         const char* q = getenv("RX_VK_INVALIDATE_QUICK");
         const char* rb = getenv("RX_VK_LOG_READBACK");
-        const bool v = (!q || !env_value_off(q)) && !env_on("RX_VK_LOG_INVALIDATE") &&
-                       !(rb && atoll(rb) >= 0);
-        logf("vk: invalidates with nothing to wait for keep their virtual core: %s", v ? "on" : "off (RX_VK_INVALIDATE_QUICK=0, "
-             "or invalidate's logs)");
+        const bool v = (!q || !env_value_off(q)) && !env_on("RX_VK_LOG_INVALIDATE") && !(rb && atoll(rb) >= 0);
+        logf("vk: invalidates with nothing to wait for keep their virtual core: %s",
+             v ? "on" : "off (RX_VK_INVALIDATE_QUICK=0 or invalidate's logs)");
         return v;
     }();
     constexpr uint64_t kFollowed = 1ull << 39;   // (tex_pages' and the marks' window: GPU addresses below 512 GB)
@@ -6486,6 +6597,9 @@ bool replay_render_thread_on() { return async_on(); }
 // (vk_internal.h) One part of a submission done on the GPU: the late pages' fix reads a page of the capture whose fix an earlier
 // part of this submission recorded (vk_memory.cpp, late_fix_cpu_read), after that part's fix has run
 int vk_part_wait(uint64_t part, uint64_t timeout_ns) {
+#ifdef TRACY_ENABLE
+    HT_WAIT(ht_w, "vk_part_wait");
+#endif
     int ok = 0;
     if (!wait_recorded_part(part, timeout_ns, &ok)) return -1;
     return ok ? 1 : 0;
@@ -6850,6 +6964,7 @@ void status_tick() {
         int64_t draws = 0, sk = 0, di = 0, pl = 0;
         draw_stats(&draws, &sk, &di, &pl);
         texture_ahead_frame(draws - l_draws);
+        temporal_note_frame(draws - l_draws);   // (and RX_VK_DLSS_PREWARM's)
         l_draws = draws;
     }
     static uint64_t frames = 0;
@@ -6870,7 +6985,7 @@ void status_tick() {
         if (f) fprintf(f, "frame,ms,pipe_waits,pipe_wait_ms,left_out,translate_ms,uploads,upload_mb,textures,memsync_ms,pipelines_ms,"
                           "uploads_ms,programs_ms,slot_wait_ms,gpu_behind_ms,draw_ms,desc_ms,cmds_ms,tex_lookup_ms,textures_gone,"
                           "late_wait_ms,readback_wait_ms,tex_frame_ms,game_ms,render_ms,gpu_wait_ms,pace_ms,wait_render_ms,"
-                          "wait_gpu_ms,wait_main_ms,main_cpu_ms,main_blocked_ms,main_vcore_ms,at_ns\n");
+                          "wait_gpu_ms,wait_main_ms,main_cpu_ms,main_blocked_ms,main_vcore_ms,at_ns,ab_side\n");
         return f;
     }();
     // seconds since the process started, for the bench's 66 s cut: the steady clock's offset from the creation time
@@ -6882,6 +6997,9 @@ void status_tick() {
         const auto ft = [](const FILETIME& f) { return (int64_t)(((uint64_t)f.dwHighDateTime << 32) | f.dwLowDateTime); };
         return (ft(now) - ft(c)) * 100 - now_ns;
     }();
+#ifdef TRACY_ENABLE
+    if (last_ns) HT_PLOT("frame ms (renderer)", (now_ns - last_ns) / 1e6);
+#endif
     if (trace && last_ns) {
         static int64_t l_ps, l_pw, l_up, l_upb, l_wait, l_prof[PROF_COUNT];
         static double l_pwms, l_tr;
@@ -6905,8 +7023,15 @@ void status_tick() {
         static int64_t l_mt[3];
         int64_t mt[3] = {0, 0, 0};
         if (host->main_thread_times) host->main_thread_times(mt);
+        // (at_ns: this present on the host's clock, hos_now_ns: the clock of the profile's samples, presents.csv and events.txt,
+        // so a frame is found in them. ab_side (hookshot): the frame's side in an A/B within the run, HOS_AB (host/hos_ab.c):
+        // -1 none, 0 or 1, 2 or 3 in a transition; scripts/ab_summary.py)
+        static int64_t l_at;
+        const int64_t at = host->now_ns ? host->now_ns() : 0;
+        const int ab_side = host->version >= 35 && host->ab_frame ? host->ab_frame(l_at, at) : -1;
+        l_at = at;
         fprintf(trace, "%llu,%.2f,%lld,%.2f,%lld,%.1f,%lld,%.2f,%zu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%llu,%.2f,%.2f,%.2f,"
-                       "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%lld\n",
+                       "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%lld,%d\n",
                 (unsigned long long)frames, (now_ns - last_ns) / 1e6, (long long)(pw - l_pw), pwms - l_pwms, (long long)(ps - l_ps),
                 tr - l_tr, (long long)(up - l_up), (upb - l_upb) / 1048576.0, texture_count(), dp(PROF_MEMSYNC), dp(PROF_PIPE),
                 dp(PROF_UPLOAD), dp(PROF_PROGRAM), dp(PROF_SLOTWAIT), (st_wait_ns - l_wait) / 1e6, dp(PROF_DRAW), dp(PROF_DESC),
@@ -6916,7 +7041,16 @@ void status_tick() {
                 (mt[2] - l_mt[2]) / 1e6, (mt[1] - l_mt[1]) / 1e6, (mt[0] - l_mt[0]) / 1e6,
                 // (at_ns: this present on the host's clock, hos_now_ns: the clock of the profile's samples, presents.csv and
                 // events.txt, so a frame is found in them)
-                (long long)(host->now_ns ? host->now_ns() : 0));
+                (long long)(host->now_ns ? host->now_ns() : 0), ab_side);
+#ifdef TRACY_ENABLE
+        // (HOOKSHOT_TRACY: the trace's main values as plots, beside the zones)
+        HT_PLOT("game_ms", ff.part[fps_stats::kGame]);
+        HT_PLOT("render_ms", ff.part[fps_stats::kRender]);
+        HT_PLOT("wait_gpu_ms", ff.part[fps_stats::kWaitGpu]);
+        HT_PLOT("wait_render_ms", ff.part[fps_stats::kWaitRender]);
+        HT_PLOT("wait_main_ms", ff.part[fps_stats::kWaitMain]);
+        HT_PLOT("memsync_ms", dp(PROF_MEMSYNC));
+#endif
         l_gone = gone, l_late = late, l_rb = rb, l_tf = tf;
         std::memcpy(l_mt, mt, sizeof l_mt);
         if (frames % 60 == 0) fflush(trace);
@@ -7216,6 +7350,9 @@ void screenshot_capture(VkCommandBuffer cmd, VkImage src, uint32_t sw, uint32_t 
 }
 
 void do_present(const nvn_tex* t, const int crop[4], float cover) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("do_present");
+#endif
     static PendingShot pending;
     // (hookshot) NVIDIA Reflex (vk_reflex.cpp): this frame's simulation ended, its submission starts; on the way out (after the
     // present) the driver's sleep until the next frame should begin. AMD Anti-Lag 2 (vk_antilag.cpp) waits there as well: the
@@ -7236,6 +7373,7 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
     uint32_t sw = 0, sh = 0;
     bool shot = false, interpolated = false;
     VkImage made_src = VK_NULL_HANDLE;
+    int made_index = 0;
     VkImage headless_fx = VK_NULL_HANDLE;   // CRT output at the capture pixel grid, reused by both screenshot routes
     {
         std::lock_guard lk(replay_mu);
@@ -7258,6 +7396,7 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
                  t ? t->d.width : 0, t ? t->d.height : 0, t ? t->d.format : 0,
                  tex ? (tex->gpu_written ? "rendered" : "never rendered") : "no image");
         if (tex) src = tex->image, sw = tex->width, sh = tex->height;
+        if (t) temporal_note_present(t->d.width, t->d.height);   // (RX_VK_DLSS_PREWARM: the size its feature is made for)
         // (the Insert menu's HDR set to Native: the game, told its display is HDR10, presents PQ codes in RGB10A2 (vk
         // A2B10G10R10); that picture goes to the HDR10 swapchain as PQ, not through the SDR-to-HDR expansion. Told by the format
         // the game presents, the one its view is made in (direct_view below), not by the cached image's: images are shared by
@@ -7356,7 +7495,7 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
             // (RX_VK_SHOT_MADE=1: the frame interpolation made before it too, written beside it as vk_N_made.png)
             static const bool shot_made = env_on("RX_VK_SHOT_MADE");
             uint32_t mw = 0, mh = 0;
-            made_src = shot && shot_made && interpolated ? framegen_made_image(&mw, &mh) : VK_NULL_HANDLE;
+            made_src = shot && shot_made && interpolated ? framegen_made_image(&mw, &mh, &made_index) : VK_NULL_HANDLE;
             if (made_src && !made_shot_init()) made_src = VK_NULL_HANDLE;
             if (made_src) {
                 image_barrier(r.cmd, made_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -7413,6 +7552,9 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
             framegen_queue(value);
         }
         else menu_note_frame(true);   // (the FPS counter's, as frame generation's thread counts what it shows)
+        // (and the built-in interpolation's and FSR 3.1's images, off for a while: after the queue, so a set this present recorded
+        // is the display thread's to show and free before any drain waits for it; and counted as on, whatever the row says now)
+        framegen_idle(interpolated);
         {   // (RX_VK_WAIT_GPU=<frames>: the replay no further ahead of the GPU than that)
             static uint64_t values[8];
             static const int ahead = [] {
@@ -7616,7 +7758,8 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
             take(value, presents);
             invalidate_mapped(made_buf_alloc, (uint64_t)kShotW * kShotH * 4);
             char path[1024];
-            snprintf(path, sizeof path, "%s/vk_%06lld_made.png", shots, (long long)presents);
+            if (made_index < 0) snprintf(path, sizeof path, "%s/vk_%06lld_made.png", shots, (long long)presents);
+            else snprintf(path, sizeof path, "%s/vk_%06lld_made%d.png", shots, (long long)presents, made_index);
             write_png(path, (const uint8_t*)made_map, kShotW, kShotH);
         } else if (shot) {
             pending = {true, value, presents, {}};
@@ -7864,6 +8007,18 @@ static HeldImage held_image;
 // (250 ms: past a refresh of a 24 Hz display for each image FIFO may hold queued, at frame generation's most; far under the GPU
 // hang watch's 30 s)
 constexpr uint64_t kImageFreeNs = 250000000ull;
+// (hookshot) An image held this long is taken as never coming back, and the swapchain is made again: then twice as
+// long, and at most 4 s, between the remakes that brought none back. With frame generation on an RX 9070 XT (Windows, full
+// screen) an image held after Alt+Tab was not given back once the game was in front again either, until F11 made the
+// swapchain again: the game and its sound went on, its picture stayed as it was. The system lets an image go when another
+// is shown, and while one is held nothing else is presented, so nothing ever let it go. A new swapchain's images are all
+// free; while the window stays hidden its first image is held again, and the remakes are kept far apart
+constexpr int64_t kHeldRemakeNs = 1000000000ll;
+/// Whether an image held for held_ns, after `remakes` swapchains made again for holds that brought no image back, is let go
+/// with its swapchain
+static bool held_remake_due(int64_t held_ns, int remakes) {
+    return held_ns >= kHeldRemakeNs << (remakes < 2 ? remakes : 2);
+}
 /// Whether the acquired image is free (acquire_fence signaled, and reset for the next acquire), waiting up to timeout_ns
 static bool image_free(uint64_t timeout_ns) {
     if (!acquire_fence) return false;   // (none could be made again: held_image_drop)
@@ -7896,6 +8051,9 @@ static bool acquire_fence_ready() {
 }
 
 void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkImageView view) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("present_image");
+#endif
     std::lock_guard lk(present_image_mu);
     static int hdr_was = -1;   // (the Insert menu's HDR as the swapchain was made for it; -1: not yet looked at)
     const bool hdr_changed = hdr_was >= 0 && hdr_was != opts.hdr;   // (turned on or off: the swapchain's format)
@@ -8025,16 +8183,31 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
         if (free_t0) fps_wait(fps_stats::kPace, fps_clock() - free_t0);
         static int said;     // (the first 16 holds are said, and their ends)
         static bool told;    // (this hold was said)
+        static int64_t held_since;   // (when this hold began, fps_clock)
+        static int remakes, said_remakes;   // (swapchains made again for holds since an image last came back; the first 16 said)
         if (!ready) {
+            const int64_t now = fps_clock();
             if (!was_held) {
+                held_since = now;
                 told = said < 16;
                 if (told) said++, logf("vk: the window's image was not given back in 250 ms (the window hidden?): frames are not "
                                        "shown until it is");
             }
             held_image = {true, index, dev.swapchain_generation};
+            if (held_remake_due(now - held_since, remakes)) {   // (never given back; a new swapchain, as F11 makes)
+                if (said_remakes < 16)
+                    said_remakes++, logf("vk: the window's image was not given back in %.0f s: the swapchain made again",
+                                         (now - held_since) / 1e9);
+                if (remakes < 1000) remakes++;
+                present_thread_drain();   // (before the queue's lock: the presenter takes it)
+                std::lock_guard qk(dev.present_mu);
+                create_swapchain(dev.swap_extent.width, dev.swap_extent.height);   // (the held image let go at the next present)
+                held_since = now;   // (not made, a window with no size: tried again only after the next wait, not at each present)
+            }
             return;
         }
         held_image.held = false;
+        remakes = 0;
         if (was_held && told) told = false, logf("vk: the window's image was given back: frames are shown again");
     }
     if (vkResetFences(dev.device, 1, &f.done) == VK_ERROR_DEVICE_LOST) device_lost();
@@ -8164,7 +8337,7 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
     reflex_submit_ends();
     // (NVIDIA Reflex: the frame this present shows; with frame generation the set's game frame, none for a made frame)
     si.pNext = reflex_submit_id(nullptr, reflex_present_frame);
-    res = vkQueueSubmit2(dev.queue, 1, &si, f.done);
+    res = submit_or_retry(si, f.done);
     if (res == VK_ERROR_DEVICE_LOST) device_lost();
     if (res != VK_SUCCESS) {
         // (the present below waits for the semaphore this submit signals: with the submit refused it would wait for good, on the
@@ -8203,6 +8376,9 @@ bool present_commit(const PendingPresent& p) {
 
 // The present of a swapchain image whose copy is submitted, as present_image ended before; qk holds dev.present_mu
 static bool present_out(uint32_t index, std::unique_lock<std::mutex>& qk) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("present_out");
+#endif
     VkResult res;
     VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     pi.pNext = reflex_present_id(nullptr);   // (NVIDIA Reflex: the frame's present id, and its present's markers)
@@ -8274,6 +8450,9 @@ namespace {
 /// What follows a present, on the thread that made it. The presenter thread asks the next present_image for a new swapchain (its
 /// swap_resize) rather than making one itself
 void present_finish(VkResult res, bool on_presenter) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("present_finish");
+#endif
     if (res < 0 && res != VK_ERROR_OUT_OF_DATE_KHR) {   // (a present that failed: said, a few times)
         static int logged;
         if (logged++ < 8) logf("vk: present failed (VkResult %d%s)", (int)res, dev.present_queue_supported ? ", on the presents' own queue" : "");
@@ -8319,6 +8498,9 @@ Presenter presenter;
 /// than present_thread_drain's 5 s: a drain that gave up at the moment the presenter did went on to remake the swapchain while
 /// the presenter still held it
 bool presenter_wait_copy(VkFence done) {
+#ifdef TRACY_ENABLE
+    HT_WAIT(ht_w, "presenter_wait_copy");
+#endif
     for (int step = 0; step < 40; step++) {
         const VkResult r = vkWaitForFences(dev.device, 1, &done, VK_TRUE, 100000000ull);
         if (r == VK_SUCCESS) return true;
@@ -8331,6 +8513,9 @@ bool presenter_wait_copy(VkFence done) {
 }
 void presenter_loop() {
     SetThreadDescription(GetCurrentThread(), L"mkw_vk presenter");
+#ifdef TRACY_ENABLE
+    HT_THREAD_NAME("mkw_vk presenter");
+#endif
     static const auto wait_for_present = dev.present_wait
         ? (PFN_vkWaitForPresentKHR)vkGetDeviceProcAddr(dev.device, "vkWaitForPresentKHR") : nullptr;
     VkSwapchainKHR ids_of = VK_NULL_HANDLE;   // (the swapchain the present ids count on: they start again on a new one)
@@ -8440,10 +8625,13 @@ bool presenter_wait_idle(std::unique_lock<std::mutex>& lk, int limit_ms = 0) {
 }
 /// The present of image index, whose copy signals done, to the presenter thread (started at the first), once the one before is made
 void present_hand_off(uint32_t index, VkFence done) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("present_hand_off");
+#endif
     std::unique_lock lk(presenter.mu);
     if (!presenter.started) {
         presenter.started = true;
-        std::thread(presenter_loop).detach();
+        ::mkwvk::cxx_escape::spawn_needed("presenter", presenter_loop);
     }
     presenter_wait_idle(lk);   // (the frame before's present made: one out at most; the presenter's own waits are bounded)
     presenter.index = index, presenter.swapchain = dev.swapchain, presenter.done = done, presenter.busy = true;
@@ -8454,6 +8642,9 @@ void present_hand_off(uint32_t index, VkFence done) {
 /// Waits until the presenter thread has made the present it was handed (none: at once). Before a swapchain is made again or destroyed,
 /// and never with dev.present_mu held (a resize must not wait on a present that waits for the window). Gives up after 5 s, said
 void present_thread_drain() {
+#ifdef TRACY_ENABLE
+    HT_WAIT(ht_w, "present_thread_drain");
+#endif
     std::unique_lock lk(presenter.mu);
     if (!presenter_wait_idle(lk, 5000)) logf("vk: presenter thread: its present not made in 5 s; going on without it");
 }
@@ -8563,26 +8754,31 @@ std::deque<Job> q_jobs;
 int q_presents = 0;
 bool q_busy = false;
 uint64_t q_handed = 0, q_done = 0;   // (jobs handed over and done: q_mu)
-// (hookshot, the render thread) Whole frames. The render thread starts a frame's jobs when the frame's present has been
-// handed over, not before, and the present is handed over after the main thread's signal for the frame (present(): the
-// signal the frame's work waits for): the game has then written the whole frame. Replaying a frame's first submits while
-// the game was still writing the rest of that frame (the render thread caught up with the game: 0.3-2 % of the presents
-// in the Market) drew the lit scene black for one frame at 5-15 % of those moments, and never at any other time: what the
-// replay reads from the game's memory and state as they are at the replay is whole once the frame is, and in the making
-// before. Measured in the Market with the flash detector and the meter log (which makes the moments frequent): 15 and 15
-// flashes a session without it and with the gate alone (the present still came before the signal), 0 with both. A frame behind, the replay still runs beside the game for the whole frame (the larger of the two, not their
-// sum), and a frame is shown no later than the replay on the submitting thread shows it. What a game's thread waits for
-// goes on at once (gate_upto: a queue finish, a texture read back, a fence of this frame), and so does a job that has
-// waited RX_VK_FRAME_GATE_MS (1000) with no present behind it (a load that submits without presenting; at 100 a game frame
+// (hookshot, the render thread) Whole frames, a test: RX_VK_FRAME_GATE=1. The render thread then starts a frame's jobs
+// when the frame's present has been handed over, not before, and the present is handed over after the main thread's
+// signal for the frame (present(): the signal the frame's work waits for): the game has then written the whole frame.
+// They were made because replaying a frame's first submits while the game was still writing the rest of that frame (the
+// render thread caught up with the game: 0.3-2 % of the presents in the Market) drew the lit scene black for one frame
+// at 5-15 % of those moments. Measured in the Market with the flash detector and the meter log (which makes the moments
+// frequent): 15 and 15 flashes a session without them and with the gate alone (the present still came before the
+// signal), 0 with both. Those moments were also where a submit's capture missed the pages the replay's collection was
+// marking again (collect_mu, vk_memory.cpp: a third of the captures with jobs replayed as they come, and Kokiri
+// Forest's ground mist gone for a frame in 16 to 89 of 3,600 frames). With that window closed, jobs replayed as they
+// come (the default) drew no such frame on an Arc B580 in 23,400 frames (Kokiri Forest and the Market standing, four
+// sessions), and a frame no longer waits for its present before its replay starts: 86.95 -> 92.4 fps in Kokiri Forest,
+// 53.6 -> 58.0 in the Market (medians of four sessions each, interleaved with four of whole frames). With whole frames,
+// a frame behind, the replay still runs beside the game for the whole frame (the larger of the two, not their sum), and
+// a frame is shown no later than the replay on the submitting thread shows it. What a game's thread waits for goes on
+// at once (gate_upto: a queue finish, a texture read back, a fence of this frame), and so does a job that has waited
+// RX_VK_FRAME_GATE_MS (1000) with no present behind it (a load that submits without presenting; at 100 a game frame
 // stalled by swapping let its first jobs on, and two such frames flashed in 19,763 presents).
-// RX_VK_FRAME_GATE=0 (a test): jobs replayed as they come, as before.
 uint64_t gate_upto = 0;   // (jobs up to this hand-over number go on without their frame's present: q_mu)
 std::deque<std::pair<uint64_t, uint64_t>> gate_values;   // (the last submits' and presents' fence values and hand-over numbers: q_mu)
 struct {
     std::atomic<int64_t> timeouts, demands, fences;
 } gate_st;
 bool gate_on() {
-    static const bool on = async_on() && !(getenv("RX_VK_FRAME_GATE") && atoi(getenv("RX_VK_FRAME_GATE")) == 0);
+    static const bool on = async_on() && env_on("RX_VK_FRAME_GATE");
     return on;
 }
 std::chrono::milliseconds gate_ms() {
@@ -8829,12 +9025,12 @@ void fo_log(double frames) {
 
 /// (hookshot) Whether this run has the render thread, from the one place async_on reads: RX_VK_ASYNC when it is set (the
 /// switch, for testing, over the menu: 0 the submitting thread, any other value the render thread), else the Insert
-/// menu's Threaded rendering as this run resolved it (vk_menu.cpp menu_threaded_rendering: On, or what Auto picks).
-/// Read once: a change of the row applies at the next start
+/// menu's Threaded rendering as this run resolved it, its render thread's half (vk_menu.cpp menu_render_thread: On, or Auto
+/// from 4 cores, in both of its tiers). Read once: a change of the row applies at the next start
 int render_thread_mode() {
     static const int mode = [] {
         const char* e = getenv("RX_VK_ASYNC");
-        return e ? atoi(e) : menu_threaded_rendering() ? 1 : 0;
+        return e ? atoi(e) : menu_render_thread() ? 1 : 0;
     }();
     return mode;
 }
@@ -8861,8 +9057,10 @@ bool async_on() {
     return on;
 }
 // (the recorder's half of the Threaded rendering row: with RX_VK_RECORDER unset, vk_recorder.h's mode_from_env asks the row
-// through this, set before anything runs; the checks that build vk_recorder.h alone leave it null, the recorder off)
-[[maybe_unused]] const bool rec_setting_hooked = (rec::g_setting_thread = menu_threaded_rendering, true);
+// through this, set before anything runs; the checks that build vk_recorder.h alone leave it null, the recorder off. The
+// recorder thread's half (menu_recorder_thread: On, or Auto from 6 cores), not the render thread's: on 4 cores Auto has the
+// render thread alone, as the recorder thread beside it was the slowest there, 18 Nov)
+[[maybe_unused]] const bool rec_setting_hooked = (rec::g_setting_thread = menu_recorder_thread, true);
 
 void readback_fell_back(int what) {
     (what == 0 ? bh_st.rb_fallback : what == 1 ? bh_st.tex_page_only : what == 2 ? bh_st.tex_exact : bh_st.rb_exact)++;
@@ -8896,6 +9094,9 @@ uint64_t fastest_kind_cpus() {
 #endif
 void replay_thread_main() {
     SetThreadDescription(GetCurrentThread(), L"mkw_vk replay");
+#ifdef TRACY_ENABLE
+    HT_THREAD_NAME("mkw_vk replay");
+#endif
     fps_render_thread();   // (the FPS counter's render lane is this thread's)
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     // (on the core the host keeps free of the game's threads, hos_reserved_cpus: its last physical one)
@@ -8915,13 +9116,20 @@ void replay_thread_main() {
                 use |= fastest_kind_cpus() & (uint64_t)proc;
             }
 #endif
-            SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)use);
+            // (hookshot) Windows refuses a mask with a processor outside the process's, and the thread stays where it was:
+            // the log says so, not the placement it did not get (hos_reserved_cpus keeps to the process's cores; a
+            // HOS_RESERVE_CORE_MASK outside them still gets here)
+            if (!SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)use)) {
+                logf("vk: the replay thread was NOT kept to logical processors %#llx (error %lu): it runs where the process "
+                     "may, beside the game's threads", (unsigned long long)use, (unsigned long)GetLastError());
+            } else {
 #ifdef _WIN32
-            if (use != m) SetThreadIdealProcessor(GetCurrentThread(), (DWORD)(63 - __builtin_clzll(m)));
+                if (use != m) SetThreadIdealProcessor(GetCurrentThread(), (DWORD)(63 - __builtin_clzll(m)));
 #endif
-            logf("vk: the replay thread runs on logical processors %#llx, kept from the game's threads%s", (unsigned long long)m,
-                 use != m ? " (its ideal processor there; free to go to the other fastest cores when another program takes it)" : "");
-            if (use != m) logf("vk: the replay thread may run on logical processors %#llx", (unsigned long long)use);
+                logf("vk: the replay thread runs on logical processors %#llx, kept from the game's threads%s", (unsigned long long)m,
+                     use != m ? " (its ideal processor there; free to go to the other fastest cores when another program takes it)" : "");
+                if (use != m) logf("vk: the replay thread may run on logical processors %#llx", (unsigned long long)use);
+            }
         }
     }
     // (hookshot, the render thread) A present that comes while a queue is stopped at a wait for an event the CPU signals is
@@ -8936,6 +9144,9 @@ void replay_thread_main() {
     bool present_held = false;
     int64_t present_held_at = 0;
     auto held_present_run = [&](bool forced) {
+#ifdef TRACY_ENABLE
+        HT_SCOPE("render job: held present");
+#endif
         bh_st.held_ns += bh_now() - present_held_at, bh_st.held_forced += forced;
         present_held = false;
         const int64_t t0 = bh_now();
@@ -8991,6 +9202,12 @@ void replay_thread_main() {
         if (timeline) draw_stats(&d0, &x, &x, &x);
         bool deferred = false;
         // (frame ahead's counters: what is handed over between a frame's last submit and its signal)
+#ifdef TRACY_ENABLE
+        HT_ZONE(ht_job, "render job");   // (one job of the render thread, from the game's hand-over queue)
+        HT_ZONE_TEXTF(ht_job, "%s, value %llu, waited %.3f ms", j.kind == JOB_SUBMIT ? "submit" : j.kind == JOB_PRESENT ? "present" :
+                      j.kind == JOB_EVENT_SIGNAL ? "event signal" : "other", (unsigned long long)j.value,
+                      std::chrono::duration<double, std::milli>(t_start - j.queued).count());
+#endif
         if (j.kind == JOB_SUBMIT) fa_window = {};
         else if (j.kind == JOB_REGISTER_TEXTURE || j.kind == JOB_REGISTER_SAMPLER) fa_window.regs++;
         else if (j.kind == JOB_TEXTURE_RELEASED || j.kind == JOB_PROGRAM_RELEASED) fa_window.releases++;
@@ -9039,6 +9256,9 @@ void replay_thread_main() {
             if (j.id) fa_signal_begin();   // (frame ahead's counters: what this capture brings, before it is taken)
             else fa_window.signals++;
             if (j.id) {   // (its capture: what the game wrote up to the signal, for the work that waited for it)
+#ifdef TRACY_ENABLE
+                HT_SCOPE("signal job: capture");
+#endif
                 std::lock_guard lk(replay_mu);
                 memory_take_capture(j.queue, completed());
                 st_resume_captures++;
@@ -9095,12 +9315,15 @@ void replay_thread_main() {
 }
 
 void enqueue(Job&& j) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("enqueue (game thread)");
+#endif
     j.queued = std::chrono::steady_clock::now();
     std::unique_lock lk(q_mu);
     static bool started;
     if (!started) {
         started = true;
-        std::thread(replay_thread_main).detach();
+        ::mkwvk::cxx_escape::spawn_needed("replay", replay_thread_main);
         logf("vk: the replay runs on a thread of its own, the render thread (RX_VK_ASYNC=0: on the submitting thread)");
     }
     if (j.kind == JOB_PRESENT) {   // (the game waits here while the present before it is not replayed: a frame ahead at most)
@@ -9210,6 +9433,9 @@ bool bh_cpu_wait_open() {
 void submit_q(const uint64_t* handles, int n, uint64_t queue) {
     tl_ev("submit+", queue, n);
     struct TlSub { ~TlSub() { tl_ev("submit-"); } } tl_sub;
+#ifdef TRACY_ENABLE
+    HT_SCOPE("rx submit_q (game thread)");
+#endif
     FpsRender fr;   // (the FPS counter's Breakdown: the replay, on this thread)
     if (!async_on()) {
         std::lock_guard order(sync_order_mu);
@@ -9236,7 +9462,7 @@ void submit_q(const uint64_t* handles, int n, uint64_t queue) {
         }
         if (sync_waits_on()) {
             static std::once_flag watch;
-            std::call_once(watch, [] { std::thread(sync_watch).detach(); });
+            std::call_once(watch, [] { ::mkwvk::cxx_escape::spawn_needed("order", sync_watch); });
             std::vector<uint64_t> h(handles, handles + std::max(n, 0));
             const uint64_t value = ++q_values;
             lag_submit(value);
@@ -9265,6 +9491,9 @@ void submit(const uint64_t* handles, int n) {
 }
 void present(const nvn_tex* t, const int crop[4]) {
     fps_presented();   // (the FPS counter: the game's frame ends here, on its presenting thread)
+#ifdef TRACY_ENABLE
+    HT_SCOPE("rx present (game thread)");
+#endif
     gf_note_present();
     programs_presented();   // (the programs' life: whether the game is in a load)
     FpsRender fr;
@@ -9279,14 +9508,13 @@ void present(const nvn_tex* t, const int crop[4]) {
         }
         return do_present(t, crop, wide_cover_sample());
     }
-    {   // (the render thread's whole frames, gate_on) The present is handed over after the CPU's signal its frame's work waits
-        // for: the main thread makes that signal when it has written the frame's data, and the presenting thread, its poll
-        // answered at once, came before it at most presents. The frame is whole at its present, which is where the render
-        // thread starts it (gate_ready). At most RX_VK_FRAME_GATE_MS. RX_VK_PRESENT_AFTER_SIGNAL=0 / 1 (a test): off / on whatever the gate
-        static const bool after = [] {
-            const char* e = getenv("RX_VK_PRESENT_AFTER_SIGNAL");   // (set: its value, 0 off; unset: the gate)
-            return e ? !env_value_off(e) : gate_on();
-        }();
+    {   // (the render thread) The present is handed over after the CPU's signal its frame's work waits for: the main
+        // thread makes that signal when it has written the frame's data, and the presenting thread, its poll answered
+        // at once, came before it at most presents. With whole frames (gate_on) the frame is then whole at its present,
+        // which is where the render thread starts it (gate_ready); without them it stays as it was with them, which is
+        // what jobs replayed as they come were measured with. At most RX_VK_FRAME_GATE_MS. RX_VK_PRESENT_AFTER_SIGNAL=0
+        // (a test): handed over at once
+        static const bool after = env_on_or("RX_VK_PRESENT_AFTER_SIGNAL", true);
         // (as long as the gate gives a job: a frame the game takes longer over is waited for too, not started half written)
         static const auto after_ms = std::max(gate_ms(), std::chrono::milliseconds(hold_ms()));
         if (after) {
@@ -9374,6 +9602,9 @@ void register_texture_queued(int id, const nvn_tex* t, const nvn_view* v) {
     enqueue(std::move(j));
 }
 void event_signal_queued(uint64_t gpu, uint32_t value) {
+#ifdef TRACY_ENABLE
+    HT_SCOPE("rx event_signal (game thread)");
+#endif
     if (!async_on()) {
         std::lock_guard lk(ev_cpu_mu);
         ev_cpu_pending.emplace_back(gpu, value);
@@ -9635,6 +9866,10 @@ void fill_replay_table(MkwVkRenderer& t) {
         if (id == HOS_OPT_GFX_CONTACT_SHADOWS) return opts.gfx_contact_shadows;
         if (id == HOS_OPT_GFX_BASE_QUALITY) return opts.gfx_base_quality;
         if (id == HOS_OPT_GFX_UNCAPPED) return opts.gfx_uncapped;
+        if (id == HOS_OPT_NATIVE_ZSTD) return native_zstd_default.load(std::memory_order_acquire);   // (host/hos_zstd.c)
+        /* (hookshot) Vibration (host/vibration.h), and what plays the controller used last as the host wrote it back */
+        if (id == HOS_OPT_VIBRATION) return opts.vibration;
+        if (id == HOS_OPT_VIBRATION_STATUS) return menu_vibration_status_option();
         return id == 0 ? opts.realtime : id == 1 ? menu_is_open() : id == 2 ? resolution_auto() && !temporal_full_scale() : id == 3 ? (temporal_full_scale() ? 10000 : resolution_scale()) : id == 4 ? opts.pad_background : id == 5 ? opts.text_speed : id == 6 ? opts.mouse_native :
                id == 7 ? opts.mouse_sens : id == 8 ? opts.mouse_invert : id == 9 ? opts.rumble : id == 16 ? opts.invert_cam_x : id == 17 ? opts.invert_cam_y : id == HOS_OPT_GYRO ? opts.gyro : id == HOS_OPT_GYRO_SENS_X ? opts.gyro_sens_x : id == HOS_OPT_GYRO_SENS_Y ? opts.gyro_sens_y : id == HOS_OPT_GYRO_INV_X ? opts.gyro_inv_x : id == HOS_OPT_GYRO_INV_Y ? opts.gyro_inv_y : id == HOS_OPT_GYRO_DEADZONE ? opts.gyro_deadzone :
                id == HOS_OPT_DLSS_JITTER_W || id == HOS_OPT_DLSS_JITTER_H || id == HOS_OPT_DLSS_JITTER_PHASES ? jitter_option(id) : 0;

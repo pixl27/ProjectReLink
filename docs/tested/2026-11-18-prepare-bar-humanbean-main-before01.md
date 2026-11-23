@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-18 | main 7daafa7a (dev pack prepare-bar-main) | CachyOS (kernel 7.3.3) | NVIDIA GeForce RTX 3090, 620.70.06 | AMD Ryzen 9 7900X (24 threads) / 32 GB | defaults | `hookshot --prepare-shaders --compile-shaders most` (12 workers) from a dev runtime of base 310e7c9d with its program cache moved aside and an empty NVIDIA shader cache folder, `RX_VK_PREPARE_AGAIN=1`; the `@@progress` lines (the launcher's Prepare shaders %) timestamped, stopped 15 s after the shader programs' part | 38809 programs, 9927 compute variants compiled, in 368.8 s; the bar at 0.0% at 30, 60, 120 and 210 s, 0.1% at 240 s, 1% first at 291 s, 10% at 350 s; run before01 |

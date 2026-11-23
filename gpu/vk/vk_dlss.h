@@ -24,6 +24,9 @@ void dlss_probe();
 /// changed a row the feature is made from (vk_temporal.cpp temporal_reset_failure, with the chain's lock held, as prepare
 /// has it)
 void dlss_retry();
+/// (hookshot, RX_VK_DLSS_PREWARM) Whether NGX has started, without waiting for it: 1 started, 0 it will not start here, -1
+/// not asked yet or being asked now (dlss_probe's thread holds its lock: the replay does not wait for its ~450 ms)
+int dlss_ngx_ready();
 /// The instance's extensions DLSS needs, added to `want` when the loader has them (all: what it has)
 void dlss_instance_extensions(std::vector<const char*>& want, const std::vector<VkExtensionProperties>& all);
 /// The device's extensions DLSS needs, added to `want` when the device has them

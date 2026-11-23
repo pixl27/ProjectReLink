@@ -78,6 +78,8 @@ static int host_path(const char *g, char *out, size_t cap, int *writable) {
     return path_ok;
 }
 int hos_ultrawide_redirect(const char *guest, char *out, size_t cap) { (void)guest, (void)out, (void)cap; return 0; }
+int hos_stand_in_damaged(const char *guest, char *path, size_t cap) { (void)guest, (void)path, (void)cap; return 0; }
+static void fs_overlay_path(const char *guest, char *path, size_t cap) { (void)guest, (void)path, (void)cap; }
 static int hos_blank_cached_icon(const char *guest, const char *host) { (void)guest, (void)host; return blank; }
 static DWORD GetFileAttributesA(const char *p) { (void)p; return INVALID_FILE_ATTRIBUTES; }
 static HANDLE CreateFileA(const char *p, DWORD a, DWORD s, void *sa, DWORD d, DWORD f, HANDLE t) {

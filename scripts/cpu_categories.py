@@ -19,8 +19,9 @@ DRIVER_MODULES = r"(?i)^(amdvlk64|amdxc64|amdxx64|amdvlk32|nvoglv64|nvwgf2umx|nv
 GAME_MODULES = r"^(hookshot\.exe|hookshot)$"
 VK_MODULES = r"^(hookshot_vk\.dll|hookshot_vk\.so)$"
 
-# (system calls that wait: a sample whose leaf is one of these is blocked, not on the CPU)
-BLOCKING_SYSCALLS = r"^(Nt|Zw)(WaitFor|DelayExecution|RemoveIoCompletion|SignalAndWait|UserMsgWaitForMultipleObjects|UserGetMessage|ReadFile$|DeviceIoControlFile$|FsControlFile$|AlpcSendWaitReceivePort)|^(futex|syscall|__futex|poll|epoll_wait|nanosleep|clock_nanosleep|pthread_cond_wait|pthread_cond_timedwait|sem_wait|read|recv)$"
+# (system calls that wait: a sample whose leaf is one of these is blocked, not on the CPU. GdiDdDDIWaitForSynchronizationObject:
+# the driver's wait on a GPU fence from the CPU, under vkWaitSemaphores and vkWaitForFences)
+BLOCKING_SYSCALLS = r"^(Nt|Zw)(WaitFor|DelayExecution|RemoveIoCompletion|SignalAndWait|UserMsgWaitForMultipleObjects|UserGetMessage|ReadFile$|DeviceIoControlFile$|FsControlFile$|AlpcSendWaitReceivePort|GdiDdDDIWaitForSynchronizationObject)|^(futex|syscall|__futex|poll|epoll_wait|nanosleep|clock_nanosleep|pthread_cond_wait|pthread_cond_timedwait|sem_wait|read|recv)$"
 
 RULES = [
     # ---- runtime helpers compiled into the lifted code's own objects: by name first, so they are not counted as game ----

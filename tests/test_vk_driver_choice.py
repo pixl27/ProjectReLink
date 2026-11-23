@@ -98,6 +98,8 @@ FARPROC GetProcAddress(HMODULE, const char* name) {
 }
 static PFN_vkGetInstanceProcAddr get_instance_proc;
 PFN_vkCreateInstance vkCreateInstance;
+struct Host { uintptr_t (*vulkan_loader_proc)(); };
+namespace mkwvk { const Host* host = nullptr; }
 
 @LOAD_GLOBAL@
 

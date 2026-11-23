@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-18 | #754 `be3654f2` | Windows 11 build 26300 | Not measured during translation | Intel Core i7-9700 / 32 GB | llvm-mingw; A64_HOT_FUNCS pointed to an external 849-entry list (SHA-256 `8578344f9a96582b9fafefa93fef61745429cbf994d1579d180e0945a1431c5e`) | siantm lift01: make_game.py from the development pack on the real OoT dump | 849/849 requested functions found in code_hot.c. Lift took 186 s, compilation 952 s, build 1,213 s. This measures the cost of one actual translation, not a controlled whole-build slowdown. Linked executable 531,128,320 bytes versus 522,396,160 on the default-profile main build. |

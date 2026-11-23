@@ -3,7 +3,8 @@ the Switch's buttons (host/nn_hid.c).
 
 host/nn_hid.c's binding table and its bound_down are compiled alone, against fake key states and a fake
 hookshot_options.ini: the defaults (WASD, the arrows, the mouse's left button Y and right button ZL), a mouse button
-only while the mouse is captured and only once the click that captured it was let go, key_move_up from the file, a
+only while the mouse is captured and only once the click that captured it was let go (the side buttons also while one
+of the game's menus has the mouse), key_move_up from the file, a
 pad_ line for a keys-only control ignored, a key taken from the control that had it, and Enter with Alt still no key.
 Gamepad checks cover old single bindings, a saved alternate, either slot pressing the same button, reassignment and clearing.
 python -I -B tests/test_bound_keys.py   (needs a C compiler)
@@ -121,13 +122,29 @@ int main(int argc, char **argv) {
     CHECK(bound_down(HOS_KEY_CAM_LEFT, 0));
     /* the mouse's left button: held when the capture begins, it counts only after it was let go */
     release(), held[VK_LBUTTON] = 1;
-    mouse_buttons_arm(1);
+    mouse_buttons_arm(1, 0);
     CHECK(!bound_down(HOS_SW_Y, 1));
-    release(), mouse_buttons_arm(1), held[VK_LBUTTON] = 1, mouse_buttons_arm(1);
+    release(), mouse_buttons_arm(1, 0), held[VK_LBUTTON] = 1, mouse_buttons_arm(1, 0);
     CHECK(bound_down(HOS_SW_Y, 1));
     CHECK(!bound_down(HOS_SW_Y, 0));   /* not while the mouse is not captured */
-    mouse_buttons_arm(0);
+    mouse_buttons_arm(0, 0);
     CHECK(!bound_down(HOS_SW_Y, 1));   /* a new capture arms again */
+    /* one of the game's menus has the mouse: the side buttons stay their controls', the other three are its clicks */
+    hos_bind(HOS_BIND_KEY, HOS_SW_B, 1, VK_XBUTTON1), hos_bind(HOS_BIND_KEY, HOS_SW_X, 1, VK_XBUTTON2);
+    hos_bind(HOS_BIND_KEY, HOS_SW_R, 1, VK_MBUTTON);
+    release(), mouse_buttons_arm(0, 1);
+    held[VK_LBUTTON] = held[VK_RBUTTON] = held[VK_MBUTTON] = held[VK_XBUTTON1] = held[VK_XBUTTON2] = 1;
+    mouse_buttons_arm(0, 1);
+    CHECK(bound_down(HOS_SW_B, 1) && bound_down(HOS_SW_X, 1));
+    CHECK(!bound_down(HOS_SW_Y, 1) && !bound_down(HOS_SW_ZL, 1) && !bound_down(HOS_SW_R, 1));
+    mouse_buttons_arm(0, 0);           /* the menu closed and the mouse is free: no longer */
+    CHECK(!bound_down(HOS_SW_B, 1));
+    mouse_buttons_arm(0, 1);           /* held as the next menu opens: only after it was let go */
+    CHECK(!bound_down(HOS_SW_B, 1));
+    release(), mouse_buttons_arm(0, 1), held[VK_XBUTTON1] = 1, mouse_buttons_arm(1, 0), mouse_buttons_arm(0, 1);
+    CHECK(bound_down(HOS_SW_B, 1));    /* from the menu into play and back, held: one press */
+    hos_bind(HOS_BIND_KEY, HOS_SW_B, 1, 0), hos_bind(HOS_BIND_KEY, HOS_SW_X, 1, 0), hos_bind(HOS_BIND_KEY, HOS_SW_R, 1, 0);
+    release(), mouse_buttons_arm(0, 0);
     /* a key bound to a keys-only control is taken from the button that had it */
     hos_bind(HOS_BIND_KEY, HOS_KEY_CAM_UP, 0, 'E');
     CHECK(hos_binding(HOS_BIND_KEY, HOS_SW_A, 0) == 0 && hos_binding(HOS_BIND_KEY, HOS_KEY_CAM_UP, 0) == 'E');

@@ -459,9 +459,11 @@ bool software_forms_agree(Shader::Backend::SPIRV::SoftwareMmaForm form, bool qua
     return *differ == 0;
 }
 
-/// RX_VK_MMA_UNROLL=0: the loop; 1: the unrolled forms tried on any GPU; unset: on RADV, where they were measured (the Steam Deck)
-bool software_unroll_wanted(VkDriverId driver, const char* env) {
-    return env ? !env_value_off(env) : driver == VK_DRIVER_ID_MESA_RADV;
+/// RX_VK_MMA_UNROLL=0: the loop; 1: the unrolled forms tried on any GPU; unset: on RADV and on AMD RDNA 4 (is_rdna4)
+/// with AMD's proprietary driver, where they were measured (the Steam Deck and an RX 9060 XT)
+bool software_unroll_wanted(VkDriverId driver, bool rdna4, const char* env) {
+    const bool def = driver == VK_DRIVER_ID_MESA_RADV || (rdna4 && driver == VK_DRIVER_ID_AMD_PROPRIETARY);
+    return env ? !env_value_off(env) : def;
 }
 
 void choose_software_form() {
@@ -469,8 +471,9 @@ void choose_software_form() {
     namespace spirv = Shader::Backend::SPIRV;
     spirv::mma_software_form = (uint32_t)SoftwareMmaForm::Loop;
     const char* env = std::getenv("RX_VK_MMA_UNROLL");
-    if (!software_unroll_wanted(dev.driver_id, env)) {
-        logf("vk: software matrix multiplies looped (%s)", env ? "RX_VK_MMA_UNROLL=0" : "not RADV, RX_VK_MMA_UNROLL=1 tries the unrolled form");
+    if (!software_unroll_wanted(dev.driver_id, is_rdna4(dev.props.vendorID, dev.props.deviceID, dev.props.deviceName), env)) {
+        logf("vk: software matrix multiplies looped (%s)",
+             env ? "RX_VK_MMA_UNROLL=0" : "not RADV or RDNA 4 on AMD's proprietary driver, RX_VK_MMA_UNROLL=1 tries the unrolled form");
         return;
     }
     // (A through quad broadcasts where every stage has quad operations, as the translator may emit the function in any stage that
@@ -525,6 +528,12 @@ void software_multiplies(const char* why) {
 bool table_loop_wanted(VkDriverId driver, bool dynamic_indexing, const char* env) {
     return (env ? !env_value_off(env) : driver == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA) && dynamic_indexing;
 }
+/// (hookshot, mma_layout.h mesh_fallback_pages, mesh_fallback_global_attributes and mesh_fallback_shared_warp) Intel's Mesa driver
+/// only, where they were measured; env is RX_VK_MESH_PAGES, RX_VK_MESH_GLOBAL_ATTRS or RX_VK_MESH_SHARED_WARP, 0 or 1 over the
+/// default (tests/test_mesh_fallback_pages.py, tests/test_mesh_fallback_global_attrs.py, tests/test_mesh_fallback_shared_warp.py)
+bool mesh_pages_wanted(VkDriverId driver, const char* env) {
+    return env ? !env_value_off(env) : driver == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA;
+}
 } // namespace
 
 void coopmat_init() {
@@ -542,12 +551,25 @@ void coopmat_init() {
     Shader::Backend::SPIRV::global_table_loop = table_loop_wanted(dev.driver_id, dev.features.shaderStorageBufferArrayDynamicIndexing,
                                                                   std::getenv("RX_VK_GM_LOOP"));
     if (Shader::Backend::SPIRV::global_table_loop) logf("vk: storage buffer tables searched in loops (RX_VK_GM_LOOP=0: written out)");
+    Shader::Backend::SPIRV::mesh_fallback_pages = mesh_pages_wanted(dev.driver_id, std::getenv("RX_VK_MESH_PAGES"));
+    if (Shader::Backend::SPIRV::mesh_fallback_pages)
+        logf("vk: the mesh fallback's global loads read the guest page table (RX_VK_MESH_PAGES=0: they search the storage buffers)");
+    Shader::Backend::SPIRV::mesh_fallback_global_attributes = mesh_pages_wanted(dev.driver_id, std::getenv("RX_VK_MESH_GLOBAL_ATTRS"));
+    if (Shader::Backend::SPIRV::mesh_fallback_global_attributes)
+        logf("vk: the mesh fallback's attribute regions in a pool of the records buffer (RX_VK_MESH_GLOBAL_ATTRS=0: in workgroup memory)");
+    Shader::Backend::SPIRV::mesh_fallback_shared_warp = mesh_pages_wanted(dev.driver_id, std::getenv("RX_VK_MESH_SHARED_WARP"));
+    Shader::Backend::SPIRV::mesh_fallback_shared_warp_check =
+        Shader::Backend::SPIRV::mesh_fallback_shared_warp && env_on("RX_VK_MESH_SHARED_WARP_CHECK");
+    if (Shader::Backend::SPIRV::mesh_fallback_shared_warp)
+        logf("vk: the mesh fallback's warps in workgroup memory, its stages at any lane count (RX_VK_MESH_SHARED_WARP=0: the subgroup's)%s",
+             Shader::Backend::SPIRV::mesh_fallback_shared_warp_check ? "; checked against the subgroup's (RX_VK_MESH_SHARED_WARP_CHECK)" : "");
     // (hookshot) the translation's vendor fixes (device_policy.h fetch_bounds, nan_bits): out-of-bounds texel fetches answer 0,
     // NaN tests on bits
     Shader::Backend::SPIRV::fetch_bounds = dev.policy.fetch_bounds;
     // (dev.features.robustBufferAccess: on exactly when robustBufferAccess2 is, vk_main.cpp create_device)
     Shader::Backend::SPIRV::fetch_bounds_buffers = dev.policy.fetch_bounds && !dev.features.robustBufferAccess;
     Shader::Backend::SPIRV::nan_bits = dev.policy.nan_bits;
+    Shader::Backend::SPIRV::mesh_fallback_strict_fmul = dev.policy.mesh_fallback_strict_fmul;
     // (hookshot) RX_VK_MMA_SOFTWARE=1: HMMA_nx2 in a shader function on subgroup shuffles, no cooperative matrices
     // (emit_spirv_warp.cpp, from Lichii): the lowering still gives HMMA_nx2 (dev.native_mma)
     if (const char* sw = std::getenv("RX_VK_MMA_SOFTWARE"); sw && std::atoi(sw)) {

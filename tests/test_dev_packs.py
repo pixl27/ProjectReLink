@@ -2,7 +2,9 @@
 
 python -I -B tests/test_dev_packs.py
 """
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -374,6 +376,55 @@ def _pack(base_dir, b, name, meta):
     return [name]
 
 
+def test_romfs_in_place(d):
+    """A pack reads the romfs where it is (no copy or links in its game folder) unless HOOKSHOT_PACK_ROMFS=copy; a
+    --romfs-in-place base records it, its runtimes get no romfs, and its preparation names the romfs; a runtime's files are
+    copied (a clone where the file system makes one) with their times"""
+    check("a pack's build reads the romfs in place", packs.pack_env({}) == {"HOOKSHOT_NO_PREPARE": "1", "HOOKSHOT_ROMFS_IN_PLACE": "1"})
+    check("HOOKSHOT_PACK_ROMFS=copy links it as before", packs.pack_env({"HOOKSHOT_PACK_ROMFS": "copy"}) == {"HOOKSHOT_NO_PREPARE": "1"})
+    src, dst = d / "src.bin", d / "dst.bin"
+    write(src, b"cache bytes")
+    os.utime(src, (1_000_000, 1_000_000))
+    packs.clone_or_copy(str(src), str(dst))
+    check("a clone or copy has the bytes and the time", dst.read_bytes() == b"cache bytes" and int(dst.stat().st_mtime) == 1_000_000)
+    if packs.CROSS:
+        return
+    got, calls = {}, []
+
+    def fake_make_game(tree, b, work, game, env):
+        got.update(env)
+        for m in packs.MODULES:
+            write(Path(game) / m[0], b"built")
+            if m[1]:
+                write(Path(work) / "sa" / "build" / m[1], b"map")
+        write(Path(game) / "cache" / "hookshot_programs.bin", b"programs")
+
+    def fake_run(argv, **kw):
+        calls.append(argv)
+        return packs.subprocess.CompletedProcess(argv, 0)
+    saved = packs.make_game, packs.changed_files, packs.git, packs.subprocess.run, os.environ.pop("HOOKSHOT_NO_PREPARE", None)
+    packs.make_game, packs.changed_files, packs.git = fake_make_game, (lambda tree, commit: set()), (lambda tree, *a: "c" * 40)
+    packs.subprocess.run = fake_run
+    try:
+        packs.main(["base", str(d / "b"), "--romfs", str(d / "dump" / "romfs"), "--exefs", "e", "--tree", str(ROOT), "--romfs-in-place"])
+    finally:
+        packs.make_game, packs.changed_files, packs.git, packs.subprocess.run = saved[:4]
+        if saved[4] is not None:
+            os.environ["HOOKSHOT_NO_PREPARE"] = saved[4]
+    b = json.loads((d / "b" / "base.json").read_text())
+    check("the base's build reads the romfs in place (%s)" % got, got.get("HOOKSHOT_ROMFS_IN_PLACE") == "1")
+    check("base.json says so", b.get("romfs_in_place") is True)
+    check("its preparation names the romfs (%s)" % calls,
+          len(calls) == 1 and calls[0][-2:] == ["--romfs", os.path.abspath(d / "dump" / "romfs")])
+    rt = d / "rt"
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        packs.main(["rt", str(d / "b"), str(rt)])
+    check("its runtime has no romfs", not (rt / "romfs").exists())
+    check("...and the base's files", (rt / "cache" / "hookshot_programs.bin").read_bytes() == b"programs")
+    check("...and says the game takes --romfs (%s)" % out.getvalue(), "--romfs" in out.getvalue())
+
+
 def fake_base(d, predict_s=0):
     """A base with a game folder: romfs, both modules, two caches"""
     base_dir, game = d / "base", d / "base" / "game"
@@ -385,6 +436,25 @@ def fake_base(d, predict_s=0):
     packs.write_base(str(base_dir), {"commit": "c" * 40, "work": str(base_dir / "work"), "game": str(game), "romfs": "r",
                                      "exefs": "e", "predict_s": predict_s})
     return base_dir, game
+
+
+def test_renderer_build_jobs():
+    """A pack of the renderer alone compiles several files at once: nx2/build.py run by itself compiles one at a time, so the
+    command carries --jobs: HOOKSHOT_JOBS when it is set, as the game's build takes it, else one for every four CPU threads"""
+    cmd = packs.renderer_build_cmd
+    check("the renderer is built alone by build.py", cmd({}, 16)[1:4] == ["-I", "nx2/build.py", "--standalone"])
+    check("HOOKSHOT_JOBS is the compilers at once", cmd({"HOOKSHOT_JOBS": "14"}, 16)[-2:] == ["--jobs", "14"])
+    check("unset: one for every four threads", cmd({}, 16)[-2:] == ["--jobs", "4"])
+    check("0 and empty are automatic too", cmd({"HOOKSHOT_JOBS": "0"}, 24)[-2:] == ["--jobs", "6"]
+          and cmd({"HOOKSHOT_JOBS": ""}, 8)[-2:] == ["--jobs", "2"])
+    check("never none", cmd({}, 1)[-2:] == ["--jobs", "1"] and cmd({}, 3)[-2:] == ["--jobs", "1"])
+    for bad in ("many", "-2", "1.5"):
+        try:
+            cmd({"HOOKSHOT_JOBS": bad}, 16)
+        except SystemExit as e:
+            check("a HOOKSHOT_JOBS that is no count is named", "HOOKSHOT_JOBS" in str(e))
+        else:
+            check("HOOKSHOT_JOBS=%s is refused" % bad, False)
 
 
 def test_predict_budget(d):
@@ -666,11 +736,12 @@ def main():
     test_stamped_objects_match_build()
     test_caches_named_in_renderer()
     test_inputs_beside_the_objects()
+    test_renderer_build_jobs()
     with tempfile.TemporaryDirectory(prefix="hookshot-dev-packs-") as d:
         d = Path(d)
         for name, t in (("mc", test_module_changed), ("pf", test_pack_folders), ("rt", test_generated_and_runtime),
                         ("guard", test_guards), ("inside", test_resolves_inside), ("predict", test_predict_budget), ("outputs", test_outputs_before_prepare), ("prepare", test_prepare_outcomes), ("seed", test_seed), ("warm", test_warm), ("busy", test_busy), ("hidden", test_busy_folders_above_hidden),
-                        ("stamp", test_stamp_matches_build)):
+                        ("stamp", test_stamp_matches_build), ("in-place", test_romfs_in_place)):
             (d / name).mkdir()
             t(d / name)
     print("test_dev_packs: ok")

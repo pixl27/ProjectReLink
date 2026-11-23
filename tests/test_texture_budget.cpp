@@ -6,6 +6,17 @@
 
 #define CHECK(x) do { if (!(x)) { std::printf("FAIL line %d: %s\n", __LINE__, #x); std::exit(1); } } while (0)
 
+// Falls back to the 2-argument overload on main so Commit 1 compiles and fails at runtime on the 8 GB ASTC cap.
+template <class B = bool>
+static uint64_t call_integrated_bytes(uint64_t allowed, uint64_t vram, B astc_on_cpu) {
+    if constexpr (requires(B cpu) { mkwvk::texture_rule::integrated_bytes(allowed, vram, cpu); }) {
+        return mkwvk::texture_rule::integrated_bytes(allowed, vram, astc_on_cpu);
+    } else {
+        (void)astc_on_cpu;
+        return mkwvk::texture_rule::integrated_bytes(allowed, vram);
+    }
+}
+
 int main() {
     using namespace mkwvk::texture_rule;
     const uint64_t MB = 1ull << 20, GB = 1ull << 30, RAM = 32 * GB;
@@ -29,9 +40,13 @@ int main() {
     CHECK(dedicated_bytes(0, 8 * GB, 8 * GB) == 4096 * MB);
     CHECK(dedicated_bytes(5500 * MB, 6 * GB, 8 * GB) == 3584 * MB);
     CHECK(dedicated_bytes(7300 * MB, 8 * GB, 0) == dedicated_bytes(7300 * MB, 8 * GB, RAM));   // (the RAM not known)
-    // an integrated GPU: its share as before (45% up to 8.5 GB, else 70%, at most 6 GB), Minimum's 2.2 GB on a small heap
+    // an integrated GPU: its share as before (45% up to 8.5 GB, else 70%, at most 6 GB, or 8 GB with ASTC on the CPU),
+    // Minimum's 2.2 GB on a small heap
     CHECK(integrated_bytes(8000 * MB, 8 * GB) == 3600 * MB);
     CHECK(integrated_bytes(10000 * MB, 16 * GB) == 6144 * MB);
+    CHECK(call_integrated_bytes(12214 * MB, 6 * GB, false) == 6144 * MB);
+    CHECK(call_integrated_bytes(12214 * MB, 6 * GB, true) == 8192 * MB);
+    CHECK(call_integrated_bytes(12214 * MB, 4 * GB, true) == 2200 * MB);
     CHECK(integrated_bytes(3000 * MB, 4 * GB) == 1350 * MB);
     CHECK(integrated_bytes(6000 * MB, 4 * GB) == 2200 * MB);
     CHECK(integrated_bytes(0, 8 * GB) == 4096 * MB);

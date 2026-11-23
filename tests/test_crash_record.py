@@ -48,7 +48,7 @@ def source_contract():
     writer = block((ROOT / "host/hos_crash_record.c").read_text(encoding="utf-8"), "int hos_crash_record_write(")
     assert "hos_log(" not in writer and "hos_crash_record_log_notes(" not in writer
     renderer = (ROOT / "gpu/vk/vk_replay.cpp").read_text(encoding="utf-8")
-    replay = block(renderer, "[[noreturn]] void replay_fatal(")
+    replay = block(renderer, "[[noreturn]] void replay_fatal(const char* why) {")   # (the definition, not its declaration)
     assert replay.index('logf("vk: FATAL:') < replay.index("std::_Exit(3)")
     assert 'strstr(buf, "VK_ERROR_DEVICE_LOST") ? "device lost"' in threads
     logger = block(threads, "static void hos_vlog(")
@@ -87,12 +87,12 @@ def source_contract():
     # start generating unclean records. Declarations and comments are not calls.
     expected = {
         "control.c": ["ExitProcess(0);"],
-        "display.c": ["ExitProcess(1);"],
+        "display.c": ["ExitProcess(1);", "ExitProcess(1);"],  # a window that failed to start; the renderer did not start
         "hos_main.c": ["ExitProcess(result);"],
         "hos_relaunch.c": ["ExitProcess(0);"],
         "hos_svc.c": ["ExitProcess(0);"],
         "hos_thread.c": ["ExitProcess(3);"],  # fatal: record, not a clean end
-        "posix/display_sdl.c": ["ExitProcess(1);"],
+        "posix/display_sdl.c": ["ExitProcess(1);", "ExitProcess(1);"],  # the renderer did not start; no window
         "windows_stop.c": ["TerminateProcess(GetCurrentProcess(), 0);",
                            "TerminateProcess(GetCurrentProcess(), STOP_TIMEOUT_EXIT);"],
         "posix/win32_posix.c": ["_exit((int)code);", "ExitProcess(code);"],  # platform implementations

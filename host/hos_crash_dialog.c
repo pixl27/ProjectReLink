@@ -244,27 +244,48 @@ typedef struct RunLog {
     HosCrashLog facts;
     char *lines[HOS_CRASH_LOG_LINES];   /* (the last ones, redacted, a ring) */
     int count, next, found;
+    uint64_t from;                      /* (the byte its own run_id line starts at: facts come from there on) */
     char path[PATH_MAX_UTF8];
 } RunLog;
-static int log_is_run(const char *path, const char *run_id) {
-    char *head = read_text(path, 8192, NULL);
+/* Does this log belong to this run? Search the file for its `run_id: <wanted>` line wherever the line sits, and say where
+   it sits (NULL if the caller does not care): Linux's "Restart now" execs the new run in the same process with the log
+   still open, so the restarted run appends at the offset the run before reached (any real play session is far past
+   8 KB). A head window the size of that line's own position used to be the whole question, and the restarted run's own
+   crash report claimed the game had logged to no file while its lines sat a screen deeper in that file. Same ceiling
+   read_log below reads to. */
+static int log_is_run(const char *path, const char *run_id, uint64_t *at) {
     char want[48];
     snprintf(want, sizeof want, "run_id: %s", run_id);
-    const int yes = head && strstr(head, want) != NULL;
-    free(head);
+    FILE *f = open_utf8(path, "rb");
+    if (!f) return 0;
+    char line[4096];
+    int yes = 0;
+    uint64_t taken = 0;
+    uint64_t banner_at = 0;   /* (this run's own "] hookshot <version>" line: the one nearest before its run_id.
+                                The run logs the banner first and the run id next, back to back, and the report
+                                needs the version — a gate that starts at the run_id line always drops it. Facts of an earlier run in an inherited log sit before
+                                this banner, so they stay out; the line parser takes "] hookshot " as the version. */
+    int have_banner = 0;
+    for (; taken < (256ull << 20) && fgets(line, sizeof line, f);) {
+        const uint64_t line_at = taken;
+        taken += strlen(line);
+        if (strstr(line, "] hookshot ")) { banner_at = line_at; have_banner = 1; }
+        if (strstr(line, want)) { yes = 1; if (at) *at = have_banner ? banner_at : line_at; break; }
+    }
+    fclose(f);
     return yes;
 }
 /* This run's log: the path it named, else its first rotated name (hookshot_log.1.txt: a start since moved it), when its run
    id is the one wanted */
 static int find_run_log(RunLog *r, const char *log, const char *run_id) {
     if (!log || !run_id || !run_id[0]) return 0;
-    if (log_is_run(log, run_id)) return snprintf(r->path, sizeof r->path, "%s", log), 1;
+    if (log_is_run(log, run_id, &r->from)) return snprintf(r->path, sizeof r->path, "%s", log), 1;
     const char *dot = strrchr(log, '.'), *sep = strrchr(log, '/');
     const char *bsep = strrchr(log, '\\');
     if (bsep > sep) sep = bsep;
     if (dot && (!sep || dot > sep)) {
         snprintf(r->path, sizeof r->path, "%.*s.1%s", (int)(dot - log), log, dot);
-        if (log_is_run(r->path, run_id)) return 1;
+        if (log_is_run(r->path, run_id, &r->from)) return 1;
     }
     r->path[0] = 0;
     return 0;
@@ -274,13 +295,17 @@ static void read_log(RunLog *r, const Who *who) {
     if (!f) return;
     r->found = 1;
     char line[4096];
-    /* (the whole log for what it says, up to 256 MB; its last lines kept) */
+    /* (the whole log for its last lines, up to 256 MB; but the facts — the map, the stage, what it started — come only
+       from this run's own lines: after the run_id line find_run_log located. A log the run inherits across a posix
+       "Restart now" starts with another run: its map and its shader state are not this run's, and a report that takes
+       them blames "while you were playing" for a run that never left the start.) */
     for (uint64_t taken = 0; taken < (256ull << 20) && fgets(line, sizeof line, f);) {
         const size_t n = strlen(line);
+        const uint64_t line_at = taken;
         taken += n;
         char *clean = redacted(who, line, n);
         if (!clean) continue;
-        hos_crash_log_line(&r->facts, clean);
+        if (line_at >= r->from) hos_crash_log_line(&r->facts, clean);
         free(r->lines[r->next]);
         r->lines[r->next] = clean;
         r->next = (r->next + 1) % HOS_CRASH_LOG_LINES;

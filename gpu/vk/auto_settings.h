@@ -21,7 +21,7 @@ struct Hardware {
     bool mesh_as_compute = false;   // (this run runs them as compute all the same: RX_VK_MESH_SHADERS=compute, or Linux AMD's
                                     // Automatic, #2245. The card's tier is its own: not for the choice nor the fingerprint)
     bool rtx = false;           // (an NVIDIA RTX card: DLSS's tensor cores)
-    bool rdna4 = false;         // (an AMD RDNA 4 card, RX 9000: FSR 4)
+    bool rdna4 = false;         // (an AMD RDNA 4 card, an RX 9000 or Radeon AI PRO: FSR 4)
     bool dlss_built = false;    // (the game was built with NVIDIA's DLSS SDK)
     bool fsr4_built = false;    // (with AMD's FSR 4 runtime)
     bool xess_ready = false;    // (Intel's libxess.dll found and loaded: Intel XeSS on the Upscaler row. Only said in the

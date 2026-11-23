@@ -87,7 +87,7 @@ def placing_checks(cc):
     with tempfile.TemporaryDirectory(prefix="hud-layout-row-") as tmp:
         c, exe = Path(tmp) / "row.c", Path(tmp) / ("row.exe" if os.name == "nt" else "row")
         c.write_text(FIXTURE_HEAD + body + HELPERS + MAIN, encoding="utf-8")
-        built = subprocess.run([cc, "-std=c11", "-O1", "-Wall", "-Wno-unused-function", "-o", str(exe), str(c), "-lm"],
+        built = subprocess.run([cc, "-std=c11", "-O1", "-include", test_hud_layout.ENV_ON_H, "-Wall", "-Wno-unused-function", "-o", str(exe), str(c), "-lm"],
                                capture_output=True, text=True)
         check(built.returncode == 0, "host/hos_wide_ui.c did not compile with the stand-ins:\n" + built.stdout + built.stderr)
 

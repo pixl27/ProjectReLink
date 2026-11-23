@@ -30,6 +30,10 @@ static struct {
     void *PadHasSensor, *PadSensorEnable, *PadSensorData;   /* (motion: optional, NULL in an SDL without them) */
     void *PadVendor, *PadSteamHandle, *SetHintPriority;   /* (Steam's stand-in pads: optional, host/steam_pads.h) */
     void *JoystickGUID, *PadMapping;   /* (optional connection diagnostics: no serial number or device path) */
+    void *PadWireless;   /* (optional: a pad's transport, SDL_GetJoystickConnectionState) */
+    /* (optional, host/pad_sdl.c's vibration: an Xbox pad's trigger motors; a pad's HID device, written beside SDL for a
+       DualSense's Bluetooth haptics. Without them those pads keep their two motors) */
+    void *PadTriggers, *HidOpenPath, *HidWrite, *HidClose;
     void *GetGamepads, *GetGamepadID, *Free;   /* (SDL3) */
     void *NumJoysticks, *IsGameController, *DeviceInstanceID, *GetJoystick, *JoystickInstanceID;   /* (SDL2; GetJoystick also SDL3's diagnostics) */
 } f;
@@ -75,6 +79,11 @@ static int get_all(HMODULE m, int three) {
     /* (SDL2 2.0.12 and 2.0.16 on, SDL3 3.2 on: without them every pad keeps the motor rumble) */
     *(FARPROC *)&f.PadType = GetProcAddress(m, three ? "SDL_GetGamepadType" : "SDL_GameControllerGetType");
     *(FARPROC *)&f.PadEffect = GetProcAddress(m, three ? "SDL_SendGamepadEffect" : "SDL_GameControllerSendEffect");
+    /* (hookshot, vibration: SDL2 2.0.14 / 2.0.18 / 2.24 on, every SDL3) */
+    *(FARPROC *)&f.PadTriggers = GetProcAddress(m, three ? "SDL_RumbleGamepadTriggers" : "SDL_GameControllerRumbleTriggers");
+    *(FARPROC *)&f.HidOpenPath = GetProcAddress(m, "SDL_hid_open_path");
+    *(FARPROC *)&f.HidWrite = GetProcAddress(m, "SDL_hid_write");
+    *(FARPROC *)&f.HidClose = GetProcAddress(m, "SDL_hid_close");
     /* (motion sensors: SDL 2.0.14 on and every SDL3; without them the pads still play, with no gyro) */
     *(FARPROC *)&f.PadHasSensor = GetProcAddress(m, three ? "SDL_GamepadHasSensor" : "SDL_GameControllerHasSensor");
     *(FARPROC *)&f.PadSensorEnable = GetProcAddress(m, three ? "SDL_SetGamepadSensorEnabled" : "SDL_GameControllerSetSensorEnabled");
@@ -107,6 +116,8 @@ static int get_all(HMODULE m, int three) {
         GET(GetGamepads, "SDL_GetGamepads");
         GET(GetGamepadID, "SDL_GetGamepadID");
         GET(Free, "SDL_free");
+        /* (a pad's transport: SDL3 3.2 on. Optional: SDL2 cannot say, and a DualSense is then placed by its sound card) */
+        *(FARPROC *)&f.PadWireless = GetProcAddress(m, "SDL_GetJoystickConnectionState");
         *(FARPROC *)&f.LoadPNG = GetProcAddress(m, "SDL_LoadPNG");   /* (3.4 on: the icon, when there) */
         *(FARPROC *)&f.SetWindowIcon = GetProcAddress(m, "SDL_SetWindowIcon");
         *(FARPROC *)&f.DestroySurface = GetProcAddress(m, "SDL_DestroySurface");
@@ -496,6 +507,7 @@ typedef struct PlaybackEndpoint {
     unsigned token;
     uint32_t physical;
     int present;
+    int channels;   /* (hookshot: what the device plays, 0 when SDL cannot say; host/rumble_renhdrum.c looks for four) */
 } PlaybackEndpoint;
 static PlaybackEndpoint *playback_endpoints;
 static unsigned playback_next;
@@ -566,6 +578,16 @@ static int playback_refresh(void) {   /* playback_lock held; no stream opened */
             p->next = playback_endpoints, playback_endpoints = p;
         }
         p->physical = physical, p->present = 1;
+        p->channels = 0;
+        if (playback.Format) {
+            struct { int a, b, c, d, e, g, h, i; } spec;   /* (SDL3's {format, channels, freq}, SDL2's SDL_AudioSpec) */
+            int frames = 0;
+            memset(&spec, 0, sizeof spec);
+            if (version == 3 && ((_Bool (*)(uint32_t, void *, int *))playback.Format)(physical, &spec, &frames))
+                p->channels = spec.b;
+            else if (version == 2 && ((int (*)(int, int, void *))playback.Format)((int)physical, 0, &spec) == 0)
+                p->channels = ((const uint8_t *)&spec)[6];   /* (int freq, Uint16 format, Uint8 channels) */
+        }
         count++;
     }
     if (all) ((void (*)(void *))playback.Free)(all);
@@ -590,6 +612,14 @@ int hos_sdl_output_info(int index, char *id, int id_capacity, char *name, int na
     }
     ReleaseSRWLockShared(&playback_lock);
     return ok;
+}
+int hos_sdl_output_channels(int index) {
+    int channels = 0;
+    AcquireSRWLockShared(&playback_lock);
+    for (PlaybackEndpoint *p = playback_endpoints; p; p = p->next)
+        if (p->present && index-- == 0) { channels = p->channels; break; }
+    ReleaseSRWLockShared(&playback_lock);
+    return channels;
 }
 int hos_sdl_output_resolve(const char *id) {
     int token = -1;
@@ -1031,5 +1061,49 @@ int hos_sdl_knows_steam_pads(void) { return f.PadVendor && f.PadSteamHandle && f
 uint16_t hos_sdl_pad_vendor(void *pad) { return f.PadVendor ? CALL(uint16_t (*)(void *), PadVendor)(pad) : 0; }
 uint64_t hos_sdl_pad_steam_handle(void *pad) {
     return f.PadSteamHandle ? CALL(uint64_t (*)(void *), PadSteamHandle)(pad) : 0;
+}
+/* (hookshot, vibration: host/pad_sdl.c, host/rumble_renhdrum.c) a pad's transport: 1 wireless, 0 a cable, -1 when the
+   SDL cannot say */
+int hos_sdl_pad_wireless(void *pad) {
+    if (!f.PadWireless || !f.GetJoystick || !pad) return -1;
+    void *joystick = CALL(void *(*)(void *), GetJoystick)(pad);
+    if (!joystick) return -1;
+    /* SDL_JoystickConnectionState: -1 invalid, 0 unknown, 1 wired, 2 wireless */
+    const int state = CALL(int (*)(void *), PadWireless)(joystick);
+    if (state < 1) return -1;
+    return state == 2 ? 1 : 0;
+}
+/* an Xbox One or Series pad's trigger motors; 1 when sent */
+int hos_sdl_pad_rumble_triggers(void *pad, uint16_t left, uint16_t right, uint32_t ms) {
+    if (!f.PadTriggers) return 0;
+    if (version == 3) return CALL(_Bool (*)(void *, uint16_t, uint16_t, uint32_t), PadTriggers)(pad, left, right, ms);
+    return CALL(int (*)(void *, uint16_t, uint16_t, uint32_t), PadTriggers)(pad, left, right, ms) == 0;
+}
+/* a pad's device path ("" when the SDL cannot say), and a second handle on it, written beside SDL's own (a DualSense's
+   Bluetooth haptics, report 0x32). hos_sdl_hid_write: the bytes written, -1 on failure */
+const char *hos_sdl_pad_path(void *pad) {
+    /* (looked up here, on first use, not with the rest at load: the connection diagnostics read no path or serial
+       number, tests/test_sdl_pad_diagnostics.py. The path only opens the device; it is never logged) */
+    static void *path_of;
+    static int looked;
+    if (!looked) {
+        looked = 1;
+        HMODULE m = load_one(version == 3 ? "SDL3.dll" : "SDL2.dll");   /* (the one loaded: the same handle back) */
+        if (m) *(FARPROC *)&path_of = GetProcAddress(m, version == 3 ? "SDL_GetGamepadPath" : "SDL_GameControllerPath");
+    }
+    const char *p = path_of && pad ? ((const char *(*)(void *))path_of)(pad) : NULL;
+    return p ? p : "";
+}
+int hos_sdl_hid_can(void) { return f.HidOpenPath && f.HidWrite && f.HidClose; }
+void *hos_sdl_hid_open(const char *path) {
+    if (!hos_sdl_hid_can() || !path || !*path) return NULL;
+    if (version == 3) return CALL(void *(*)(const char *), HidOpenPath)(path);
+    return CALL(void *(*)(const char *, int), HidOpenPath)(path, 0);   /* (SDL2's: not exclusive) */
+}
+int hos_sdl_hid_write(void *hid, const void *data, int size) {
+    return hid && f.HidWrite ? CALL(int (*)(void *, const unsigned char *, size_t), HidWrite)(hid, data, (size_t)size) : -1;
+}
+void hos_sdl_hid_close(void *hid) {
+    if (hid && f.HidClose) CALL(int (*)(void *), HidClose)(hid);
 }
 #undef CALL

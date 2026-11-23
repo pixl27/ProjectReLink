@@ -9,7 +9,7 @@ maps or binaries (on Linux, the game folder).
 
 Prints the functions by inclusive share (in the stack at all) and by self share (the leaf), and the leaf modules.
 """
-import bisect, collections, itertools, os, re, stat, subprocess, sys
+import bisect, collections, glob, itertools, os, re, shutil, stat, subprocess, sys
 from contextlib import ExitStack
 from tempfile import TemporaryFile
 
@@ -25,7 +25,65 @@ def load_map(path, base):
             if m:
                 syms.append((int(m.group(2), 16) - base, m.group(1)))
     syms.sort()
-    return [a for a, _ in syms], [n for _, n in syms]
+    return [a for a, _ in syms], demangle_all([n for _, n in syms])
+
+
+def demangler():
+    """A C++ demangler for the Itanium names of a Windows build's maps (llvm-mingw's, as on Linux): llvm-cxxfilt or c++filt
+    on the PATH, else HOOKSHOT_MINGW's, else the llvm-mingw of a build tools folder on this PC (scripts/dev_build.py's, the
+    Hookshot Launcher's). None: there is none"""
+    for name in ("llvm-cxxfilt", "c++filt"):
+        p = shutil.which(name)
+        if p:
+            return p
+    dirs = [os.environ.get("HOOKSHOT_MINGW", "")]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        dirs += sorted(glob.glob(os.path.join(local, "Hookshot", "dev", "builder", "*", "HookshotBuilder", "tools",
+                                              "llvm-mingw")), key=os.path.getmtime, reverse=True)
+        dirs += sorted(glob.glob(os.path.join(local, "LongshotLauncher", "toolchains", "*", "HookshotBuilder", "tools",
+                                              "llvm-mingw")), key=os.path.getmtime, reverse=True)
+    for d in dirs:
+        for exe in ("llvm-cxxfilt.exe", "llvm-cxxfilt"):
+            p = os.path.join(d, "bin", exe) if d else ""
+            if p and os.path.isfile(p):
+                return p
+    return None
+
+
+def demangle_all(names):
+    """names with their Itanium C++ names (_Z...) demangled, as Linux's nm -C gives them; any other name (C, MSVC's, a lifted
+    import's imp__ZN...) as it is. Without a demangler (demangler()), all as they are"""
+    idx = [i for i, n in enumerate(names) if n.startswith("_Z")]
+    tool = demangler() if idx else None
+    if not tool:
+        return names
+    try:
+        r = subprocess.run([tool], input="\n".join(names[i] for i in idx) + "\n", capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return names
+    out = r.stdout.splitlines()
+    if r.returncode or len(out) != len(idx):
+        return names
+    names = list(names)
+    for i, n in zip(idx, out):
+        names[i] = n
+    return names
+
+
+def bare(name):
+    """a demangled name without its parameter list (and const, noexcept after it): "ns::f(int) const" -> "ns::f"; one with
+    none as it is ("(anonymous namespace)" inside a name stays)"""
+    n = re.sub(r"(\s+(const|volatile|noexcept|&&|&))+$", "", name)
+    if not n.endswith(")"):
+        return name
+    depth = 0
+    for i in range(len(n) - 1, -1, -1):
+        depth += {")": 1, "(": -1}.get(n[i], 0)
+        if depth == 0:
+            return n[:i] if i else name
+    return name
 
 
 # The modules whose frames are Hookshot's own code (the game and the runtime, the renderer): Windows, then Linux
@@ -37,7 +95,10 @@ RUN_MODS = GAME_MODS + VK_MODS
 WAIT_FRAMES = ("SleepConditionVariableSRW", "WaitForSingleObject", "hos_cv_sleep", "condition_variable::wait",
                "hos_sleep_ns", "sleep_ns", "hos_thread_wait", "vc_acquire", "present_out", "vkWaitForFences",
                "vkWaitSemaphores", "wait_value", "vk_timeline_wait", "recording_wait", ":Sleep", ":SleepEx",
-               "WaitForMultipleObjects", "WaitOnAddress")
+               "WaitForMultipleObjects", "WaitOnAddress",
+               # (host/hos_thread.c's sleep_away, which hos_sleep_ns and the guest's sleeps call; libc++'s waits, below
+               # std::condition_variable's; the renderer's wait for a GPU fence value, vk_replay.cpp)
+               "sleep_away", "__libcpp_condvar_wait", "__libcpp_condvar_timedwait", "mkwvk::(anonymous namespace)::wait")
 
 
 def waiting(leaf_module, names):
@@ -46,7 +107,7 @@ def waiting(leaf_module, names):
         return False
     for n in names:
         if n.startswith(("hookshot:", "hookshot_vk:", "hookshot.exe:", "hookshot_vk.dll:")):
-            return n.endswith(WAIT_FRAMES)
+            return bare(n).endswith(WAIT_FRAMES)   # (a C++ name as nm -C gives it: its parameters left out)
     return True   # (no frame of Hookshot's at all: a thread blocked outside it)
 
 

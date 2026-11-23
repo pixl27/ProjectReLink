@@ -342,7 +342,7 @@ def report(a):
         say("Busiest %d ms windows (start s: new functions / host KB%s): %s" % (
             win, " / est. -O1 compiler-s" if cs else "",
             "; ".join("%.1f: %d / %d%s" % (b * win / 1000, e[0], e[1] >> 10, (" / %.1f" % e[2]) if cs else "") for b, e in top)))
-        if cs and win == 100:
+        if cs and win == 100 and buckets:
             loads = sorted(e[2] for e in buckets.values())
             say("  100 ms windows with new functions: %d; their est. -O1 compile time: median %.2f s, 99th pct %.1f s, max %.1f s; "
                 "windows over 0.1 s of compiling: %d" % (len(loads), loads[len(loads) // 2], loads[int(len(loads) * 0.99)], loads[-1],

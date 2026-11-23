@@ -157,7 +157,7 @@ def main():
     if "fsr3_engine()" not in function(temporal, "Engine& engine_of("):
         raise SystemExit("engine_of has no slot for FSR 3.1's engine")
     # The chain's depth is reversed for FSR 3.1 (the prep's bit 3, from fsr_flip): the frame says so, for whatever else reads it
-    upscale = function(temporal, "bool temporal_upscale(")
+    upscale = function(temporal, "bool draw_engine(")   # (temporal_upscale's engine pass, before the bloom or after it)
     if "(fsr_flip ? 8 : 0)" not in upscale or "f.depth_reversed = fsr_flip;" not in upscale:
         raise SystemExit("temporal_upscale reverses the depth without saying so in the frame (TemporalFrame::depth_reversed)")
     # DLSS Frame Generation (NGX) copies the chain's depth: it must hand NGX the depth convention the frame says
@@ -183,7 +183,8 @@ def main():
     upscale = function(temporal, "bool temporal_upscale(")
     if "temporal_off() && stretch(" not in upscale:
         raise SystemExit("temporal_upscale: the Upscaler's Off does not stretch in place of the game's network")
-    stretch = function(temporal, "bool stretch(")
+    # (the stretch's recording is its own function, which DLAA before the bloom shares: both read as one)
+    stretch = function(temporal, "bool stretch(") + function(temporal, "bool stretch_record(")
     for need in ("s.linear, in_view", "s.out_layout", "c.valid", "in->width != c.width",
                  "!temporal_colour_pair(in->format, out->format)", "rgba ? s.stretch_rgba : s.out"):
         if need not in stretch:

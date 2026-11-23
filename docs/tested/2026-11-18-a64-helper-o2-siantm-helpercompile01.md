@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-18 | #756 `99f5e48a`, compared with main `7daafa7a` for linked size | Windows 11 build 26300 | Not used in the compile measurement | Intel Core i7-9700 / 32 GB | llvm-mingw; same generated helper source and compiler arguments, changing only -O1 vs -O2 and output path | siantm helpercompile01: repeated direct helper compiles after one warm-up per level, alternating order, three measured samples per level | Median seconds (-O1 → -O2): a64_rt.c 0.5364 → 0.5347, a64_suyu.c 0.3762 → 0.4288. COFF object bytes respectively 11,491 → 11,577 and 25,427 → 25,069. Linked executable, main vs PR: 522,396,160 → 522,395,648 bytes. |

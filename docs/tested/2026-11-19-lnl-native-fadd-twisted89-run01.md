@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-19 | fix/vk-lnl-native-fadd's diff over main 9ea65c7b (built with RX_MARCH=lunarlake on another PC) | Windows 11 build 26300 | Intel Arc 140V (Lunar Lake iGPU, 0x64A0) / 32.0.101.8991 | Intel Core Ultra 7 258V / 32 GB | Auto (this PC) preset, defaults, 1920x1200 picture, 1440x900 scene | Kokiri Forest, then Inside the Deku Tree, one play session | Float adds native by default on Lunar Lake; about 30-40 fps (log windows, ~900-1000 draws a frame); no crash or device loss, clean exit; run01 |

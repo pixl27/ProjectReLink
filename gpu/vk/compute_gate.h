@@ -50,6 +50,9 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <string>
 #include <mutex>
 
 namespace compute_gate {
@@ -96,6 +99,53 @@ inline uint64_t cgroup_room_mb(const char* max_text, uint64_t current_bytes) {
     for (const char* c = max_text; *c >= '0' && *c <= '9'; c++) max = max * 10 + (uint64_t)(*c - '0');
     return max > current_bytes ? (max - current_bytes) >> 20 : 0;
 }
+
+#ifndef _WIN32
+struct CgroupMemory {
+    uint64_t limit_mb = kUnknownMB;
+    uint64_t available_mb = kUnknownMB;
+};
+
+/// A parent slice can impose a tighter limit or have less room than the leaf.
+inline CgroupMemory cgroup_memory(const char* membership = "/proc/self/cgroup", const char* mount = "/sys/fs/cgroup") {
+    CgroupMemory result;
+    std::string path;
+    if (FILE* f = fopen(membership, "r")) {
+        char line[4096];
+        while (fgets(line, sizeof line, f))
+            if (!strncmp(line, "0::", 3)) {
+                path = line + 3;
+                while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
+                break;
+            }
+        fclose(f);
+    }
+    if (path.empty() || path[0] != '/') return result;
+    // A namespace may expose a membership outside its root. Only the mounted root is visible then.
+    if (path.find("/../") != std::string::npos || (path.size() >= 3 && path.compare(path.size() - 3, 3, "/..") == 0)) path = "/";
+    for (;;) {
+        const std::string dir = std::string(mount) + (path == "/" ? std::string() : path);
+        char max[64] = {};
+        unsigned long long current = 0;
+        bool read = false;
+        if (FILE* f = fopen((dir + "/memory.max").c_str(), "r")) {
+            read = fgets(max, sizeof max, f) != nullptr;
+            fclose(f);
+        }
+        if (read && max[0] >= '0' && max[0] <= '9') {
+            result.limit_mb = std::min(result.limit_mb, cgroup_room_mb(max, 0));
+            if (FILE* f = fopen((dir + "/memory.current").c_str(), "r")) {
+                if (fscanf(f, "%llu", &current) == 1) result.available_mb = std::min(result.available_mb, cgroup_room_mb(max, current));
+                fclose(f);
+            }
+        }
+        if (path == "/") break;
+        const size_t slash = path.find_last_of('/');
+        path = slash == 0 ? "/" : path.substr(0, slash);
+    }
+    return result;
+}
+#endif
 
 /// What the compiles may hold together, with avail_mb available when the first one starts: what is past kReserveMB.
 /// 0 (one at a time) when the system does not say

@@ -60,6 +60,9 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KIT = os.path.join(ROOT, "third_party", "a64-kit")
+# (the hot functions' exact inline form: A64_NATIVE_FP=0. The native form keeps no FPSR flags by design, so it is not
+# compared word for word with the exact body here; a64_lift.py NATIVE_FP says what it keeps)
+os.environ["A64_NATIVE_FP"] = "0"
 sys.path.insert(0, os.path.join(KIT, "lift"))
 sys.path.insert(0, os.path.join(KIT, "tools"))
 sys.path.append(os.path.join(ROOT, "nx2"))

@@ -53,7 +53,7 @@ def check_sources():
     if "precompile_save::due(" not in at_create or "pipeline_cache_save(true)" not in at_create:
         problems.append("precompile_at_create does not write the pipeline cache before the title after a long pass")
     run = block(draw, "void precompile_run(" + progress + ") {")
-    if "precompile_at_create(progress)" not in run:
+    if "precompile_at_create(progress ? start_steps::create : nullptr)" not in run:
         problems.append("precompile_run does not give precompile_at_create its progress")
     return problems
 

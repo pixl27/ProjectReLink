@@ -47,6 +47,15 @@ def check_source():
     if reset not in prep or not prep.index("prepare_check(") < prep.index(reset) < prep.index("prepared_for.warmed == warmed"):
         raise SystemExit("vk_draw.cpp: prepare_run() keeps the warm record when the pipeline cache's files were dropped "
                          "(the stage libraries went with them and were not made again)")
+    # (a file another driver made, refused by pcache_file_read, empties the cache as a dropped one does: the noted pipelines'
+    # marker goes, and create mode warms again before the game rather than compile them in play, after a driver update)
+    if not init.index("pcache_file_read(pcache_path)") < init.index("pcache_file_rejected = true;") < init.index("vkCreatePipelineCache"):
+        raise SystemExit("vk_draw.cpp: pcache_init() does not note a cache file it refused (another driver's) before it makes the cache")
+    run = block(draw, "void precompile_run(")
+    drop = "if (pcache_drop_stale() || pcache_file_rejected) remove(precompile_built_path().c_str());"
+    if drop not in run or not run.index("pcache_init();") < run.index(drop) < run.index("const bool warms = !precompile_covers_notes();") < run.index("if (warms) precompile_warm("):
+        raise SystemExit("vk_draw.cpp: precompile_run() judges the pipelines' marker before the cache's file is read, or keeps it "
+                         "when another driver's file was refused (the noted pipelines compile in play after a driver update)")
 
 
 def main():

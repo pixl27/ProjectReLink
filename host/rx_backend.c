@@ -338,6 +338,16 @@ uint64_t hos_mods_changed(void);
 int hos_cheat_info(int i, const char **name, const char **mod, const char **note, int *kind, int *on);
 void hos_cheat_set(int i, int on);
 
+#ifdef _WIN32
+static uintptr_t host_vulkan_loader_proc(void) {
+    HMODULE loader = LoadLibraryExA("vulkan-1.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!loader) return 0;
+    FARPROC resolver = GetProcAddress(loader, "vkGetInstanceProcAddr");
+    if (!resolver) FreeLibrary(loader);
+    return (uintptr_t)resolver;
+}
+#endif
+
 static const MkwVkHost vk_host = {
     MKWVK_API_VERSION, host_log, hos_guest_base, hos_guest_size, hos_gpu_ptr, nvn_gpu_guest, nvn_gpu_read,
     nvn_gpu_write, host_collect, host_free_pages, host_mark_written, hos_ticks, hos_now_ns, nvn_tex_layout,
@@ -356,6 +366,12 @@ static const MkwVkHost vk_host = {
     hos_monitor_count, hos_monitor_info, hos_monitor_select,
     hos_sdl_rumble_test,
     hos_nfc_count, hos_nfc_name, hos_nfc_tap, hos_nfc_state, hos_nfc_dir, hos_nfc_scan, hos_nfc_scan_name,
+    hos_ab_frame,   /* (version 35, hookshot: the frame trace's ab_side, host/hos_ab.c) */
+#ifdef _WIN32
+    host_vulkan_loader_proc,   /* (version 36: vkGetInstanceProcAddr as the executable resolves it) */
+#else
+    NULL,
+#endif
 };
 
 static const MkwVkRenderer *vk;   /* the Vulkan back end, when it was chosen and started */
@@ -482,6 +498,9 @@ int rx_start(void *hwnd) {
     /* (hookshot: Vulkan, the only renderer; RX_BACKEND, which once picked the WebGPU one, is not read) */
     const char *dll = "hookshot_vk.dll";
     const MkwVkRenderer *r = load_vulkan(dll);
+    /* (the crash report's renderer: host/hos_crash_dialog.h. Before start(), which prepares the shaders: a crash in there
+       is a crash of this renderer too) */
+    if (r) hos_log("report: renderer Vulkan");
     if (r && r->start(hwnd)) {
         vk = r;
         hos_log("rx: renderer: Vulkan (%s)", dll);
@@ -502,7 +521,22 @@ int rx_prepare_shaders(void) {
 }
 /* (hookshot) the window is being closed: a back end still preparing its shaders stops and keeps what it made first (a few
    seconds at most). One without the export (an older one) has nothing to keep */
+#ifndef _WIN32
+/* Startup failure and all close callers share one claim, before either can end the process or clean up. */
+static int rx_end_claim;   /* 0 neither, 1 close, 2 startup failure */
+int rx_start_failure_claim(void) {
+    int expected = 0;
+    return __atomic_compare_exchange_n(&rx_end_claim, &expected, 2, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+#endif
 void rx_close_asked(void) {
+#ifndef _WIN32
+    int expected = 0;
+    if (!__atomic_compare_exchange_n(&rx_end_claim, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE) && expected == 2) {
+        /* The renderer has already claimed the failure and will exit; do not race it with close cleanup. */
+        for (;;) Sleep(1000);
+    }
+#endif
     /* (first, before anything that takes time: the player asked to quit, so however the process ends from here (a second
        close of a window that stopped answering) the crash window says nothing; a crash still counts: host/hos_crash_dialog.h) */
     void hos_crash_quit_asked(void);
@@ -536,6 +570,7 @@ static volatile LONG presents;   /* (the frames shown, for the camera jitter bel
 void rx_nvn_present(const nvn_tex *t, const int crop[4]) {
     InterlockedIncrement(&presents);
     hos_slow_frame_present();   /* (HOS_SLOW_FRAMES: a late frame's samples written out, host/slow_frames.c) */
+    hos_ab_present();   /* (hookshot) HOS_AB: the frame counted for its side (host/hos_ab.c) */
     vk ? vk->nvn_present(t, crop) : wgr_nvn_present(t, crop);
 }
 /* (hookshot, nx2/oot_jitter.py) the temporal upscaler's camera jitter (NVIDIA DLSS, AMD FSR 4: gpu/vk/vk_temporal.cpp): this frame's sub-pixel offset of the scene's projection, in clip

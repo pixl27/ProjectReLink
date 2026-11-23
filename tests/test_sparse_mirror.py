@@ -69,7 +69,7 @@ def check_source():
                                                   "shadow_forget(", "return remember({p->buffer, off, size, 0});"],
          "gpu_buffer_bind()'s block with no memory")
     grow = block(mem, "void sparse_grow_all(const std::vector<Pool*>& pools) {")
-    need(grow, ["sparse_bind_infos(infos)", "full_barrier(up,", "vkCmdCopyBuffer(up, p.buffer, p.mirror", "cap_pages_over(p,",
+    need(grow, ["sparse_bind_infos(std::move(infos))", "full_barrier(up,", "vkCmdCopyBuffer(up, p.buffer, p.mirror", "cap_pages_over(p,",
                 "sparse_table(p, ma, i, i + 1)", "shadow_forget(p, c.dstOffset, c.size)", "p.released[i] = nullptr;", "++p.release_gen[i];",
                 "mirror_bytes + taking + b > mirror_budget()", "p.refill.clear();", "late_fix_emit();",
                 "vkCmdCopyBuffer(up, buf, p.mirror"], "sparse_grow_all()")
@@ -84,7 +84,7 @@ def check_source():
                "if (mirror_epoch - p.block_dead_since[i] < kSparseIdleEpochs) continue;", "mirror_epoch - last_bound_of(p, i) < kSparseIdleEpochs",
                "p.released[i] = p.blocks[i];"], "sparse_release()")
     need(block(mem, "void sparse_reap() {"), ["dead_blocks.front().value <= mem_completed", "sparse_live.count(d.buffer)",
-                                              "d.pool->release_gen[d.index] != d.gen", "sparse_bind_infos(infos, &unbound);", "free_sparse_block("], "sparse_reap()")
+                                              "d.pool->release_gen[d.index] != d.gen", "sparse_bind_infos(std::move(infos), &unbound);", "free_sparse_block("], "sparse_reap()")
     need(block(mem, "void mirror_free(Pool& p) {"), ["dead_sparse.back().blocks.push_back(a)", "std::erase(sparse_wanted, &p);", "if (d.pool == &p) d.pool = nullptr;",
                                                      "mirror_bytes -= std::min(mirror_bytes, size);"], "mirror_free()")
     need(block(mem, "void sparse_reap() {"), ["sparse_live.erase(d.buffer);", "destroy_sparse_buffer(",

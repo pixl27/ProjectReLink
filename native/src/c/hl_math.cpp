@@ -8,6 +8,7 @@
 #include "hl/math/Bounds.h"
 #include "hl/math/Exact.h"
 #include "hl/math/MotionStep.h"
+#include "hl/math/Support.h"
 
 using namespace hl;
 
@@ -209,4 +210,26 @@ extern "C" int hl_math_affine_box(const void* box_in, const void* m, void* out) 
     const float v[6] = {ce->centre[0], ce->centre[1], ce->centre[2], ce->extents[0], ce->extents[1], ce->extents[2]};
     math::Box box;
     return written(math::affine_box(v, static_cast<const bridge::AffineColumns*>(m)->col, box), box, out);
+}
+
+extern "C" int hl_math_support_point(const void* set, const void* dir, const hl_math_support_tables* t, void* out) {
+    static_assert(sizeof(hl_math_support_tables) == sizeof(math::SupportTables));
+    const auto* a = static_cast<const bridge::HavokRelArray*>(set);
+    // (an offset of 0 means no array: the guest then reads from address 0)
+    if (a->offset == 0) return 0;
+    math::SupportTables tables;
+    std::memcpy(&tables, t, sizeof tables);
+    uint8_t rec[16];
+    if (!math::support_point(static_cast<const uint8_t*>(set) + a->offset, a->count, static_cast<const float*>(dir), tables, rec))
+        return 0;
+    std::memcpy(out, rec, 16);
+    return 1;
+}
+
+extern "C" int hl_math_relative_transform(const void* a, const void* b, void* out) {
+    math::RelativeTransform r;
+    if (!math::relative_transform(*static_cast<const math::PreciseTransform*>(a), *static_cast<const math::PreciseTransform*>(b), r))
+        return 0;
+    std::memcpy(out, &r, sizeof r);
+    return 1;
 }

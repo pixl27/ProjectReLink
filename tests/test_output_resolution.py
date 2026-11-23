@@ -12,6 +12,9 @@ RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -355,13 +358,13 @@ int main() {
     with tempfile.TemporaryDirectory(prefix="output-default-") as tmp:
         source, exe = Path(tmp) / "rule.cpp", Path(tmp) / "rule.exe"
         source.write_text(rule, encoding="utf-8")
-        subprocess.run([args.cxx, "-std=c++17", "-I", str(ROOT), str(source), "-o", str(exe)], check=True)
+        subprocess.run([args.cxx, "-std=c++17", "-include", ENV_ON_H, "-I", str(ROOT), str(source), "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
     with tempfile.TemporaryDirectory(prefix="output-resolution-") as tmp:
         work = Path(tmp)
         source, exe = work / "fixture.cpp", work / "fixture.exe"
         source.write_text(fixture, encoding="utf-8")
-        subprocess.run([args.cxx, "-std=c++17", "-I", str(ROOT), str(source), "-o", str(exe)], check=True)
+        subprocess.run([args.cxx, "-std=c++17", "-include", ENV_ON_H, "-I", str(ROOT), str(source), "-o", str(exe)], check=True)
         for saved, handheld, override, mode, w, h, label, pool, writes in cases:
             (work / "hookshot_options.ini").write_text(   # (saved None: no output_res= line, a new install)
                 ("" if saved is None else f"output_res={saved}\n") + f"handheld_profile={handheld}\n", encoding="ascii")

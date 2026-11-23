@@ -83,6 +83,7 @@ class FaceJobs(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop("HOOKSHOT_PROMPT_JOBS", None)
+        os.environ.pop("HOOKSHOT_JOBS", None)
 
     def jobs(self, faces, cpus, gb):
         with mock.patch.object(P.os, "cpu_count", return_value=cpus):
@@ -105,6 +106,14 @@ class FaceJobs(unittest.TestCase):
         self.assertEqual(self.jobs(5, 4, 10.0), 4)
         self.assertEqual(self.jobs(5, 12, 2.5), 2)
         self.assertEqual(self.jobs(5, 12, 0.4), 1)
+
+    def test_the_builds_count_is_a_ceiling(self):
+        """make_game.py --jobs / HOOKSHOT_JOBS: no more processes than the build was asked for (nx2/build_jobs.py)"""
+        os.environ["HOOKSHOT_JOBS"] = "2"
+        self.assertEqual(self.jobs(5, 12, 10.0), 2)
+        self.assertEqual(self.jobs(5, 12, 1.5), 1)   # (the memory's rule below it)
+        os.environ["HOOKSHOT_JOBS"] = "0"
+        self.assertEqual(self.jobs(5, 12, 10.0), 5)   # (0: automatic)
 
     def test_the_variable_first(self):
         os.environ["HOOKSHOT_PROMPT_JOBS"] = "3"

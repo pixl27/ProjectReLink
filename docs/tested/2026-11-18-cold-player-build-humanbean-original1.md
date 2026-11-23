@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-18 | 7daafa7a | CachyOS Linux 7.3.3, headless | RTX 3090, NVIDIA 620.70.06 | Ryzen 9 7900X, 32 GB | Fresh package install and driver caches, Most, release toolchain, 316 shipped library objects, shared OS file cache | Full cold player build, before either pr, run 1 | 983.99 s builder launch to ready. Read and translation 140.01 s, native compilation and linking 350.70 s, folder assembly 6.42 s, shader preparation through exit 486.72 s. 208 of 524 inputs compiled locally, 38,809 shader programs, zero failures, 32,655 noted graphics pipelines. Queue reported CPU pressure. |

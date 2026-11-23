@@ -122,8 +122,11 @@ def report():
         wait_end = frames[40][2] - 10_000_000
         (d / "events.txt").write_text("%d vcore_wait 80.0 ms from %d: ARes_Loading_0 (priority 26) waited for a core: given by "
                                       "sead::MainThread\n" % (wait_end, wait_end - 80_000_000), encoding="utf-8")
-        (d / "cpu.csv").write_text("t_ns,process_cpu_ns,rss_mb,available_mb\n%d,0,1000,8000\n%d,%d,1100,7900\n" %
-                                   (t0, at, (at - t0) * 2), encoding="utf-8")
+        # (a line a second as the mode writes them, from before the first present to the last, two cores busy: the report
+        # takes the lines from the first present on)
+        cpu_at = list(range(t0, at, 1_000_000_000)) + [at]
+        (d / "cpu.csv").write_text("t_ns,process_cpu_ns,rss_mb,available_mb\n" + "".join(
+            "%d,%d,%d,%d\n" % (c, (c - t0) * 2, 1000 + i, 8000 - i) for i, c in enumerate(cpu_at)), encoding="utf-8")
         (d / "process.json").write_text(json.dumps({"env": {"HOS_PROFILE": "1", "HOS_SAMPLE_ALL": str(d / "all.txt")}}),
                                         encoding="utf-8")
         (d / "game.log").write_text("[hos host] prof: threads in 5 s: sead::MainThread 60%; ARes_Loading_0 12%;\n",

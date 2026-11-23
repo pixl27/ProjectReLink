@@ -22,6 +22,9 @@ from pathlib import Path
 RUN_ALL_ARGS = ["--cc", "gcc"]
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
 sys.path.insert(0, str(ROOT / "nx2"))
 import oot_patches  # noqa: E402
 
@@ -228,7 +231,7 @@ def main():
         c = Path(tmp) / "fixture.c"
         exe = Path(tmp) / "fixture.exe"
         c.write_text(fixture, encoding="utf-8")
-        subprocess.run([a.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", str(c), "-o", str(exe)], check=True)
+        subprocess.run([a.cc, "-std=c11", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", str(c), "-o", str(exe)], check=True)
         env = {k: v for k, v in os.environ.items() if not k.startswith("HOS_")}
         subprocess.run([str(exe)], env=env, check=True)
         subprocess.run([str(exe)], env=dict(env, HOS_FPS_MOVIE="1"), check=True)   # (read by its value: 1 is on)
@@ -239,7 +242,7 @@ def main():
         plain = Path(tmp) / "plain.c"
         plain.write_text(FIXTURE.replace("@HOST@", block(vi, HOST_ANCHOR)).replace("@LIFTED@", oot_patches.MOVIE_OLD + STORE),
                          encoding="utf-8")
-        subprocess.run([a.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", str(plain), "-o", str(exe)], check=True)
+        subprocess.run([a.cc, "-std=c11", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", str(plain), "-o", str(exe)], check=True)
         r = subprocess.run([str(exe)], env=env, capture_output=True, text=True)
         check(r.returncode != 0 and "FAIL:" in r.stderr, "the unpatched count passes the checks: they prove nothing")
 

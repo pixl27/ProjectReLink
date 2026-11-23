@@ -66,6 +66,47 @@ def main():
         with open(hot, "w") as f:
             f.write("f_80000000\nf_80000100\nf_99999999\n")
 
+        # A valid initial snapshot has known functions, but none has run yet.
+        run_zero = os.path.join(tmp, "zero")
+        write_run(run_zero, [0] * len(FNS), marks=[(1.0, "initial snapshot")])
+        out = cover("report", run_zero, "--csize", csize, "--hot", hot, "--compiler-s", "1000")
+        expect(out, "Functions that ran: 0 of 5 = 0.0%; their host code 0.0 of 0.0 MB = 0.0%")
+        expect(out, "Their lifted C: 0.0 of 0.3 MB = 0.0%")
+        expect(out, "Their compile cost (the build's model): 0.0% = ~0 of the 1000 -O1 compiler-s")
+        expect(out, "by 'initial snapshot' (1 s): 0 functions, host 0.0 MB, C 0.0 MB")
+        for win in (100, 1000, 10000):
+            expect(out, "Busiest %d ms windows (start s: new functions / host KB / est. -O1 compiler-s): \n" % win)
+        assert "100 ms windows with new functions:" not in out, out
+        expect(out, "New functions per minute: \n")
+        expect(out, "Largest that ran (C KB at first-run s): \n")
+        expect(out, "hot.txt: 2 functions, 0 ran in this session (0.0% of the list); the list holds 0.0% of what ran")
+        with open(os.path.join(run_zero, "covered.txt"), "rb") as f:
+            assert f.read() == b""
+        with open(os.path.join(run_zero, "report.txt"), encoding="utf-8") as f:
+            assert f.read() == out
+
+        # Without cost metadata the same zero-call snapshot is still reportable.
+        out = cover("report", run_zero)
+        expect(out, "Functions that ran: 0 of 5 = 0.0%")
+        assert "Their lifted C:" not in out, out
+        with open(os.path.join(run_zero, "covered.txt"), "rb") as f:
+            assert f.read() == b""
+
+        # A single touched window keeps its percentiles and strict >0.1 s threshold.
+        run_one = os.path.join(tmp, "one")
+        write_run(run_one, [100] + [0] * (len(FNS) - 1))
+        one_csize = os.path.join(tmp, "one-csize.txt")
+        with open(one_csize, "w") as f:
+            f.write("f_80000000 1000\n")
+        for compiler_s, median, count in (("0.1", "0.10", 0), ("0.2", "0.20", 1)):
+            out = cover("report", run_one, "--csize", one_csize, "--compiler-s", compiler_s)
+            expect(out, "Functions that ran: 1 of 5 = 20.0%")
+            expect(out, "100 ms windows with new functions: 1; their est. -O1 compile time: median %s s, 99th pct %s s, max %s s; windows over 0.1 s of compiling: %d"
+                   % (median, compiler_s, compiler_s, count))
+            expect(out, "Busiest 100 ms windows (start s: new functions / host KB / est. -O1 compiler-s): 0.1: 1 / 0 / " + compiler_s)
+            with open(os.path.join(run_one, "covered.txt"), encoding="ascii") as f:
+                assert f.read() == "f_80000000 100\n"
+
         out = cover("report", run_a, "--csize", csize, "--hot", hot, "--compiler-s", "1000")
         expect(out, "Functions that ran: 3 of 5 = 60.0%; their host code 0.0 of 0.0 MB = 53.3%")
         # (C: 8,000 of 363,000 bytes; the model: s + s*s//350000 per function; f_80000100 alone is 350,000 + 350,000)

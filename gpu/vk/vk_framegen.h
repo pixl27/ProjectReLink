@@ -6,6 +6,8 @@
 namespace mkwvk {
 
 bool framegen_on();
+/// (RX_VK_FG_LATENCY_LOG) Before the swapchain is destroyed (retire_swapchain): the log's waits for its presents end first
+void fg_latency_swapchain_gone();
 /// (hookshot) Frame generation's setting as it runs: the Insert menu's (opts.framegen: 0 Off, 1 Auto, 2 to 8 a fixed
 /// multiplier), a fixed one at most NVIDIA DLSS Frame Generation's runtime's most made frames + 1 while DLSS-G is to make the
 /// frames (vk_dlss.h dlss_fg_most: 6x on an RTX 50's runtime, 2x on an RTX 40's; that most is 0 otherwise: no cap). Past it
@@ -13,6 +15,13 @@ bool framegen_on();
 /// past it is kept (another engine runs it), and is shown and run as that top. Off and Auto are as they are
 int framegen_capped(int framegen, int dlss_most);
 int framegen_now();
+/// (hookshot) Each present: frame generation off for 120 presents lets its images go (the built-in interpolation's two frames, its
+/// sets of made frames and their lumas and flows: about 112 MB at 2560x1440 2x, 823 MB at 4K 8x; FSR 3.1's frame interpolation's
+/// images too, also while another one is chosen). They were let go only when the window's size changed, so a player who tried it
+/// and turned it off kept them for the run. They are made again when it is turned on. recorded: this present recorded made frames
+/// (counted as on: framegen_idle.h); FSR 3.1's images are counted by this present's own use of FSR, not by recorded. Called after
+/// framegen_queue, so a set this present filled is the display thread's by then
+void framegen_idle(bool recorded);
 /// Records the frame's processing into the present's recording (src: the window texture's view, sw x sh, the crop
 /// x, y, w, h; cover: wide_sides_tick's, this frame's; native_pq: the encoding of that captured present); false when
 /// interpolation cannot run (the present goes to the window as without it)
@@ -23,8 +32,9 @@ bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t
 /// game's own menus, movies and loading screens: vk_dlss.cpp dlss_fg_holds)
 enum class FgMaker { None, BuiltIn, Dlss, Fsr3, DlssPaused };
 FgMaker framegen_maker();
-/// The first frame the last framegen_record made (null when it made none), w x h, GENERAL
-VkImage framegen_made_image(uint32_t* w, uint32_t* h);
+/// The first frame the last framegen_record made (null when it made none), w x h, GENERAL; with RX_VK_SHOT_MADE=all, each
+/// call the next of its made frames in turn, its place in the set in index
+VkImage framegen_made_image(uint32_t* w, uint32_t* h, int* index = nullptr);
 /// (hookshot) The gameplay upscale's picture (its output, at level), recorded right after the upscale wrote it, before the
 /// game draws its HUD into it: copied while AMD FSR 3.1's frame interpolation is asked for, so that framegen_record can mark
 /// the HUD for it (what the game drew over the picture since). Anything else (null, another format or shape) is left alone

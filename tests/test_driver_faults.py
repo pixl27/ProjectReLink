@@ -170,9 +170,11 @@ def main():
     assert "driver_fault_note(p.key)" in build[i_end:]
     assert re.search(r"kBusy\) return gate_busy = true, cold \? \(\*cold = true, VK_NULL_HANDLE\) : VK_NULL_HANDLE;", build), \
         "a busy program answers a cold probe as cold, and a quick build (which does not wait either) with none, both saying busy"
-    # (#1747's retry without the optimizer followed the guard's VK_ERROR_UNKNOWN, which a fault was then: it still does)
-    if "recovered with optimization disabled" in build:
-        assert "(r == VK_ERROR_UNKNOWN || r == kDriverFault)" in build
+    # (#1747's retry without the optimizer followed the guard's VK_ERROR_UNKNOWN, which a fault was then: it still does, and
+    # every other failure but the memory errors and a cold probe's answer; compute pipelines too, in guarded_compute)
+    assert "if (r < 0 && r != VK_ERROR_OUT_OF_HOST_MEMORY && r != VK_ERROR_OUT_OF_DEVICE_MEMORY &&" in build
+    retry = draw[draw.index("VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {"):]
+    assert "again.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;" in retry[:retry.index("\n}\n")]
     # (the file's comment once: in append mode Windows' ftell says 0 until the first write, so the end is sought first)
     note = draw[draw.index("void driver_fault_note(uint64_t key) {"):]
     note = note[:note.index("\n}\n")]

@@ -9,6 +9,9 @@ RUN_ALL_ARGS = ["--cc", "gcc"]
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 
 def wndproc(source):
     start = source.index("static LRESULT CALLBACK wndproc(")
@@ -32,7 +35,7 @@ def main():
         source, executable = Path(temp) / "fixture.c", Path(temp) / "fixture.exe"
         source.write_text(template.replace("/* ACTUAL_WNDPROC */", procedure), encoding="utf-8")
         priority = {"creationflags": getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)}
-        subprocess.run([args.cc, "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(executable)],
+        subprocess.run([args.cc, "-std=c11", "-O0", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", str(source), "-o", str(executable)],
                        check=True, **priority)
         subprocess.run([str(executable)], check=True, **priority)
 

@@ -23,9 +23,13 @@ struct NoteRef {
     uint32_t vattr[16]{};
     uint8_t color_types[8]{};
 };
-/// Every note's reference, read by position (26 KB a note: none is read whole)
-std::vector<NoteRef> pipe_notes_refs();
+/// Every note's reference, read by position (26 KB a note: none is read whole). A walk of the whole file each call: the start's
+/// own uses go through start_note_refs (vk_draw.cpp), which walks once a start. whole: set true when the file was opened and
+/// walked to its end with no read or seek failing (a file missing, held, failing part way or with another stamp gives false)
+std::vector<NoteRef> pipe_notes_refs(bool* whole = nullptr);
+std::unordered_set<uint64_t> program_cache_kept_keys();   // (vk_progcache.cpp: kept program keys, for load-at-create index)
 std::vector<uint64_t> program_cache_compute_keys();   // (vk_progcache.cpp: the kept compute programs, for the first start's warm)
+size_t program_cache_fallback_steps();   // (vk_progcache.cpp: the load at create's steps, for the first start's bar)
 std::string load_fallback_path();   // (hookshot_load_start.txt beside the notes: load_default.h)
 std::string pipe_notes_file();   // (hookshot_pipelines.bin's path)
 /// The note at a place pipe_notes_refs gave, checked as every note read is. False: it does not read, or is not sane
@@ -40,6 +44,8 @@ VkPipeline compute_pipeline_by_module_id(const Program& p, const uint8_t* id, ui
 /// A pipeline made ahead of its first draw: the draw's lookup takes it (graphics_pipeline). False: that key has one already,
 /// and pl is destroyed
 bool pipeline_keep_ready(uint64_t key, VkPipeline pl, const Program* made_from);   // (made_from: graphics_pipeline)
+/// Remember a noted state whose cache probe the waiting draw can take on first use.
+void pipeline_defer(uint64_t key);
 void program_layout(Program& p);   // (ensure_layout)
 /// The compute program variants this install's play dispatched before (hookshot_compute_variants.bin): key, variant
 std::vector<std::pair<uint64_t, uint64_t>> compute_variants_learned();

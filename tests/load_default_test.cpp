@@ -30,6 +30,12 @@ int main(int argc, char** argv) {
     CHECK(choose("", true, false).create && choose("1", true, false).create && choose("yes", false, false).create);
     CHECK(std::strstr(choose(nullptr, false, false).why, "compute fallback"));
     CHECK(std::strstr(choose(nullptr, true, true).why, "hookshot_load_start.txt"));
+    // without the shader preparation (RX_VK_PRECOMPILE=0) start loads nothing before the title: the marker is left aside, and
+    // only the marker (the switch and the compressed cache still decide as above)
+    CHECK(choose(nullptr, true, true, false, false).create && choose(nullptr, false, true, false, false).create);
+    CHECK(std::strstr(choose(nullptr, true, true, false, false).why, "RX_VK_PRECOMPILE=0"));
+    CHECK(!choose("start", true, true, false, false).create && !choose(nullptr, true, true, true, false).create);
+    CHECK(choose(nullptr, true, false, false, false).create);
     // the safety net: the measured good sessions pass, the measured bad ones do not; at the limits it has not fired
     using load_default::Waits;
     using load_default::waits_verdict;

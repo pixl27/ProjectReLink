@@ -5,6 +5,9 @@
    prompts, host/prompts.c). HOS_TEXTS=0: the game's own texts. */
 #include "hos.h"
 #include "hos_paths.h"
+#ifndef HOOKSHOT_ENV_H   /* (env_value_off: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +22,7 @@ int hos_texts_romfs(const char *key, const char *mod, char *out, size_t cap) {
     if (mod) return 0;
     if (off < 0) {
         const char *const e = getenv("HOS_TEXTS");
-        if (InterlockedExchange(&off, e && !atoi(e)) < 0 && e && !atoi(e)) hos_log("texts: HOS_TEXTS=0, the game's own texts");
+        if (InterlockedExchange(&off, e && env_value_off(e)) < 0 && e && env_value_off(e)) hos_log("texts: HOS_TEXTS=0, the game's own texts");
     }
     if (off) return 0;
     char path[MAX_PATH];

@@ -9,7 +9,9 @@
 #include "../host/hold_toggle.h"
 static int toggle_flags, toggle_reset;
 static int controls_case, mouse_mode, native_free = 1, mouse_pointing;
+static int mouse_let_go, game_menu_mouse, side_binds;   /* (the game's menus and the mouse's side buttons: menu_side_case) */
 static int held_keys[256], walk_mode, walk_speed;
+static int player_stamps;   /* (host/nn_hid.c player_used: the input the game menus' cursor hides by; held_input_case) */
 static uint64_t physical_buttons;
 static int InterlockedExchange(int *p, int v) { int old = *p; *p = v; return old; }
 /* API spies must not collide with Windows SDK/import-library names. */
@@ -61,6 +63,7 @@ volatile int hos_nvn_sync_log_on;
 int hos_control_input(uint64_t *buttons, int32_t stick[4]) { (void)stick; *buttons |= bridge_buttons; return bridge_active; }
 static void *at(uint64_t address) { CHECK(address <= 512 - 8); return memory + address; }
 #define GP(a) at(a)
+static void *hos_guest_range(uint64_t a, uint64_t n) { return a <= 512 && n <= 512 - a ? memory + a : NULL; }
 #define G32(a) (*(uint32_t *)at(a))
 #define G64(a) (*(uint64_t *)at(a))
 #define ARG(n) (c->x[n])
@@ -117,10 +120,13 @@ void binds_load(void) {
     key_bind[HOS_KEY_CAM_LEFT][0] = VK_LEFT, key_bind[HOS_KEY_CAM_RIGHT][0] = VK_RIGHT;
     key_bind[HOS_KEY_WALK][0] = VK_CAPITAL;
     key_bind[B_ZL][0] = 'Z';
+    if (side_binds) key_bind[B_A][1] = VK_XBUTTON1, key_bind[B_Y][1] = VK_LBUTTON, key_bind[HOS_KEY_WALK][1] = VK_XBUTTON2;
 }
 /* the native mouse look (no camera found: the motion goes to mouse_stick) and the mouse's sensitivity, which
    read_input calls */
-int hos_mouse_native(void) { return controls_case ? (native_free ? 1 : -1) : -1; }
+int hos_mouse_native(void) { return controls_case ? (mouse_let_go ? 0 : native_free ? 1 : -1) : -1; }
+/* (host/display.c: one of the game's menus has the mouse, the Insert menu closed) */
+int hos_mouse_in_game_menu(void) { return game_menu_mouse; }
 void hos_mouse_native_free(int free) { native_free = free; }
 void hos_mouse_native_stick(int held) { (void)held; }
 static void mouse_setup(void) {}
@@ -142,6 +148,8 @@ static void packet(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx) {
     npad_states(&context);
     CHECK(context.x[0] == 2);
     expected_sampling++;
+    /* (the state carries the buttons alone, whatever the sticks: no direction bits 16-23, which the game's controllers take
+       as the D-pad, so A while running forward did not roll) */
     for (int i = 0; i < 2; i++) {
         const uint64_t address = 64 + (uint64_t)i * STATE_SIZE;
         CHECK(G64(address) == (uint64_t)(expected_sampling - i));
@@ -240,6 +248,73 @@ static void hold_background_case(void) {
     physical_buttons = 0; packet(1ULL << B_ZL, 0, 0, 0);
     physical_buttons = 1ULL << B_ZL; packet(0, 0, 0, 0);
     physical_buttons = 0; packet(0, 0, 0, 0);
+}
+
+/* One of the game's menus takes the mouse: its capture ends, and the left, right and middle buttons are that menu's
+   clicks (host/display.c game_menu_press). The side buttons are no menu's, so they stay their controls' there, as a
+   key does: Mouse 4 on A confirms a choice of the text box. Through the real read_input. */
+static void menu_side_case(void) {
+    const uint64_t a = 1ULL << B_A;
+    const int tilt = 32767 * 35 / 100;
+    front = controls_case = side_binds = 1;
+    mouse_mode = 1;   /* (Native: the fake camera has the capture until mouse_let_go) */
+    walk_speed = 35;
+    packet(0, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 1; packet(a, 0, 0, 0);   /* in play, the mouse captured: Mouse 4 is A */
+    held_keys[VK_XBUTTON1] = 0; packet(0, 0, 0, 0);
+    mouse_let_go = game_menu_mouse = 1; packet(0, 0, 0, 0);   /* a menu of the game's takes the mouse */
+    held_keys[VK_XBUTTON1] = 1; packet(a, 0, 0, 0);   /* Mouse 4 is still A there */
+    packet(a, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 0; packet(0, 0, 0, 0);
+    held_keys[VK_LBUTTON] = 1; packet(0, 0, 0, 0);    /* the left button is the menu's click, not Y */
+    held_keys[VK_LBUTTON] = 0; packet(0, 0, 0, 0);
+    held_keys['W'] = held_keys[VK_XBUTTON2] = 1; packet(0, 0, tilt, 0);   /* a keys-only control on Mouse 5: Walk */
+    held_keys[VK_XBUTTON2] = 0; packet(0, 0, 32767, 0);
+    held_keys['W'] = 0; packet(0, 0, 0, 0);
+    /* held from the play into the menu and back: one press, as a key's */
+    mouse_let_go = game_menu_mouse = 0; packet(0, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 1; packet(a, 0, 0, 0);
+    mouse_let_go = game_menu_mouse = 1; packet(a, 0, 0, 0);
+    mouse_let_go = game_menu_mouse = 0; packet(a, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 0; packet(0, 0, 0, 0);
+    /* the mouse free in play (Esc): no button of it is a control, and one held as a menu opens waits to be let go */
+    mouse_let_go = 1; packet(0, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 1; packet(0, 0, 0, 0);
+    game_menu_mouse = 1; packet(0, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 0; packet(0, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 1; packet(a, 0, 0, 0);
+    game_menu_mouse = 0; packet(0, 0, 0, 0);          /* the menu closed, the mouse still free: no longer A */
+    held_keys[VK_XBUTTON1] = 0; packet(0, 0, 0, 0);
+    /* Mouse camera Off: the mouse is never the game's, in its menus neither */
+    mouse_mode = 2; game_menu_mouse = 1; packet(0, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 1; packet(0, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 0; packet(0, 0, 0, 0);
+    /* As the stick: the same as Native (the fake stick never has the capture) */
+    mouse_mode = 0; packet(0, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 1; packet(a, 0, 0, 0);
+    held_keys[VK_XBUTTON1] = 0; packet(0, 0, 0, 0);
+}
+
+/* The player's input hides the game menus' cursor until the mouse moves (host/display.c gm_cursor_shown), so an input
+   counts when it goes down, not at every read while it stays down: the ocarina's song sheet is open while ZL is held,
+   and a ZL held on a pad or the Z key counted at every read, so the cursor the mouse had just shown was hidden again
+   before the menu used it and its hover failed. Through the real read_input. */
+static void held_input_case(void) {
+    const uint64_t zl = 1ULL << B_ZL, l = 1ULL << B_L;
+    front = controls_case = 1;
+    packet(0, 0, 0, 0); CHECK(player_stamps == 0);
+    held_keys['Z'] = 1; packet(zl, 0, 0, 0); CHECK(player_stamps == 1);   /* a key goes down: the player's input */
+    for (int i = 0; i < 5; i++) packet(zl, 0, 0, 0);
+    CHECK(player_stamps == 1);                                            /* held: not at every read */
+    held_keys['Z'] = 0; packet(0, 0, 0, 0); CHECK(player_stamps == 1);    /* let go: not an input */
+    held_keys['Z'] = 1; packet(zl, 0, 0, 0); CHECK(player_stamps == 2);   /* down again: one more */
+    held_keys['Z'] = 0; packet(0, 0, 0, 0);
+    physical_buttons = zl; packet(zl, 0, 0, 0); CHECK(player_stamps == 3);   /* a pad's button the same */
+    for (int i = 0; i < 5; i++) packet(zl, 0, 0, 0);
+    CHECK(player_stamps == 3);
+    physical_buttons = zl | l; packet(zl | l, 0, 0, 0); CHECK(player_stamps == 4);   /* a second one, the first held */
+    physical_buttons = l; packet(l, 0, 0, 0); CHECK(player_stamps == 4);
+    physical_buttons = 0; packet(0, 0, 0, 0); CHECK(player_stamps == 4);
 }
 
 /* Walk reads its raw key before the Npad button latch. Neither toggle drives the other. */
@@ -378,6 +453,16 @@ int main(int argc, char **argv) {
         if (!strcmp(name, "hold-mouse")) hold_mouse_case();
         else hold_background_case();
         puts("PASS: latch mouse/background routing");
+        free(memory); return 0;
+    }
+    if (!strcmp(name, "menu-side-buttons")) {
+        menu_side_case();
+        puts("PASS: the mouse's side buttons stay their controls' while one of the game's menus has the mouse");
+        free(memory); return 0;
+    }
+    if (!strcmp(name, "held-input")) {
+        held_input_case();
+        puts("PASS: an input held down is the player's input when it goes down, not at every read");
         free(memory); return 0;
     }
     if (!strcmp(name, "hold-taps")) {

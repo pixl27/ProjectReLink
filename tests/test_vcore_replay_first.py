@@ -17,7 +17,7 @@ RUN_ALL_ARGS = ["--cxx", "g++"]
 ROOT = Path(__file__).resolve().parents[1]
 FUNCTIONS = ("static int vcp(const HosThread *t) {", "static int vc_better(", "static unsigned vc_allowed(", "static void vc_take(",
              "static void vc_dequeue(", "static uint64_t vc_chain_key(", "static void vc_grant(",
-             "static void vc_release(", "static void vc_yield(")
+             "static void vc_release_locked(", "static void vc_release(", "static void vc_yield(")
 
 
 def block(source, marker):

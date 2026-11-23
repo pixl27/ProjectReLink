@@ -91,3 +91,18 @@ layout. Include the controller, Hookshot bindings, and the game's own control se
 The RX 9060 XT report [#1986](https://github.com/NotRexed/Hookshot/issues/1986#issuecomment-6781829223) was redirected
 to [#1006](https://github.com/NotRexed/Hookshot/issues/1006). Check that tracker and the README's
 [texture-workaround guidance](../readme.md#amd-texture-workaround) for current advice and tradeoffs.
+
+### Windows: HDR is on, but the game stays SDR
+
+The **HDR** row in the **Graphics** tab of the menu (<kbd>F1</kbd>) says why under its help ("The picture stays
+SDR: ..."), and `hookshot_log.txt` has the same in its `vk: HDR:` line.
+
+1. **"HDR is off for this display":** turn on **Use HDR** for the display the game is on, in Windows' **Settings >
+   System > Display**.
+2. **"Windows has HDR on, but the graphics driver offers the game no HDR output":** Windows' desktop is in HDR, but
+   the driver doesn't offer HDR to Vulkan games. Updating the driver may not be enough: reinstall it with a clean
+   install (NVIDIA: run the driver's installer from nvidia.com, choose **Custom**, tick **Perform a clean
+   installation**), then restart the PC. A clean install resets the driver's settings, such as the output colour
+   depth. If the line stays, [report it](https://git.notrexed.dev/Hookshot/Hookshot/issues/new/choose) with your graphics card, your display and `hookshot_log.txt`.
+3. **Update the graphics driver** if neither fits.
+

@@ -120,7 +120,7 @@ def split(gen, pieces, keep=None):
         os.remove(old)
     with open(whole, encoding="utf-8", newline="") as f:
         text = f.read()
-    marks = list(HEAD.finditer(text))
+    marks = list(lifted_c.definitions(text))
     if not marks:
         raise SystemExit("split_hot: no functions in %s" % whole)
     preamble = text[:marks[0].start()]

@@ -55,8 +55,8 @@ void logf(const char*,...){++logged;}
 int faults_noted=0; void note_driver_fault(){++faults_noted;}
 #define CHECK(c) do {if(!(c)){std::fprintf(stderr,"CHECK failed line %d: %s\n",__LINE__,#c);std::exit(7);}}while(0)
 const VkComputePipelineCreateInfo* expected_ci=nullptr; VkPipeline* expected_out=nullptr;
-void pin_subgroup(decltype(VkComputePipelineCreateInfo::stage)&stage,unsigned x){CHECK(x==32);CHECK(stage.stage==12);}
-void pin_compute(decltype(VkComputePipelineCreateInfo::stage)&stage,const Program&p){pin_subgroup(stage,p.workgroup[0]);}
+void pin_subgroup(decltype(VkComputePipelineCreateInfo::stage)&stage,unsigned x,unsigned long long n){CHECK(x==32);CHECK(n==32);CHECK(stage.stage==12);}
+void pin_compute(decltype(VkComputePipelineCreateInfo::stage)&stage,const Program&p){pin_subgroup(stage,p.workgroup[0],1ull*p.workgroup[0]*p.workgroup[1]*p.workgroup[2]);}
 VkResult vkCreateComputePipelines(uintptr_t device,VkPipelineCache cache,unsigned count,const VkComputePipelineCreateInfo*ci,const void*allocator,VkPipeline*out){
  CHECK(device==dev.device&&cache==pcache&&count==1&&allocator==nullptr&&out);
  CHECK(ci&&ci->sType==10&&ci->stage.sType==11&&ci->stage.stage==12&&ci->stage.module==0x2468&&ci->layout==0x1357);

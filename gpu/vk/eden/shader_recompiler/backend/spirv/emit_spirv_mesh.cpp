@@ -10,6 +10,7 @@
 // epilogue (reached by every invocation, see structured_control_flow.cpp) hands them to Vulkan.
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <span>
 
@@ -23,6 +24,14 @@
 namespace Shader::Backend::SPIRV {
 namespace {
 void Barrier(EmitContext& ctx) {
+    if (ctx.mesh_attributes_global) {   // (hookshot: the attribute region in device memory, its writes seen across the workgroup too)
+        ctx.OpControlBarrier(ctx.Const(static_cast<u32>(spv::Scope::Workgroup)),
+                             ctx.Const(static_cast<u32>(spv::Scope::Workgroup)),
+                             ctx.Const(static_cast<u32>(spv::MemorySemanticsMask::AcquireRelease |
+                                                        spv::MemorySemanticsMask::WorkgroupMemory |
+                                                        spv::MemorySemanticsMask::UniformMemory)));
+        return;
+    }
     ctx.OpControlBarrier(ctx.Const(static_cast<u32>(spv::Scope::Workgroup)),
                          ctx.Const(static_cast<u32>(spv::Scope::Workgroup)),
                          ctx.Const(static_cast<u32>(spv::MemorySemanticsMask::AcquireRelease |
@@ -169,6 +178,30 @@ void StoreWord(EmitContext& ctx, Id pointer, Id value) {
     ctx.OpStore(pointer, value, spv::MemoryAccessMask::Aligned, 4U);
 }
 
+/// (hookshot, mma_layout.h mesh_fallback_global_attributes) word `index` of the attribute region: in the workgroup's pool slot, or in
+/// workgroup memory as before
+Id LoadAttribute(EmitContext& ctx, Id index) {
+    if (ctx.mesh_attributes_global) {
+        return LoadWord(ctx, BufferWordAt(ctx, ctx.mesh_attribute_base, index));
+    }
+    return ctx.OpLoad(ctx.U32[1], SharedWord(ctx, ctx.mesh_attributes, index));
+}
+
+void StoreAttribute(EmitContext& ctx, Id index, Id value) {
+    if (ctx.mesh_attributes_global) {
+        StoreWord(ctx, BufferWordAt(ctx, ctx.mesh_attribute_base, index), value);
+        return;
+    }
+    ctx.OpStore(SharedWord(ctx, ctx.mesh_attributes, index), value);
+}
+
+/// (the same) the pool's word `word`: 0 the ticket counter, 1 + slot the generation that may take that slot next
+Id PoolWord(EmitContext& ctx, Id word) {
+    const Id pool{ctx.OpIAdd(ctx.U64, PushU64(ctx, ctx.mesh_fallback_records_member_index),
+                             ctx.Constant(ctx.U64, u64{MESH_FALLBACK_POOL_OFFSET}))};
+    return BufferWordAt(ctx, pool, word);
+}
+
 Id WorkgroupId(EmitContext& ctx) {
     return ctx.OpCompositeExtract(ctx.U32[1], ctx.OpLoad(ctx.U32[3], ctx.workgroup_id), 0U);
 }
@@ -253,7 +286,7 @@ void WriteFallbackLines(EmitContext& ctx, Id base, Id taken) {
                                                ctx.OpISub(ctx.U32[1], line, ctx.Const(vertex_lines)))};
             const Id index{Clamped(ctx, ctx.OpSelect(ctx.U32[1], of_vertex, vertex_index, primitive_index),
                                    ctx.mesh_attribute_words)};
-            const Id line_value{ctx.OpLoad(ctx.U32[1], SharedWord(ctx, ctx.mesh_attributes, index))};
+            const Id line_value{LoadAttribute(ctx, index)};
             const Id value{ctx.OpSelect(ctx.U32[1], ctx.OpIEqual(ctx.U1, word, ctx.u32_zero_value), ctx.Const(1U), line_value)};
             StoreWord(ctx, BufferWordAt(ctx, records, ctx.OpIAdd(ctx.U32[1], at, ctx.OpIMul(ctx.U32[1], word, ctx.Const(fit)))),
                       value);
@@ -344,7 +377,7 @@ void MeshFallbackEpilogue(EmitContext& ctx) {
                                            ctx.OpISub(ctx.U32[1], line, ctx.Const(vertex_lines)))};
         const Id index{Clamped(ctx, ctx.OpSelect(ctx.U32[1], of_vertex, vertex_index, primitive_index),
                                ctx.mesh_attribute_words)};
-        const Id line_value{ctx.OpLoad(ctx.U32[1], SharedWord(ctx, ctx.mesh_attributes, index))};
+        const Id line_value{LoadAttribute(ctx, index)};
         const Id value{ctx.OpSelect(ctx.U32[1], ctx.OpIEqual(ctx.U1, word, ctx.u32_zero_value), ctx.Const(1U), line_value)};
         StoreWord(ctx, BufferWordAt(ctx, records, ctx.OpIAdd(ctx.U32[1], first, at)), value);
         ctx.OpBranch(next);
@@ -353,6 +386,19 @@ void MeshFallbackEpilogue(EmitContext& ctx) {
         ctx.OpBranch(header);
         ctx.AddLabel(done);
     });
+    if (ctx.mesh_attributes_global) {
+        // (every thread has read what it copies from the region: thread 0 hands the slot on to the ticket a pool's length later)
+        Barrier(ctx);
+        If(ctx, ctx.OpIEqual(ctx.U1, LocalInvocation(ctx), ctx.u32_zero_value), [&] {
+            const Id ticket{ctx.mesh_attribute_ticket};
+            const Id slot{ctx.OpBitwiseAnd(ctx.U32[1], ticket, ctx.Const(MESH_FALLBACK_POOL_SLOTS - 1))};
+            const Id next{ctx.OpIAdd(ctx.U32[1], ctx.OpShiftRightLogical(ctx.U32[1], ticket, ctx.Const(MESH_FALLBACK_POOL_SLOT_SHIFT)),
+                                     ctx.Const(1U))};
+            // (an exchange: Sirit's OpAtomicStore is emitted a word too long, and spirv-val and the driver reject it)
+            ctx.OpAtomicExchange(ctx.U32[1], PoolWord(ctx, ctx.OpIAdd(ctx.U32[1], slot, ctx.Const(1U))),
+                                 ctx.Const(static_cast<u32>(spv::Scope::Device)), ctx.u32_zero_value, next);
+        });
+    }
 }
 
 void StorePosition(EmitContext& ctx, u32 element, Id value) {
@@ -649,7 +695,7 @@ Id EmitIsbeReadOutput(EmitContext& ctx, Id address) {
     if (ctx.stage == Stage::Task) {
         return ctx.OpLoad(ctx.U32[1], PayloadWord(ctx, index));
     }
-    return ctx.OpLoad(ctx.U32[1], SharedWord(ctx, ctx.mesh_attributes, Clamped(ctx, index, ctx.mesh_attribute_words)));
+    return LoadAttribute(ctx, Clamped(ctx, index, ctx.mesh_attribute_words));
 }
 
 void EmitIsbeWriteAttribute(EmitContext& ctx, Id address, Id value) {
@@ -658,8 +704,7 @@ void EmitIsbeWriteAttribute(EmitContext& ctx, Id address, Id value) {
         StoreWord(ctx, PayloadWord(ctx, index), value);
         return;
     }
-    ctx.OpStore(SharedWord(ctx, ctx.mesh_attributes, Clamped(ctx, index, ctx.mesh_attribute_words)),
-                value);
+    StoreAttribute(ctx, Clamped(ctx, index, ctx.mesh_attribute_words), value);
 }
 
 void EmitIsbeWriteMapU8(EmitContext& ctx, Id address, Id value) {
@@ -679,6 +724,16 @@ void EmitIsbeWriteMapU32(EmitContext& ctx, const IR::Value& address, Id value) {
 }
 
 void EmitMeshPrologue(EmitContext& ctx) {
+    if (ctx.stage == Stage::Mesh && ctx.mesh_fallback) {
+        // (hookshot) the epilogue's loop index (MeshFallbackEpilogue): a function's variables open its first block, and the
+        // prologue is the first thing in it. Before anything else here
+        ctx.mesh_fallback_epilogue_word = ctx.AddLocalVariable(
+            ctx.TypePointer(spv::StorageClass::Function, ctx.U32[1]), spv::StorageClass::Function);
+        ctx.mesh_fallback_epilogue_line = ctx.AddLocalVariable(   // (WriteFallbackLines' inner loop)
+            ctx.TypePointer(spv::StorageClass::Function, ctx.U32[1]), spv::StorageClass::Function);
+    }
+    // (hookshot, mma_layout.h mesh_fallback_shared_warp) the shared warp's lane and its words at zero, before the barriers below
+    WarpPrologue(ctx);
     if (ctx.stage == Stage::Task) {
         // (hookshot) the count starts at nothing: task payload memory holds whatever the last task left, and a task that keeps no meshlet
         // never writes it. The barrier: every thread has done this before any of them goes on to write the real count
@@ -688,19 +743,25 @@ void EmitMeshPrologue(EmitContext& ctx) {
     if (ctx.stage != Stage::Mesh) {
         return;
     }
-    if (ctx.mesh_fallback) {
-        // (hookshot) the epilogue's loop index (MeshFallbackEpilogue): a function's variables open its first block, and the
-        // prologue is the first thing in it. Before anything else here
-        ctx.mesh_fallback_epilogue_word = ctx.AddLocalVariable(
-            ctx.TypePointer(spv::StorageClass::Function, ctx.U32[1]), spv::StorageClass::Function);
-        ctx.mesh_fallback_epilogue_line = ctx.AddLocalVariable(   // (WriteFallbackLines' inner loop)
-            ctx.TypePointer(spv::StorageClass::Function, ctx.U32[1]), spv::StorageClass::Function);
-    }
     if (ctx.mesh_fallback && ctx.runtime_info.mesh_fallback_task) {
         // (hookshot) the slot its task gave this workgroup, from the map at its index of the dispatch (TaskEpilogue). Read here,
         // in the entry block, it serves every use; a load, no branch (see below)
         ctx.mesh_fallback_slot =
             LoadWord(ctx, BufferWordAt(ctx, PushU64(ctx, ctx.mesh_fallback_payload_member_index), WorkgroupId(ctx)));
+    }
+    if (ctx.mesh_attributes_global) {
+        // (hookshot, mma_layout.h mesh_fallback_global_attributes) the workgroup's pool slot, before anything writes the region:
+        // thread 0 takes a ticket (a call: no branch here), every thread reads it after the barrier
+        ctx.OpFunctionCall(ctx.void_id, ctx.mesh_attribute_claim, std::array{LocalInvocation(ctx)});
+        Barrier(ctx);
+        ctx.mesh_attribute_ticket = ctx.OpLoad(ctx.U32[1], ctx.mesh_attribute_ticket_shared);
+        const Id slot{ctx.OpBitwiseAnd(ctx.U32[1], ctx.mesh_attribute_ticket, ctx.Const(MESH_FALLBACK_POOL_SLOTS - 1))};
+        const Id offset{ctx.OpIMul(ctx.U32[1], slot, ctx.Const(ctx.mesh_attribute_slot_bytes))};
+        ctx.mesh_attribute_base =
+            ctx.OpIAdd(ctx.U64,
+                       ctx.OpIAdd(ctx.U64, PushU64(ctx, ctx.mesh_fallback_records_member_index),
+                                  ctx.Constant(ctx.U64, u64{MESH_FALLBACK_POOL_OFFSET} + MESH_FALLBACK_POOL_HEADER_BYTES)),
+                       ctx.OpUConvert(ctx.U64, offset));
     }
     // (local) The stage buffer's map and attribute regions start at zero, as they come out on NVIDIA: workgroup memory holds
     // whatever the last workgroup on that unit left, and a vertex or an index byte the program left unwritten was that. On an
@@ -721,6 +782,12 @@ void EmitMeshPrologue(EmitContext& ctx) {
         };
         zero_all(ctx.mesh_map, ctx.mesh_map_bytes);
         zero_all(ctx.mesh_attributes, ctx.mesh_attribute_words);
+        if (ctx.mesh_attributes_global) {   // (hookshot: the region in its pool slot, zeroed the same way)
+            for (u32 first = 0; first < ctx.mesh_attribute_words; first += ctx.mesh_threads) {
+                StoreAttribute(ctx, Clamped(ctx, ctx.OpIAdd(ctx.U32[1], invocation, ctx.Const(first)), ctx.mesh_attribute_words),
+                               ctx.u32_zero_value);
+            }
+        }
     }
     if (ctx.mesh_fallback && !ctx.runtime_info.mesh_fallback_task && ctx.mesh_threads) {
         // (a mesh program with no task reads its workgroup index from the payload: NVN's hardware puts it at byte 0)

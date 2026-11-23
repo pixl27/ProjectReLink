@@ -26,6 +26,9 @@ from pathlib import Path
 RUN_ALL_ARGS = ["--cc", "gcc"]
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
 sys.path.insert(0, str(ROOT / "nx2"))
 import oot_patches  # noqa: E402
 
@@ -286,7 +289,7 @@ def main():
         (tmp / "oot_heap_retry.c").write_text((ROOT / "host" / "oot_heap_retry.c").read_text(encoding="utf-8"),
                                               encoding="utf-8")
         exe = tmp / ("fixture.exe" if os.name == "nt" else "fixture")
-        subprocess.run([cc, "-std=gnu11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", str(tmp), str(tmp / "fixture.c"),
+        subprocess.run([cc, "-std=gnu11", "-O1", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", "-I", str(tmp), str(tmp / "fixture.c"),
                         str(tmp / "oot_heap_retry.c"), "-o", str(exe)], check=True)
         env = {k: v for k, v in os.environ.items() if not k.startswith("HOS_GPU_ALLOC")}
         for mode, extra in (("", {}), ("off", {"HOS_GPU_ALLOC_RETRY": "0"}), ("refuse", {"HOS_GPU_ALLOC_TEST_FAIL": "2"}),

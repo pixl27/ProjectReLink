@@ -173,9 +173,10 @@ VkImageView texture_view(Texture *t, const nvn_tex *, const nvn_view *v, VkImage
     return missing_output_view ? 0 : (VkImageView)102;
 }
 static bool typed_upscale(VkCommandBuffer, VkImageView input, VkImageView output, Texture *t,
-                          uint32_t level, uint64_t, const char *, bool temporal) {
+                          uint32_t level, uint64_t k, const char *, bool temporal) {
+    // (temporal: the PsychoV35 TAAU path, and the gameplay networks' RGB9E5 stand-in, its edges smoothed)
     assert(input == (VkImageView)101 && output == (VkImageView)102 && t == &dst && level == 0 &&
-           temporal == psycho);
+           temporal == (psycho || k == 0xfd029a317a9a4b94ull || k == 0x9dc98871eb7fc101ull));
     typed_calls++;
     return pipeline_ok;
 }

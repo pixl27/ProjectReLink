@@ -35,8 +35,8 @@ and whatever the GPU idles between parts.
 - **The game's frame wait** (above) is the game's own: on the console it keeps the game one frame ahead of the GPU at
   most, puts its reads of GPU results (the exposure meter, the culling tables) one frame after their frame, and guards the
   per-frame memory it fills two frames ahead in turn.
-- **Whole frames** (the frame gate, `gate_ready`; `RX_VK_FRAME_GATE=0` turns it off): the render thread starts a frame's
-  jobs at its present, and the present is handed over after the CPU's signal. Replaying a frame's first jobs before the
+- **Whole frames** (the frame gate, `gate_ready`; a test now, `RX_VK_FRAME_GATE=1`, off by default since #1121's change): the
+  render thread starts a frame's jobs at its present, and the present is handed over after the CPU's signal. Replaying a frame's first jobs before the
   signal drew the lit scene black for a frame (15 flashes a session in the Market with the gate off or with the present
   still handed over before the signal, 0 with both: the comment above `gate_upto`).
 - **One present ahead** (`RX_VK_PRESENTS_AHEAD`, 1): present k+1 is not accepted while present k is not replayed.

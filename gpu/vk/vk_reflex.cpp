@@ -34,15 +34,19 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 
 #include "hookshot_env.h"
 #include "vk_menu.h"
+#include "vk_framegen.h"   // (framegen_on: the cap under FIFO, fifo_min_interval_us)
 #include "vk_work.h"   // (last: RX_VK_RECORDER=defer drains before the latency-sleep wait; =thread does not need to, the driver signals it)
 
 namespace mkwvk {
+
+int display_refresh_mhz();   // (vk_main.cpp: the window's display, mHz; 0 when not known)
 
 namespace {
 
@@ -62,6 +66,7 @@ struct Reflex {
     uint64_t wake_value = 0;
     uint64_t id = 1;                     // (the frame's present id)
     int mode = -1;                       // (as set on the swapchain)
+    uint32_t interval_us = 0;            // (the minimum frame interval set with it: fifo_min_interval_us)
     bool frame_marked = false;           // (this frame's start markers given: its other markers count)
     VkPresentIdKHR pid{VK_STRUCTURE_TYPE_PRESENT_ID_KHR};
     uint64_t pid_value = 0;              // (the present id the present carries: the frame it shows)
@@ -94,16 +99,50 @@ void mark(VkLatencyMarkerNV m, uint64_t id = 0) {
     r.marker(dev.device, r.swapchain, &i);
 }
 
-void apply_mode() {
+// doc: docs/design.md#13-frame-generations-presents-as-rules (rule 6: under FIFO the made frames do not queue)
+/// (hookshot) Under FIFO (V-Sync On; Auto with DLSS Frame Gen) with a fixed frame generation multiplier, the game's frames
+/// no faster than the multiplier's share of refresh - refresh^2/3600: 157 a second at 165 Hz, the rate NVIDIA's own Reflex
+/// keeps a G-SYNC display under with V-Sync, RX_VK_FG_FIFO_CAP=1. At the refresh or past it FIFO shows one frame a refresh
+/// and the sets queue
+/// behind it: an RTX 5090 at 165 Hz showed the game frame 40-51 ms after its hand-over at 3x on main and 65-82 ms with each
+/// frame at its own time, against 15 and 22 ms at 2x, under the refresh (the timeline's latency A/B, RX_VK_FG_LATENCY_LOG).
+/// 0: no minimum (not FIFO, no fixed multiplier, no frames made lately (DLSS-G paused in the game's menus and movies, which
+/// then keep the game's own rate), or the refresh not known). On the game's thread before Reflex's lock: once a second
+/// display_refresh_mhz asks Windows
+uint32_t fifo_min_interval_us() {
+    // (opt-in: on a display of a fixed refresh, frames a little under it leave a refresh without a new frame several
+    // times a second (at 165 Hz, 7), and the game cannot tell a G-SYNC or FreeSync display from one. Off: display_main's
+    // catch-up alone, vk_framegen.cpp fifo_catch_up)
+    static const char* cap_env = getenv("RX_VK_FG_FIFO_CAP");
+    if (!cap_env || !*cap_env || env_value_off(cap_env)) return 0;
+    const int framegen = framegen_now();   // (the multiplier as it runs: DLSS FG's runtime caps a saved 8x at 6x)
+    if (dev.swap_mode != VK_PRESENT_MODE_FIFO_KHR || framegen < 2 || !framegen_on()) return 0;
+    const FgMaker made_by = framegen_maker();
+    if (made_by == FgMaker::None || made_by == FgMaker::DlssPaused) return 0;
+    const int mhz = display_refresh_mhz();
+    if (mhz <= 0) return 0;
+    const double hz = mhz / 1000.0, most = hz - hz * hz / 3600.0;
+    return (uint32_t)std::ceil(1e6 * framegen / most);
+}
+
+/// With r.mu held: the sleep mode the menu's row asks for, with that minimum (fifo_min_interval_us, from before the lock)
+void apply_mode(uint32_t minimum) {
     Reflex& r = rx();
     const int want = wanted_mode();
-    if (want == r.mode) return;
+    const uint32_t interval = want > 0 ? minimum : 0;
+    if (want == r.mode && interval == r.interval_us) return;
     VkLatencySleepModeInfoNV m{VK_STRUCTURE_TYPE_LATENCY_SLEEP_MODE_INFO_NV};
-    m.lowLatencyMode = want >= 1, m.lowLatencyBoost = want == 2, m.minimumIntervalUs = 0;
+    m.lowLatencyMode = want >= 1, m.lowLatencyBoost = want == 2, m.minimumIntervalUs = interval;
     const VkResult res = r.set_mode(dev.device, r.swapchain, &m);
-    logf("vk: NVIDIA Reflex: %s%s", want == 0 ? "off" : want == 1 ? "on" : "on + boost",
-         res == VK_SUCCESS ? "" : " (the driver refused the sleep mode)");
-    r.mode = want;
+    if (want != r.mode)
+        logf("vk: NVIDIA Reflex: %s%s", want == 0 ? "off" : want == 1 ? "on" : "on + boost",
+             res == VK_SUCCESS ? "" : " (the driver refused the sleep mode)");
+    if (interval && interval != r.interval_us)
+        logf("vk: NVIDIA Reflex: under V-Sync with frame generation, the game's frames at most %.1f a second (%u us apart), so "
+             "the made frames stay under the display's refresh", 1e6 / interval, interval);
+    else if (!interval && r.interval_us)
+        logf("vk: NVIDIA Reflex: no minimum between the game's frames");
+    r.mode = want, r.interval_us = interval;
 }
 
 void log_timings() {
@@ -201,7 +240,7 @@ void reflex_swapchain_created(VkSwapchainKHR swapchain) {
     ++r.swapchain_generation;
     r.swapchain = swapchain, r.mode = -1, r.frame_marked = false, r.latency = r.latency_next;
     r.last_present_id = r.presenting = 0;   // (a new swapchain's present ids start again)
-    if (r.latency) apply_mode();
+    if (r.latency) apply_mode(r.interval_us);   // (the next frame's sleep sets the minimum for this chain)
     else if (was) logf("vk: NVIDIA Reflex: off");
 }
 
@@ -291,11 +330,12 @@ void reflex_presented() {
 void reflex_sleep() {
     Reflex& r = rx();
     uint64_t generation, value;
+    const uint32_t minimum = fifo_min_interval_us();   // (before the lock: it may ask Windows)
     {
         std::lock_guard lk(r.mu);
         if (!on()) return;
         generation = r.swapchain_generation;
-        apply_mode();   // (the menu's row may have changed)
+        apply_mode(minimum);   // (the menu's row, or the minimum, may have changed)
         if (r.frame_marked) log_timings(), r.id++;
         VkLatencySleepInfoNV s{VK_STRUCTURE_TYPE_LATENCY_SLEEP_INFO_NV};
         s.signalSemaphore = r.wake, s.value = ++r.wake_value;

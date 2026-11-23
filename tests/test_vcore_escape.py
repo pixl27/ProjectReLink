@@ -26,6 +26,9 @@ RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 
 def block(source, marker):
     start = source.index(marker)
@@ -73,7 +76,6 @@ typedef enum { RelationProcessorCore } LOGICAL_PROCESSOR_RELATIONSHIP;
 typedef struct { LOGICAL_PROCESSOR_RELATIONSHIP Relationship; } SYSTEM_LOGICAL_PROCESSOR_INFORMATION;
 static BOOL GetLogicalProcessorInformation(SYSTEM_LOGICAL_PROCESSOR_INFORMATION *info, DWORD *len) { (void)info, (void)len; return 0; }
 static int hos_reserved_cpus(void) { return 0; }
-static int env_on(const char *name) { const char *e = getenv(name); return e && *e && *e != '0'; }   /* (hookshot_env.h's rule, in short) */
 static int sleeps;
 static void (*on_sleep)(void);   /* (what the other threads do during one look: only the test sets it) */
 /* (no other thread runs here, except what on_sleep does: a wait for a core lets the clock go on, 1 ms a look, as the real one
@@ -86,7 +88,8 @@ static BOOL SleepConditionVariableSRW(PCONDITION_VARIABLE cv, PSRWLOCK lk, DWORD
     return 1;
 }
 static void WakeConditionVariable(PCONDITION_VARIABLE cv) { (void)cv; }
-static void AcquireSRWLockExclusive(PSRWLOCK l) { (void)l; }
+static unsigned locks;
+static void AcquireSRWLockExclusive(PSRWLOCK l) { (void)l; ++locks; }
 static void ReleaseSRWLockExclusive(PSRWLOCK l) { (void)l; }
 @STRUCT@
 static HosThread *cur;
@@ -179,6 +182,13 @@ int main(int argc, char **argv) {
     HosThread h0, h1, t, u;
     thread(&h0, "holder0", 16, 1), thread(&h1, "holder1", 16, 2), thread(&t, "waiter", 16, 3);
 
+    cur = &h0;
+    hos_vcore_back();
+    const unsigned before_yield = locks;
+    hos_vcore_yield();
+    check(locks == before_yield && h0.vc_held, "an uncontended guest yield must keep its core without a scheduler lock");
+    hos_vcore_away();
+
     escape(&t, &h0, &h1);   /* a block of the escaped thread (hos_sleep_ns, hos_thread_wait, the NVN waits, ...) */
     const int away = hos_vcore_away();
     check(away == 1, "hos_vcore_away tells an escaped thread to take a core after its block");
@@ -258,7 +268,7 @@ def main():
         folder = Path(temporary)
         (folder / "fixture.cpp").write_text(fixture, encoding="utf-8")
         exe = folder / ("fixture.exe" if os.name == "nt" else "fixture")
-        subprocess.run([compiler, "-std=c++17", "-O1", "-w", str(folder / "fixture.cpp"), "-o", str(exe)], check=True,
+        subprocess.run([compiler, "-std=c++17", "-O1", "-w", "-include", ENV_ON_H, str(folder / "fixture.cpp"), "-o", str(exe)], check=True,
                        timeout=120)
         result = subprocess.run([str(exe)], capture_output=True, text=True, timeout=30)
         print(result.stdout, end="")

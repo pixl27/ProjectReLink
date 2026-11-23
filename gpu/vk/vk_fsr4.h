@@ -17,6 +17,8 @@ FsrWhy fsr4_why();
 /// Loads AMD's library once and asks it for an FSR 4 upscaler for this device, so fsr4_why knows before the first upscale
 /// (the menu, when it opens). Nothing in a build without FSR, or before the device is made
 void fsr4_probe();
+/// Prepare the supported FSR 4 pipeline variants during --prepare-shaders, using an offscreen frame.
+void fsr4_prepare_shaders();
 /// The window closing (mkwvk_close_asked, before the pipeline cache's save): the tuned layers' background builds stopped,
 /// the one in the driver waited for (10 s at most). Nothing in a build without FSR
 void fsr4_close();

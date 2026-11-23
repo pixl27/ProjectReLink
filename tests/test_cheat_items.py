@@ -71,6 +71,10 @@ def main():
             problems.append("no %s probe" % probe)
     if "Hookshot" in labels and "Longshot" in labels and labels.index("Hookshot") + 1 != labels.index("Longshot"):
         problems.append("the Longshot's row is not right after the Hookshot's (its upgrade, as the game lists them)")
+    # (the child trade item Princess Zelda gives: the gate to Death Mountain and the Happy Mask Shop. Its pouch name is the
+    # item's actor pack, Item_ZeldaLetter, as the other rows' are; the Debug tab once had no row for it)
+    if ["Zelda's Letter", "Item_ZeldaLetter", "0"] not in items:
+        problems.append("no Zelda's Letter row (Item_ZeldaLetter, kind 0)")
     for p in problems:
         print("FAIL " + p)
     if not problems:

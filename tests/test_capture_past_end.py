@@ -296,7 +296,8 @@ def main():
         "@HASH_BYTES@": block(shader, "uint64_t hash_bytes("),
         "@CODE@": block(shader, "struct Code {") + ";",
         "@CODE_KEY@": block(shader, "uint64_t code_key("),
-        "@PARSE_CODE@": block(shader, "Code parse_code(const uint8_t* ctl, const std::vector<uint8_t>& area) {"),
+        "@PARSE_CODE@": (block(shader, "Code parse_code(const uint8_t* ctl, const std::vector<uint8_t>& area, uint64_t key) {")
+                         + "\n" + block(shader, "Code parse_code(const uint8_t* ctl, const std::vector<uint8_t>& area) {")),
     }
     code = CODE
     for name, text in parts.items():

@@ -62,8 +62,9 @@ def main():
 
     start = memory.index("bool import_dma_buf(")
     whole = memory[start:memory.index("\n}\n", start)]
-    refuse = whole[whole.index("if (hi - lo > piece) {"):whole.index("if (!import_dma_buf_pieces(lo, hi, piece, p)) return false;")]
-    if "if (!dev.sparse_buffers) {" not in refuse or "size_limit_mb" not in refuse or "return false;" not in refuse:
+    # (main says it before RADV's import headroom is taken: one test, hi - lo > piece && !dev.sparse_buffers)
+    refuse = whole[whole.index("if (hi - lo > piece && !dev.sparse_buffers) {"):whole.index("if (!import_dma_buf_pieces(lo, hi, piece, p)) return false;")]
+    if "size_limit_mb" not in refuse or "return false;" not in refuse:
         raise SystemExit("a pool that cannot be imported is not said, with udmabuf's limit to raise")
     print("sparse buffers bound on the sparse family's queue ok")
 

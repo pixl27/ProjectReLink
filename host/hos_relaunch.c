@@ -187,6 +187,7 @@ void hos_close_finish(void) {
     void hos_fs_wait_writes(void);   /* (nn_fs.c: a file the game is writing, up to 3 s) */
     hos_fs_wait_writes();
     hos_log("stop: close work done (a file the game was writing waited for, at most 3 s)");
+    hos_ab_end();   /* (hookshot) HOS_AB: the sides' sums in the log (host/hos_ab.c) */
     hos_log_flush();
     void hos_crash_clean_end(void);
     hos_crash_clean_end();

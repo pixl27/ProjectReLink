@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-12 | Hookshot main d4a69456 | Arch Linux (kernel 7.2.15-1-omarchy), no window | No GPU used | Core i9-13900K, 94 GiB | Fresh HOME; table compared with the line-numbered historical log evidence | Documentation check before-1, 18:14:25 local | Expected failure: the 12-row historical block is absent (0 of its 30 runs represented by that block); not a runtime bug; historical receipt only, describing the table at the named 2026-11-12 commit, not this fragment conversion. Tester mooki000; run ID documentation-before-1 |

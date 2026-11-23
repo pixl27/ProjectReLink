@@ -27,6 +27,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
+#ifdef TRACY_ENABLE
+#define HT_WRAP_LOCKS   /* (HOOKSHOT_TRACY: this file's locks that have to wait are zones) */
+#include "hos_tracy.h"
+#endif
 #ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
 #include "../gpu/vk/compat/hookshot_env.h"
 #endif
@@ -192,7 +196,22 @@ NV(nvnDeviceInitialize) {
     RET(1);
 }
 NV(nvnDeviceFinalize) { ((nvn_dev *)P(0))->magic = 0; }
-NV(nvnDeviceGetProcAddress) { RET(U64(1) ? nvn_native_proc((const char *)GP(U64(1))) : 0); }
+/* (hookshot) A proc name the game passes: read only inside guest memory and up to 255 characters, copied into out ("" when it
+   is not a string there). It was read in place to its end, which a pointer near the window's end (or no end) took past the
+   guest's memory into the host's */
+static const char *guest_name(uint64_t a, char *out, size_t cap) {
+    out[0] = 0;
+    const uint64_t room = a && a < (uint64_t)HOS_SPACE_END ? (uint64_t)HOS_SPACE_END - a : 0;
+    const size_t lim = room < cap ? (size_t)room : cap;
+    const char *s = lim ? (const char *)hos_guest_range(a, lim) : NULL;
+    const char *end = s ? (const char *)memchr(s, 0, lim) : NULL;
+    if (end) memcpy(out, s, (size_t)(end - s) + 1);
+    return out;
+}
+NV(nvnDeviceGetProcAddress) {
+    char name[256];
+    RET(U64(1) ? nvn_native_proc(guest_name(U64(1), name, sizeof name)) : 0);
+}
 /* (hookshot) API version 231.40: OoT (SDK 22.2.8) skips its graphics setup unless the minor is >= 40 (main
    0x8348c11c); MKW's driver said 39, which MKW accepts too. */
 /* The Switch 2 NVN2 driver's device limits: its nvnDeviceGetInteger (sdk+0x65b680) run for every id under
@@ -253,6 +272,11 @@ NV(nvnDeviceSetWindowOriginMode) {
     ((nvn_dev *)P(0))->origin = U32(1);
     hos_log("nvn: window origin %s", U32(1) ? "upper left" : "lower left");
 }
+/* (hookshot) what the game set (NVN's default, 0, before it sets one), as the driver answers. Without them a caller got
+   the "not implemented" stub's 0: lower left to a game that set upper left, so code that lays its own drawing over the
+   game's picture by the answer (a mod's overlay) drew it upside down */
+NV(nvnDeviceGetWindowOriginMode) { RET(((const nvn_dev *)P(0))->origin); }
+NV(nvnDeviceGetDepthMode) { RET(((const nvn_dev *)P(0))->depth_mode); }
 NV(nvnDeviceSetDepthMode) {
     ((nvn_dev *)P(0))->depth_mode = U32(1);
     const LONG was = InterlockedExchange(&depth_minus_w, U32(1) == NVN_DEPTH_MODE_NEAR_IS_MINUS_W);
@@ -391,6 +415,10 @@ NV(nvnMemoryPoolGetBufferAddress) {
 NV(nvnMemoryPoolFlushMappedRange) {}   /* CPU writes are seen through write watch */
 NV(nvnMemoryPoolInvalidateMappedRange) {   /* the CPU is about to read what the GPU wrote */
     if (no_pool(c, "invalidate mapped range")) return;
+#ifdef TRACY_ENABLE
+    HT_ZONE(tz, "nvnMemoryPoolInvalidateMappedRange");   /* (a readback: may wait for the GPU) */
+    HT_ZONE_TEXTF(tz, "%llu bytes, lr %#llx", (unsigned long long)U64(2), (unsigned long long)c->x[30]);
+#endif
     const nvn_pool *o = (const nvn_pool *)P(0);
     if ((int64_t)U64(1) >= 0) rx_nvn_invalidate(o->gpu + U64(1), U64(2));
 }
@@ -521,6 +549,10 @@ NV(nvnBufferGetMemoryOffset) { RET((uint64_t)((const nvn_buffer *)P(0))->off); }
 NV(nvnBufferGetSize) { RET(((const nvn_buffer *)P(0))->size); }
 NV(nvnBufferFlushMappedRange) {}
 NV(nvnBufferInvalidateMappedRange) {
+#ifdef TRACY_ENABLE
+    HT_ZONE(tz, "nvnBufferInvalidateMappedRange");   /* (a readback: may wait for the GPU) */
+    HT_ZONE_TEXTF(tz, "%llu bytes, lr %#llx", (unsigned long long)U64(2), (unsigned long long)c->x[30]);
+#endif
     const nvn_buffer *o = (const nvn_buffer *)P(0);
     if (o->pool) rx_nvn_invalidate(POOL(o->pool)->gpu + (uint64_t)o->off + U64(1), U64(2));
 }
@@ -969,6 +1001,10 @@ static void texels(Ctx *c, int write, int strided) {
     static int holds = -1;
     if (holds < 0) holds = env_on("HOS_TEXELS_HOLD_CORE");
     const int away = holds ? 0 : hos_vcore_away();
+#ifdef TRACY_ENABLE
+    HT_ZONE(tz, "nvn texels");
+    HT_ZONE_TEXTF(tz, "%s", write ? "write" : "read");
+#endif
     if (write) rx_nvn_write_texels(t, level, layer0, r, data, row, img), watch_texels_source(t, data, img);
     else rx_nvn_read_texels(t, level, layer0, r, data, row, img);
     if (away) hos_vcore_back();
@@ -1112,11 +1148,14 @@ static CRITICAL_SECTION held_cs;
 static int held_ready, hold_on = -1;
 static void held_init(void) {
     if (!held_ready) { InitializeCriticalSection(&held_cs); held_ready = 1; }
-    if (hold_on < 0) { const char *e = getenv("HOS_NVN_HOLD"); hold_on = e && atoi(e) != 0; }   /* (off: see below) */
+    if (hold_on < 0) hold_on = env_on("HOS_NVN_HOLD");   /* (off: see below) */
 }
 static void held_flush(void) {
     held_init();
     if (!nheld) return;
+#ifdef TRACY_ENABLE
+    HT_SCOPE("nvn held_flush");
+#endif
     EnterCriticalSection(&held_cs);
     for (LONG i = 0; i < nheld; i++) rx_nvn_submit(held[i].h, held[i].n);
     nheld = 0;
@@ -1159,6 +1198,11 @@ NV(nvnSyncWait) {
     if (rx_nvn_wait(s->fence, 0)) { RET(NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED); return; }
     static int block = -1;   /* HOS_NVN_SYNC_BLOCK=1 (experiment): a poll waits for the GPU */
     if (block < 0) block = env_on("HOS_NVN_SYNC_BLOCK");
+#ifdef TRACY_ENABLE
+    HT_WAIT(tz, "nvnSyncWait");
+    HT_ZONE_TEXTF(tz, "fence %llu, timeout %.3f ms, lr %#llx", (unsigned long long)s->fence, U64(1) / 1e6,
+                  (unsigned long long)c->x[30]);
+#endif
     const int away = hos_vcore_away();
     const int64_t t0 = hos_now_ns();
     const int ok = rx_nvn_wait(s->fence, block ? ~0ull >> 1 : U64(1));
@@ -1205,7 +1249,7 @@ NV(nvnEventGetValue) {
         int now = nowait;
         if (now < 0) {
             const char *e = getenv("HOS_PRESENT_NOWAIT");
-            now = e ? atoi(e) != 0 : rx_option(HOS_OPT_RENDER_THREAD, -1);
+            now = e ? !env_value_off(e) : rx_option(HOS_OPT_RENDER_THREAD, -1);
             if (now >= 0) nowait = now = now != 0;
         }
         if (now > 0 && (c->x[30] == 0x805904a0 || c->x[30] == 0x80590530)) { RET(1); return; }
@@ -1252,6 +1296,10 @@ NV(nvnQueueFinalize) { ((nvn_queue *)P(0))->magic = 0; }
 NV(nvnQueueGetError) { if (P(1)) memset(P(1), 0, sizeof(NVNqueueErrorInfo)); RET(NVN_QUEUE_GET_ERROR_RESULT_GPU_NO_ERROR); }
 NV(nvnQueueFlush) { held_flush(); }
 NV(nvnQueueFinish) {
+#ifdef TRACY_ENABLE
+    HT_WAIT(tz, "nvnQueueFinish");
+    HT_ZONE_TEXTF(tz, "lr %#llx", (unsigned long long)c->x[30]);
+#endif
     held_flush();
     const int away = hos_vcore_away();
     const int64_t t0 = hos_now_ns();
@@ -1599,10 +1647,10 @@ static void release_copies(uint64_t lo, uint64_t hi) {
    or calling a recording waited behind it */
 #define SWEEP_EVERY 1024u
 #define SWEEP_SLICE 2688u   /* (65536 / 2688 * 1024: every bucket once in ~25,000 recordings) */
-static void sweep_overwritten_copies(void) {   /* (copy_lock held) */
+static size_t sweep_overwritten_copies(void) {   /* (copy_lock held) */
     static int off = -1;
     if (off < 0) off = env_on("HOS_NVN_NO_SWEEP");
-    if (off || !rec_buckets) return;
+    if (off || !rec_buckets) return 0;
     free_dead_copies();
     const uint64_t after = rx_nvn_pushed() + held_count();
     size_t swept = 0;
@@ -1639,7 +1687,9 @@ static void sweep_overwritten_copies(void) {   /* (copy_lock held) */
         }
     }
     static int logged;
-    if (swept && logged++ < 12) hos_log_at(HOS_LOG_DEBUG, "nvn: %zu copies of recordings whose control memory was reused let go (%zu live)", swept, ncopies);
+    if (!swept || logged == 12) return 0;
+    logged++;
+    return swept;
 }
 NV(nvnCommandBufferAddControlMemory) {
     nvn_cmd *o = CB(P(0));
@@ -1738,6 +1788,10 @@ static void watch_handle_called(Ctx *c, uint64_t h, const char *how) {
     }
 }
 NV(nvnCommandBufferEndRecording) {
+#ifdef TRACY_ENABLE
+    HT_ZONE(tz, "nvnCommandBufferEndRecording");   /* (the recorded commands' copy) */
+    HT_ZONE_TEXTF(tz, "lr %#llx", (unsigned long long)c->x[30]);
+#endif
     nvn_cmd *o = CB(P(0));
     uint8_t *p = cmd_alloc(o, 8);
     put_hdr(p, NOP_END, 8);
@@ -1769,12 +1823,24 @@ NV(nvnCommandBufferEndRecording) {
     ncopies++;
     live_handle_add((uint64_t)(uintptr_t)copy);
     static uint64_t made;
-    if (++made % SWEEP_EVERY == 0) sweep_overwritten_copies();
-    if (made % 50000 == 0)
-        hos_log("nvn: %llu recordings made, %zu live copies (%.1f MB), %zu texture copies; %lld command buffers' segments "
-                "(%.1f MB)", (unsigned long long)made, ncopies, copy_bytes / 1048576.0, npins, (long long)seg_count,
-                seg_bytes / 1048576.0);
+    const uint64_t recording = ++made;
+    const size_t swept = recording % SWEEP_EVERY == 0 ? sweep_overwritten_copies() : 0;
+    const int report = recording % 50000 == 0;
+    const size_t live_copies = (report || swept) ? ncopies : 0;
     ReleaseSRWLockExclusive(&copy_lock);
+    if (report || swept) {
+        /* stderr can block for hundreds of milliseconds. Other recorders and guests pinned to
+           this thread's virtual core must be able to run while the line is being written. */
+        const int away = hos_vcore_away();
+        if (swept)
+            hos_log_at(HOS_LOG_DEBUG, "nvn: %zu copies of recordings whose control memory was reused let go (%zu live)", swept, live_copies);
+        if (report)
+            hos_log("nvn: %llu recordings made, %zu live copies (%.1f MB), %zu texture copies; %lld command buffers' segments "
+                    "(%.1f MB)", (unsigned long long)recording, live_copies, __atomic_load_n(&copy_bytes, __ATOMIC_RELAXED) / 1048576.0,
+                    __atomic_load_n(&npins, __ATOMIC_RELAXED), (long long)__atomic_load_n(&seg_count, __ATOMIC_RELAXED),
+                    __atomic_load_n(&seg_bytes, __ATOMIC_RELAXED) / 1048576.0);
+        if (away) hos_vcore_back();
+    }
     if (watch_draw_cmd && watch_draw_cmd == (void *)o && nwatch_handles < 16) {
         watch_handles[nwatch_handles++] = (uint64_t)(uintptr_t)copy;
         watch_draw_cmd = NULL;
@@ -2401,13 +2467,13 @@ static void tex_copy(const nvn_tex **dst, uint64_t t) {
     if (!o->serial) die("recording refers to an uninitialized texture object %#llx", (unsigned long long)t);
     const uint64_t h = pin_hash(o);
     AcquireSRWLockExclusive(&pin_lock);
-    if (npins * 2 >= pin_slots) pins_grow();
+    if (__atomic_load_n(&npins, __ATOMIC_RELAXED) * 2 >= pin_slots) pins_grow();
     size_t s = (size_t)(h >> 20) & (pin_slots - 1);
     while (pins[s] && !pin_same(pins[s], o)) s = (s + 1) & (pin_slots - 1);
     if (!pins[s]) {
         pins[s] = (nvn_tex *)malloc(sizeof(nvn_tex));
         *pins[s] = *o;
-        npins++;
+        __atomic_fetch_add(&npins, 1, __ATOMIC_RELAXED);
     }
     *dst = pins[s];
     ReleaseSRWLockExclusive(&pin_lock);
@@ -2626,6 +2692,10 @@ NV(nvnQueueSubmitCommands) {
     { void hos_renderer_wait(void); static volatile LONG up; if (!up) { hos_renderer_wait(); up = 1; } }   /* (display.c) */
     nvn_queue *q = (nvn_queue *)P(0);
     const int n = I(1);
+#ifdef TRACY_ENABLE
+    HT_ZONE(tz, "nvnQueueSubmitCommands");
+    HT_ZONE_TEXTF(tz, "queue %p, %d handles, lr %#llx", (void *)q, n, (unsigned long long)c->x[30]);
+#endif
     uint64_t h[64];
     if (n < 0 || n > 64) die("submit of %d handles", n);
     memcpy(h, PN(2, 8 * (size_t)n), 8 * (size_t)n);
@@ -2747,6 +2817,9 @@ NV(nvnWindowAcquireTexture) {
     nvn_sync *s = (nvn_sync *)P(1);
     *(int *)P(2) = o->active ? o->next++ % o->active : 0;
     {
+#ifdef TRACY_ENABLE
+        HT_WAIT(tz, "nvnWindowAcquireTexture");   /* (the frame's pacing: host/nn_vi.c) */
+#endif
         const int away = hos_vcore_away();
         hos_vi_native_acquire(o->active ? o->active : o->ntex);
         if (away) hos_vcore_back();
@@ -2760,6 +2833,10 @@ NV(nvnQueuePresentTexture) {
     const int i = I(2);
     if (i < 0 || i >= o->ntex) die("present of window texture %d", i);
     HOS_CHAIN(HOS_CHAIN_PRESENT, (uint64_t)i);
+#ifdef TRACY_ENABLE
+    HT_FRAME();   /* (HOOKSHOT_TRACY: a frame ends where the game presents) */
+    HT_ZONE(tz, "nvnQueuePresentTexture");
+#endif
     const int trace = hos_vi_present_trace_enabled();
     int64_t phases[4] = {0};
     if (trace) phases[0] = hos_now_ns();
@@ -2983,6 +3060,8 @@ static const nvn_impl impls[] = {
     {"nvnDeviceInstallDebugCallback", n_nvnDeviceInstallDebugCallback},
     {"nvnDeviceSetWindowOriginMode", n_nvnDeviceSetWindowOriginMode},
     {"nvnDeviceSetDepthMode", n_nvnDeviceSetDepthMode},
+    {"nvnDeviceGetWindowOriginMode", n_nvnDeviceGetWindowOriginMode},
+    {"nvnDeviceGetDepthMode", n_nvnDeviceGetDepthMode},
     {"nvnDeviceFinalizeCommandHandle", n_nvnDeviceFinalizeCommandHandle},
     {"nvnDeviceGetCurrentTimestampInNanoseconds", n_nvnDeviceGetCurrentTimestampInNanoseconds},
     {"nvnDeviceGetTimestampInNanoseconds", n_nvnDeviceGetTimestampInNanoseconds},
@@ -3489,6 +3568,6 @@ void nvn2_dispatch(Ctx *c, const char *name, void **cache) {
 
 /* nvnBootstrapLoader(char const* name) -> the proc */
 HLE(nvnBootstrapLoader) {
-    const char *name = ARG(0) ? (const char *)GP(ARG(0)) : "";
-    RET(nvn_native_proc(name));
+    char name[256];
+    RET(nvn_native_proc(guest_name(ARG(0), name, sizeof name)));
 }

@@ -430,6 +430,37 @@ static int fs_trace(void) {
     if (on < 0) on = env_on("HOS_FS_TRACE");
     return on;
 }
+
+/* Use the same UTF-8 and long-path handling as OpenFile for the damaged-texture probe. */
+HANDLE hos_fs_open_read(const char *path) {
+    return CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+}
+
+static void fs_overlay_path(const char *guest, char *path, size_t cap) {
+    static const char *overlay = "";
+    const char *ov = __atomic_load_n(&overlay, __ATOMIC_RELAXED);
+    if (ov && !*ov) {
+        ov = getenv("HOS_FS_OVERLAY");
+        if (ov && !*ov) ov = NULL;
+        __atomic_store_n(&overlay, ov, __ATOMIC_RELAXED);
+    }
+    const char *rel = ov ? strstr(guest, ":/") : NULL;
+    if (rel) {
+        char alt[HOS_FS_PATH];
+        if ((size_t)snprintf(alt, sizeof alt, "%s/%s", ov, rel + 2) < sizeof alt &&
+            GetFileAttributesA(alt) != INVALID_FILE_ATTRIBUTES) {
+            hos_log("fs: OpenFile(%s): from the overlay", guest);
+            snprintf(path, cap, "%s", alt);
+        }
+    }
+}
+
+/* Resolve a stand-in with the same mod, overlay and mounted game-file precedence. */
+int hos_fs_resolve_read(const char *guest, char *path, size_t cap) {
+    if (!host_path(guest, path, cap, NULL)) return 0;
+    fs_overlay_path(guest, path, cap);
+    return 1;
+}
 /* OpenFile(FileHandle*, char const* path, int mode): mode bit 0 read, bit 1 write, bit 2 append */
 HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
     char path[HOS_FS_PATH];
@@ -465,28 +496,9 @@ HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
       char alt[HOS_FS_PATH];
       if (!want_write && hos_ultrawide_redirect(g, alt, sizeof alt)) snprintf(path, sizeof path, "%s", alt); }
     if (!want_write && hos_blank_cached_icon(g, path)) { if (away) hos_vcore_back(); RET(R_PATH_NOT_FOUND); return; }
-    {   /* HOS_FS_OVERLAY=<folder> (a test): a file of the game's data found there is read in place of the game's own */
-        /* (read once: every OpenFile asked the environment; one atomic pointer, "" until read, so a thread sees the
-           value or reads it itself) */
-        static const char *overlay = "";
-        const char *ov = __atomic_load_n(&overlay, __ATOMIC_RELAXED);
-        if (ov && !*ov) {
-            ov = getenv("HOS_FS_OVERLAY");
-            /* (set but empty: no overlay. This changed: before, an empty one (only Linux can set it; Windows'
-               _putenv("HOS_FS_OVERLAY=") unsets it) made alt "/<path>", each file looked up at the filesystem root) */
-            if (ov && !*ov) ov = NULL;
-            __atomic_store_n(&overlay, ov, __ATOMIC_RELAXED);
-        }
-        const char *rel = !want_write && ov ? strstr(g, ":/") : NULL;
-        if (rel) {
-            char alt[HOS_FS_PATH];
-            snprintf(alt, sizeof alt, "%s/%s", ov, rel + 2);
-            if (GetFileAttributesA(alt) != INVALID_FILE_ATTRIBUTES) {
-                hos_log("fs: OpenFile(%s): from the overlay", g);
-                snprintf(path, sizeof path, "%s", alt);
-            }
-        }
-    }
+    if (!want_write) fs_overlay_path(g, path, sizeof path);
+    { int hos_stand_in_damaged(const char *guest, char *path, size_t cap);   /* (oot_damaged_files.c: an incomplete dump) */
+      if (!want_write) hos_stand_in_damaged(g, path, sizeof path); }
     DWORD flags = FILE_ATTRIBUTE_NORMAL;
 #ifdef _WIN32
     // Compressed read-only assets are streamed in order. Keep ordinary handles at the OS default.

@@ -196,9 +196,14 @@ def package(a):
     copy(a.setup, os.path.join(out, "HookshotBuilder-Setup.exe"))   # (the builder's Repair runs it)
     copy(os.path.join(ROOT, "LICENSE"), os.path.join(out, "LICENSE"))
     tools = os.path.join(out, "tools")
+    os.makedirs(tools, exist_ok=True)
+    with open(os.path.join(tools, "red-tunic-release.txt"), "w", encoding="utf-8") as marker:
+        marker.write("Red Tunic packaged build tools\n")
+    for name in ("version.txt", "readme.md"):
+        copy(os.path.join(ROOT, name), os.path.join(tools, name))
     for icon in ("red-tunic.png", "red-tunic.ico"):
         copy(os.path.join(ROOT, "assets", icon), os.path.join(tools, "assets", icon))
-    for f in tracked("gpu", "host", "native", "nx2", "scripts", "third_party"):
+    for f in tracked("gpu", "host", "native", "nx2", "scripts", "third_party", "tools", "assets/profiles"):
         copy(os.path.join(ROOT, f), os.path.join(tools, *f.split("/")))
     if a.list:
         if not profile(argparse.Namespace(list=a.list, work=os.path.join(tools, "work"))) == 0:

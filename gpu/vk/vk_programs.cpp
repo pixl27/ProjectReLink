@@ -30,6 +30,7 @@
 #include "module_ids.h"
 #include "load_default.h"
 #include "vk_programs.h"
+#include "descriptor_array_census.h"
 
 namespace mkwvk {
 
@@ -101,6 +102,7 @@ struct LoadJob {
     uint64_t unit = 0;
     bool compute = false;
     std::vector<uint64_t> keys;
+    std::atomic<bool> draw_waiting{false};
     std::atomic<int> state{0};   // 0 queued, 1 running, 2 done
     std::mutex mu;
     std::condition_variable cv;
@@ -243,12 +245,25 @@ void load_work(LoadJob& job) {
                     census.load_computes_cold++;   // (its first dispatch asks again, and compiles on a worker: as before)
                 }
             } else if (notes != index_notes.end()) {
+                // every noted pipeline of the variant built here: its modules can go, remade from the file if play ever
+                // builds another state of it (program_cache_drop_loaded). One deferred, cold or not read keeps them
+                size_t built = 0, left = 0;
                 for (const NoteAt& n : notes->second) {
-                    if (n.variant != p->variant || !pipe_note_at(notes_in, n.at, note.get())) continue;
-                    bytes += (int64_t)sizeof(PipeNote);
-                    if (const VkPipeline pl = source.graphics(*p, *note)) census.load_pipes += pipeline_keep_ready(n.key, pl, p.get());
-                    else census.load_pipes_cold++;   // (its first draw makes it, as before)
+                    if (n.variant != p->variant) continue;
+                    if (!job.draw_waiting.load(std::memory_order_relaxed)) {
+                        if (!pipe_note_at(notes_in, n.at, note.get())) { left++; continue; }
+                        bytes += (int64_t)sizeof(PipeNote);
+                        // The draw may have arrived during the disk read.
+                        if (!job.draw_waiting.load(std::memory_order_relaxed)) {
+                            if (const VkPipeline pl = source.graphics(*p, *note)) census.load_pipes += pipeline_keep_ready(n.key, pl, p.get()), built++;
+                            else census.load_pipes_cold++, left++;   // (its first draw makes it, as before)
+                            continue;
+                        }
+                    }
+                    pipeline_defer(n.key);
+                    census.load_pipes_deferred++, left++;
                 }
+                if (built && !left && drop_loaded_modules_on()) census.load_modules_dropped += (int64_t)program_cache_drop_loaded(*p);
             }
             census.load_programs++;
             census.load_unlisted += !p->compute && notes == index_notes.end();
@@ -347,7 +362,7 @@ std::atomic<bool> struck_last_session{false};   // (load_default.h: the session 
 void programs_load_decide(bool native_mesh) {
     struck_last_session = load_default::strike_take(load_fallback_path());
     const load_default::Choice c = load_default::choose(getenv("RX_VK_LOAD"), native_mesh, load_default::marker_there(load_fallback_path()),
-                                                        env_on("RX_VK_PROGRAM_CACHE_ZSTD"));   // (as vk_progcache.cpp disk_init reads it)
+                                                        env_on("RX_VK_PROGRAM_CACHE_ZSTD"), precompile_wanted());   // (as vk_progcache.cpp disk_init reads it)
     load_mode.store(c.create ? 1 : 0, std::memory_order_release);
     logf("vk: programs are loaded %s: %s (RX_VK_LOAD=create or start says which)",
          c.create ? "when the game makes them (create)" : "before the title (start)", c.why);
@@ -361,6 +376,7 @@ namespace {
 std::atomic<int64_t> wait_worst_ns{0}, wait_long_ns{0};
 std::atomic<bool> wait_marked{false}, wait_struck{false};
 void load_wait_note(int64_t ns) {
+    if (!precompile_wanted()) return;
     int64_t worst = wait_worst_ns.load(std::memory_order_relaxed);
     while (ns > worst && !wait_worst_ns.compare_exchange_weak(worst, ns)) {}
     if (!load_default::counts(ns / 1e6)) return;
@@ -386,6 +402,7 @@ void load_wait_note(int64_t ns) {
 }
 
 void programs_index(std::vector<NoteRef> notes, const std::unordered_set<uint64_t>& compute_keys) {
+    if (index_ready.load(std::memory_order_acquire)) return;
     const auto t0 = Clock::now();
     std::unordered_set<uint64_t> seen;
     for (const NoteRef& n : notes) {
@@ -440,7 +457,7 @@ void module_ids_on() {
 }
 
 void programs_frames_note() {
-    if (!programs_load_at_create()) return;
+    if (!programs_load_at_create() || !precompile_wanted()) return;
     // (what the loads at create calls asked of the caches and no cache had: load_work counts them)
     const long long lacked = census.load_pipes_cold.load(std::memory_order_relaxed) + census.load_computes_cold.load(std::memory_order_relaxed);
     if (!load_default::caches_lacked(lacked) || wait_marked.exchange(true)) return;
@@ -459,6 +476,7 @@ void programs_load_wait(uint64_t key) {
     }
     if (!job) return;
     if (job->state.load(std::memory_order_acquire) != 2) {
+        job->draw_waiting.store(true, std::memory_order_relaxed);
         const auto t0 = Clock::now();
         int queued = 0;
         if (job->state.compare_exchange_strong(queued, 1)) {   // (no worker began it: urgent means run here, as jobs_wait does)
@@ -528,7 +546,16 @@ void load_at_create(const nvn_prog& prog, const CreatedProgram& made) {
 } // namespace
 
 bool programs_life_on() {
-    static const bool on = env_on("RX_VK_LOG_PROGRAM_LIFE");
+    if (!host) return false; // Initialization can fail before the host is bound; close still asks for the census.
+    static const bool on = [] {
+        if (!env_on("RX_VK_LOG_PROGRAM_LIFE")) return false;
+        const int64_t before = host->now_ns();
+        const int64_t life = now_ns();
+        const int64_t after = host->now_ns();
+        logf("vk: program life: clock host_before_ns %lld life_ns %lld host_after_ns %lld",
+             (long long)before, (long long)life, (long long)after);
+        return true;
+    }();
     programs_life_flag = on;
     return on;
 }
@@ -719,15 +746,52 @@ void programs_census_log(const char* when) {
          "ms and %.1f MB read in all); %lld programs (%lld of them compute variants without their code, %lld graphics programs no note names), %lld graphics pipelines (%lld not in a cache), %lld compute pipelines (%lld "
          "not in a cache); a first use ran %lld itself and waited for %lld (%.1f ms); %lld pipelines made at create taken by "
          "draws; %lld create calls with nothing kept for their stages, %lld before the index; units %zu (%zu ready, %zu "
-         "loading), %zu programs alive",
+         "loading), %zu programs alive; %lld noted graphics pipeline probes deferred to first use",
          when, n(c.units_queued), n(c.units_loaded), median, p99, worst, c.load_ns.load() / 1e6, c.load_bytes.load() / 1048576.0,
          n(c.load_programs), n(c.load_light), n(c.load_unlisted), n(c.load_pipes), n(c.load_pipes_cold), n(c.load_computes), n(c.load_computes_cold),
          n(c.units_run_by_draw), n(c.units_waited), c.unit_wait_ns.load() / 1e6, n(c.pipes_taken), n(c.units_nothing),
-         n(c.units_early), units, ready, loading, alive);
+         n(c.units_early), units, ready, loading, alive, n(c.load_pipes_deferred));
+    if (drop_loaded_modules_on())
+        logf("vk: program loads at create (%s): %lld shader modules let go once their programs' noted pipelines were built, %lld "
+             "programs' modules made again for a new pipeline state (RX_VK_DROP_LOADED_MODULES=0 keeps them)",
+             when, n(c.load_modules_dropped), (long long)program_cache_remade());
     if (ids_on.load(std::memory_order_acquire))
         logf("vk: module identifiers (%s): %zu known, %lld learned in this run; %lld compute pipelines made by them at a create "
              "call, %lld asked that way were in no cache (their code read, as before)",
              when, ids.size(), n(ids_learned.load()), n(c.load_by_id), n(c.load_by_id_cold));
+}
+
+// ---- (hookshot) The indexed descriptor arrays the programs declare (descriptor_array_census.h) ----
+namespace {
+std::mutex array_census_mu;
+ArrayCensus array_census;
+bool array_limits_known = false;
+static_assert(ArrayCensus::kStageBits[0] == VK_SHADER_STAGE_VERTEX_BIT && ArrayCensus::kStageBits[1] == VK_SHADER_STAGE_FRAGMENT_BIT &&
+              ArrayCensus::kStageBits[2] == VK_SHADER_STAGE_COMPUTE_BIT && ArrayCensus::kStageBits[3] == VK_SHADER_STAGE_TASK_BIT_EXT &&
+              ArrayCensus::kStageBits[4] == VK_SHADER_STAGE_MESH_BIT_EXT);
+} // namespace
+
+void descriptor_arrays_note(const Program& p) {
+    std::vector<std::string> lines;
+    {
+        std::lock_guard lk(array_census_mu);
+        if (!array_limits_known) {   // (the device's, made before any program)
+            const VkPhysicalDeviceLimits& l = dev.props.limits;
+            array_census.limits = {l.maxPerStageDescriptorSamplers, l.maxPerStageDescriptorSampledImages, l.maxPerStageDescriptorStorageImages};
+            array_limits_known = true;
+        }
+        for (size_t k = 0; k < p.stages.size(); k++) array_census.note(p.key, (uint32_t)k, p.stages[k].vk_stage, p.stages[k].info, lines);
+    }
+    for (const std::string& line : lines) logf("%s", line.c_str());
+}
+
+void descriptor_arrays_log(const char* when) {
+    std::vector<std::string> lines;
+    {
+        std::lock_guard lk(array_census_mu);
+        lines = array_census.summary(when);
+    }
+    for (const std::string& line : lines) logf("%s", line.c_str());
 }
 
 } // namespace mkwvk

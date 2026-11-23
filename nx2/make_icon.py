@@ -1,9 +1,11 @@
-"""The app icon from a picture: an .ico for the builder and a .res the game's exe links in (nx2/build.py).
+"""The app icon from a picture: an .ico (builder/setup/hookshot.ico, the builder's, the launcher's and the game exe's: nx2/build.py
+links it in as work/hookshot_brand.res, images_of_ico) and a .res of it.
 
     python nx2/make_icon.py <picture.png> [out folder, default work]
 
-The picture is the user's and stays out of the repository, so these go to work/. Needs Pillow. The builder makes the game's
-own (its icon, and the name Windows shows for the exe) with the same functions: nx2/game_title.py.
+A picture's .ico and .res go to work/ (the picture stays out of the repository); the game's exe links Hookshot's own icon, not
+work/hookshot.res. Needs Pillow; reading an .ico (images_of_ico) does not. The builder makes the name Windows shows for the exe
+with the same functions: nx2/game_title.py.
 """
 import io
 import os
@@ -33,6 +35,22 @@ def png_of(im):
 def images_of(im):
     """[(size, PNG bytes)] at each of SIZES"""
     return [(s, png_of(square(im, s))) for s in SIZES]
+
+
+def images_of_ico(data):
+    """[(size, PNG bytes)] of an .ico whose images are PNGs (as ico_of writes them, and builder/setup/hookshot.ico has them):
+    read as they are, with no Pillow (the builders that make releases need none)"""
+    reserved, kind, n = struct.unpack("<HHH", data[:6])
+    if reserved or kind != 1 or not n:
+        raise ValueError("not an icon file")
+    out = []
+    for i in range(n):
+        w, _h, _colours, _, _planes, _bits, size, at = struct.unpack("<BBBBHHII", data[6 + 16 * i:22 + 16 * i])
+        png = data[at:at + size]
+        if png[:8] != b"\x89PNG\r\n\x1a\n":
+            raise ValueError("an icon image that is not a PNG (%d pixels)" % (w or 256))
+        out.append((w or 256, png))
+    return out
 
 
 def res_entry(kind, name, data, flags=0x1010):
@@ -94,6 +112,23 @@ def version_entry(strings, version=(0, 0, 0, 0)):
         _node("StringFileInfo", text=True, children=[_node("040904b0", text=True, children=table)]),
         _node("VarFileInfo", text=True, children=[_node("Translation", struct.pack("<HH", 0x0409, 1200))])])
     return res_entry(16, 1, info, 0x0030)
+
+
+def without_icons(data):
+    """Keep the non-icon records of a Windows .res file byte for byte."""
+    records = []
+    at = 0
+    while at < len(data):
+        if len(data) - at < 12:
+            raise ValueError("truncated Windows resource header")
+        size, header, marker, kind = struct.unpack_from("<IIHH", data, at)
+        end = at + header + size + (-size & 3)
+        if header < 12 or header & 3 or end > len(data):
+            raise ValueError("invalid Windows resource size")
+        if marker != 0xFFFF or kind not in (3, 14):  # RT_ICON and RT_GROUP_ICON
+            records.append(data[at:end])
+        at = end
+    return b"".join(records)
 
 
 def res_of(images=(), strings=None, version=(0, 0, 0, 0)):

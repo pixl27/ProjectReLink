@@ -19,6 +19,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "compute_gate.h"   // the scoped Linux memory budget in the extracted pcache_load_off
 #ifdef _WIN32
 #define NOMINMAX   // (the extracted code calls std::max: no min/max macros from windows.h)
 #include <windows.h>
@@ -66,6 +67,7 @@ struct {
 enum { VK_DRIVER_ID_NVIDIA_PROPRIETARY = 4 };
 VkPipelineCache pcache = nullptr;
 bool pcache_no_save = false;   // (pcache_init sets this in the renderer)
+bool pcache_file_rejected = false;   // (pcache_init: the cache's file was another driver's)
 std::atomic<size_t> pcache_saved_size{0};
 std::string pcache_dir, pcache_path;
 // (vk_draw.cpp's ordinary save, pipeline_cache_save, extracted unmodified after the play caches: the no-save-periodic case. What the
@@ -271,6 +273,8 @@ Dropped check(const std::string&, uint64_t) { return {0, 0}; }
 // (pcache_load_off's rule, gpu/vk/pcache_load.h, and whether programs load at their create calls: not here)
 #include "pcache_load.h"
 bool programs_load_at_create() { return false; }
+#include "nvidia_cache_limit.h"
+nvidia_cache_limit::Limit nvidia_limit() { return {}; }   // (no NVIDIA cache limit here)
 // (init's conditional read uses the read-result stub; play writes keep the real mapped-file writer)
 #define PipelineCacheFile ReadPart
 #include "pcache_init.inc"

@@ -16,7 +16,9 @@ NEW = ["late_wait_ms", "readback_wait_ms", "tex_frame_ms",
        "game_ms", "render_ms", "gpu_wait_ms", "pace_ms", "wait_render_ms", "wait_gpu_ms", "wait_main_ms",
        "main_cpu_ms", "main_blocked_ms", "main_vcore_ms",
        # (the present on the host's clock: HOS_PROFILE=1's samples, presents.csv and events.txt share it)
-       "at_ns"]
+       "at_ns",
+       # (hookshot: the frame's side in an A/B within the run, HOS_AB, host/hos_ab.c; scripts/ab_summary.py)
+       "ab_side"]
 
 
 def block(text, marker):

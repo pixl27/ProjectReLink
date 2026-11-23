@@ -6,6 +6,7 @@ program cache load asks for a queued load first, and a job only ever publishes f
 """
 import argparse
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -14,14 +15,8 @@ RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def block(text, marker):
-    start = text.index(marker)
-    end = text.index("{", start) + 1
-    depth = 1
-    while depth:
-        depth += (text[end] == "{") - (text[end] == "}")
-        end += 1
-    return text[start:end]
+sys.path.insert(0, str(ROOT / "tests"))
+from srccut import block
 
 
 def main():
@@ -49,6 +44,8 @@ def main():
         tmp = Path(tmp)
         (tmp / "load_types.inc").write_text(types, encoding="utf-8")
         (tmp / "load_functions.inc").write_text(functions, encoding="utf-8")
+        notes_loop = block(work, "for (const NoteAt& n : notes->second) {")
+        (tmp / "load_graphics_notes.inc").write_text(notes_loop, encoding="utf-8")
         exe = tmp / "program-load-wait"
         subprocess.run([args.cxx, "-std=c++20", "-Wall", "-Wextra", "-Werror", "-D_CRT_SECURE_NO_WARNINGS", "-pthread", "-I" + str(tmp),
                         str(ROOT / "tests/program_load_wait_test.cpp"), "-o", str(exe)], check=True)

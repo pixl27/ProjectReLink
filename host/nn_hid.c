@@ -368,8 +368,7 @@ static void parse_script(void) {
     npresses = 0;
     script_t0 = hos_now_ns();
     {
-        const char *e = getenv("HOS_INPUT_FRAME_CLOCK");
-        script_frame_clock = e && atoi(e) != 0;
+        script_frame_clock = env_on("HOS_INPUT_FRAME_CLOCK");
         if (script_frame_clock) {
             script_frame0 = InterlockedCompareExchange64(&hos_present_count, 0, 0);
             hos_log("hid: input frame clock origin=%lld native presents; rate=60", (long long)script_frame0);
@@ -560,7 +559,7 @@ static void stick_max(int32_t stick[4], const int32_t v[4]) {
    first use; what the file leaves out keeps its default. Keys only, after the Switch's buttons (HOS_KEY_*): the left
    stick's and the camera's directions, and Walk; the ocarina's five note controls take a gamepad input too.
    A key can be a mouse button (1 2 4 5 6: left, right, middle, 4, 5), which counts
-   only while the mouse is captured ---- */
+   only while the mouse is captured; 4 and 5 also while one of the game's menus has it (mouse_buttons_arm) ---- */
 static const char *const bind_names[HOS_KEY_N] = {"a", "b", "x", "y", "ls", "rs", "l", "r", "zl", "zr", "plus",
                                                   "minus", "left", "up", "right", "down", "move_up", "move_down",
                                                   "move_left", "move_right", "cam_up", "cam_down", "cam_left",
@@ -769,12 +768,130 @@ void hos_filter_stick(int16_t x, int16_t y, int zone, int32_t out[2]) {
     out[1] = active ? b : 0;
 }
 
-static volatile int xinput_pads_now;   /* (pads_read: the controllers XInput has, while it is polled) */
+static volatile int xinput_pads_now;   /* (xinput_poll: the controllers XInput has, while it is polled) */
 int hos_xinput_pads(void) { return xinput_pads_now; }   /* (host/prompts.c: Auto's face) */
 
-static void pads_read(uint64_t *buttons, int32_t stick[4]) {
-    static int64_t next_read, retry[XUSER_MAX_COUNT];
+/* (hookshot) XInput's controllers, read on a thread of their own (xinput_main), never on the game's: XInputGetState on
+   a slot with no controller in it is slow (it looks for the device again, a millisecond or more, longer with Bluetooth
+   or a virtual pad's driver installed), and with no controller SDL reads, the game's input read asked all four empty
+   slots each second, in one read. Players on a keyboard and mouse got that hitch every second, and a controller
+   plugged in "raised the frame rate". pads_read now takes the thread's last reading. */
+static void xinput_poll(int64_t now, uint64_t *out_raw, int32_t s[4]) {
+    static int64_t retry[XUSER_MAX_COUNT];
     static int was_connected[XUSER_MAX_COUNT];
+    uint64_t raw = 0;
+#ifdef __EMSCRIPTEN__
+    xinput_get = XInputGetState;
+#endif
+    if (!xinput_get) {
+        static int64_t load_retry;
+        if (now >= load_retry) {
+            load_retry = now + 5000000000LL;
+#ifdef _WIN32   /* (hookshot: System32's, not one beside the game, in the current folder or on PATH) */
+            HMODULE x = LoadLibraryExA("xinput1_4.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+            if (!x) x = LoadLibraryExA("xinput9_1_0.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+#else
+            HMODULE x = LoadLibraryA("xinput1_4.dll");
+            if (!x) x = LoadLibraryA("xinput9_1_0.dll");
+#endif
+            if (x) xinput_get = (XInputGetStateFn)GetProcAddress(x, "XInputGetState");
+        }
+    }
+    static const struct { WORD x; int b; } map[] = {
+        {XINPUT_GAMEPAD_A, HOS_PAD_SOUTH}, {XINPUT_GAMEPAD_B, HOS_PAD_EAST}, {XINPUT_GAMEPAD_X, HOS_PAD_WEST},
+        {XINPUT_GAMEPAD_Y, HOS_PAD_NORTH}, {XINPUT_GAMEPAD_LEFT_THUMB, HOS_PAD_LSTICK},
+        {XINPUT_GAMEPAD_RIGHT_THUMB, HOS_PAD_RSTICK}, {XINPUT_GAMEPAD_LEFT_SHOULDER, HOS_PAD_LSHOULDER},
+        {XINPUT_GAMEPAD_RIGHT_SHOULDER, HOS_PAD_RSHOULDER}, {XINPUT_GAMEPAD_START, HOS_PAD_START},
+        {XINPUT_GAMEPAD_BACK, HOS_PAD_BACK}, {XINPUT_GAMEPAD_DPAD_LEFT, HOS_PAD_LEFT},
+        {XINPUT_GAMEPAD_DPAD_UP, HOS_PAD_UP}, {XINPUT_GAMEPAD_DPAD_RIGHT, HOS_PAD_RIGHT},
+        {XINPUT_GAMEPAD_DPAD_DOWN, HOS_PAD_DOWN}};
+    for (int p = 0; p < XUSER_MAX_COUNT && xinput_get; p++) {
+        if (now < retry[p]) continue;
+        XINPUT_STATE xs;
+        if (xinput_get((DWORD)p, &xs) != ERROR_SUCCESS) {
+            if (was_connected[p]) hos_log("hid: controller %d disconnected", p);
+            was_connected[p] = 0;
+            int any = 0;
+            for (int q = 0; q < XUSER_MAX_COUNT; q++) any |= was_connected[q];
+            xinput_pads_now = any;
+            retry[p] = now + 1000000000LL;
+            continue;
+        }
+        if (!was_connected[p]) hos_log("hid: controller %d connected", p);
+        was_connected[p] = 1;
+        xinput_pads_now = 1;
+        const WORD w = xs.Gamepad.wButtons;
+        for (unsigned i = 0; i < sizeof map / sizeof *map; i++)
+            if (w & map[i].x) raw |= 1ULL << map[i].b;
+        if (xs.Gamepad.bLeftTrigger > 64) raw |= 1ULL << HOS_PAD_LTRIGGER;
+        if (xs.Gamepad.bRightTrigger > 64) raw |= 1ULL << HOS_PAD_RTRIGGER;
+        const int16_t thumb[4] = {xs.Gamepad.sThumbLX, xs.Gamepad.sThumbLY, xs.Gamepad.sThumbRX, xs.Gamepad.sThumbRY};
+        int32_t v[4];
+        int rx_option(int id, int otherwise);
+        const int zone = rx_option(11, 0);   /* (the menu's Stick dead zone) */
+        hos_filter_stick(thumb[0], thumb[1], zone, v);
+        hos_filter_stick(thumb[2], thumb[3], zone, v + 2);
+        if (rx_option(16, 0)) v[2] = -v[2];
+        if (rx_option(17, 0)) v[3] = -v[3];
+        stick_max(s, v);
+    }
+    *out_raw |= raw;
+}
+
+static SRWLOCK xinput_lock = SRWLOCK_INIT;
+static uint64_t xinput_raw;              /* (xinput_main's last reading, by position: 1 << HOS_PAD_*) */
+static int32_t xinput_stick[4];
+static volatile int64_t xinput_wanted_ns;   /* (pads_read wanted XInput's pads then: SDL had none, or HOS_XINPUT=1) */
+#define XINPUT_WANTED_NS 100000000LL        /* (wanted this recently: the thread reads) */
+
+static void xinput_publish(uint64_t raw, const int32_t s[4]) {
+    AcquireSRWLockExclusive(&xinput_lock);
+    xinput_raw = raw;
+    memcpy(xinput_stick, s, sizeof xinput_stick);
+    ReleaseSRWLockExclusive(&xinput_lock);
+}
+
+/* every 2 ms while a controller is there (pads_read's own pace), every 100 ms while none is (an empty slot is asked
+   again each second); nothing while SDL has the pads */
+static DWORD WINAPI xinput_main(void *arg) {
+    (void)arg;
+    void hos_host_thread_register_self(const char *name);   /* (mkw_glue.c: the thread's name) */
+    hos_host_thread_register_self("gamepads (XInput)");
+    for (;;) {
+        const int64_t now = hos_now_ns();
+        uint64_t raw = 0;
+        int32_t s[4] = {0};
+        const int wanted = now - __atomic_load_n(&xinput_wanted_ns, __ATOMIC_RELAXED) < XINPUT_WANTED_NS;
+        if (wanted) xinput_poll(now, &raw, s);
+        xinput_publish(raw, s);   /* (not wanted: nothing held, so a reading from before SDL took over never comes back) */
+        Sleep(wanted && xinput_pads_now ? 2 : 100);
+    }
+    return 0;
+}
+
+/* XInput's pads into raw and s: the thread's last reading (started at the first ask), or read here where there are
+   no threads */
+static void xinput_read(int64_t now, uint64_t *raw, int32_t s[4]) {
+    __atomic_store_n(&xinput_wanted_ns, now, __ATOMIC_RELAXED);
+#ifdef __EMSCRIPTEN__
+    xinput_poll(now, raw, s);
+#else
+    static volatile LONG started;
+    if (!started && !InterlockedExchange(&started, 1)) {
+        HANDLE h = CreateThread(NULL, 0, xinput_main, NULL, 0, NULL);
+        if (h) CloseHandle(h);
+    }
+    int32_t v[4];
+    AcquireSRWLockShared(&xinput_lock);
+    *raw |= xinput_raw;
+    memcpy(v, xinput_stick, sizeof v);
+    ReleaseSRWLockShared(&xinput_lock);
+    stick_max(s, v);
+#endif
+}
+
+static void pads_read(uint64_t *buttons, int32_t stick[4]) {
+    static int64_t next_read;
     static uint64_t cached_buttons;
     static int32_t cached_stick[4];
     const int64_t now = hos_now_ns();
@@ -795,68 +912,12 @@ static void pads_read(uint64_t *buttons, int32_t stick[4]) {
         was = n;
         sdl_pads = n;
     }
-#ifdef __EMSCRIPTEN__
-    xinput_get = XInputGetState;
-#endif
     /* Polling XInput alongside SDL causes double-reads and conflicting button mappings when Steam Input
        or controller wrappers emulate an XInput controller for a pad SDL is already reading (#1480, #1583).
        Only poll XInput when SDL has no open controllers, unless HOS_XINPUT=1 is explicitly requested. */
     static int poll_xinput_env = -1;
     if (poll_xinput_env < 0) poll_xinput_env = env_on("HOS_XINPUT");
-    if (!sdl_pads || poll_xinput_env) {
-        if (!xinput_get) {
-            static int64_t load_retry;
-            if (now >= load_retry) {
-                load_retry = now + 5000000000LL;
-#ifdef _WIN32   /* (hookshot: System32's, not one beside the game, in the current folder or on PATH) */
-                HMODULE x = LoadLibraryExA("xinput1_4.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
-                if (!x) x = LoadLibraryExA("xinput9_1_0.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
-#else
-                HMODULE x = LoadLibraryA("xinput1_4.dll");
-                if (!x) x = LoadLibraryA("xinput9_1_0.dll");
-#endif
-                if (x) xinput_get = (XInputGetStateFn)GetProcAddress(x, "XInputGetState");
-            }
-        }
-        static const struct { WORD x; int b; } map[] = {
-            {XINPUT_GAMEPAD_A, HOS_PAD_SOUTH}, {XINPUT_GAMEPAD_B, HOS_PAD_EAST}, {XINPUT_GAMEPAD_X, HOS_PAD_WEST},
-            {XINPUT_GAMEPAD_Y, HOS_PAD_NORTH}, {XINPUT_GAMEPAD_LEFT_THUMB, HOS_PAD_LSTICK},
-            {XINPUT_GAMEPAD_RIGHT_THUMB, HOS_PAD_RSTICK}, {XINPUT_GAMEPAD_LEFT_SHOULDER, HOS_PAD_LSHOULDER},
-            {XINPUT_GAMEPAD_RIGHT_SHOULDER, HOS_PAD_RSHOULDER}, {XINPUT_GAMEPAD_START, HOS_PAD_START},
-            {XINPUT_GAMEPAD_BACK, HOS_PAD_BACK}, {XINPUT_GAMEPAD_DPAD_LEFT, HOS_PAD_LEFT},
-            {XINPUT_GAMEPAD_DPAD_UP, HOS_PAD_UP}, {XINPUT_GAMEPAD_DPAD_RIGHT, HOS_PAD_RIGHT},
-            {XINPUT_GAMEPAD_DPAD_DOWN, HOS_PAD_DOWN}};
-        for (int p = 0; p < XUSER_MAX_COUNT && xinput_get; p++) {
-            if (now < retry[p]) continue;
-            XINPUT_STATE xs;
-            if (xinput_get((DWORD)p, &xs) != ERROR_SUCCESS) {
-                if (was_connected[p]) hos_log("hid: controller %d disconnected", p);
-                was_connected[p] = 0;
-                int any = 0;
-                for (int q = 0; q < XUSER_MAX_COUNT; q++) any |= was_connected[q];
-                xinput_pads_now = any;
-                retry[p] = now + 1000000000LL;
-                continue;
-            }
-            if (!was_connected[p]) hos_log("hid: controller %d connected", p);
-            was_connected[p] = 1;
-            xinput_pads_now = 1;
-            const WORD w = xs.Gamepad.wButtons;
-            for (unsigned i = 0; i < sizeof map / sizeof *map; i++)
-                if (w & map[i].x) raw |= 1ULL << map[i].b;
-            if (xs.Gamepad.bLeftTrigger > 64) raw |= 1ULL << HOS_PAD_LTRIGGER;
-            if (xs.Gamepad.bRightTrigger > 64) raw |= 1ULL << HOS_PAD_RTRIGGER;
-            const int16_t thumb[4] = {xs.Gamepad.sThumbLX, xs.Gamepad.sThumbLY, xs.Gamepad.sThumbRX, xs.Gamepad.sThumbRY};
-            int32_t v[4];
-            int rx_option(int id, int otherwise);
-            const int zone = rx_option(11, 0);   /* (the menu's Stick dead zone) */
-            hos_filter_stick(thumb[0], thumb[1], zone, v);
-            hos_filter_stick(thumb[2], thumb[3], zone, v + 2);
-            if (rx_option(16, 0)) v[2] = -v[2];
-            if (rx_option(17, 0)) v[3] = -v[3];
-            stick_max(s, v);
-        }
-    }
+    if (!sdl_pads || poll_xinput_env) xinput_read(now, &raw, s);
     InterlockedExchange(&pad_raw_now, (LONG)raw);
     /* Back and Start together open the Insert menu (gpu/vk/vk_menu.cpp, for pads whose Home button the system
        keeps): they reach the game only one at a time */
@@ -873,7 +934,7 @@ static void pads_read(uint64_t *buttons, int32_t stick[4]) {
 /* Whether the controllers count while another window is in front: HOS_INPUT_BACKGROUND=1 or 0 decides when it is set,
    otherwise the Insert menu's "Controller in background" row */
 static int pads_in_background(const char *env, int menu) {
-    return env ? atoi(env) != 0 : menu != 0;
+    return env ? !env_value_off(env) : menu != 0;
 }
 /* (read_input's rule for the background, for the ocarina's notes there: oc_pad_word) */
 static int pads_behind(void) {
@@ -896,17 +957,19 @@ static int motion_counts(int front, const char *env, int menu, int insert) {
 #define VK_XBUTTON2 0x06
 #endif
 /* A mouse button counts only while the mouse is captured, and one held when the capture began only after it was let go
-   (the click that captures never reaches the game) */
+   (the click that captures never reaches the game). menu: one of the game's menus has the mouse (host/display.c
+   hos_mouse_in_game_menu; Windows). Its left, right and middle buttons are that menu's clicks there; the side buttons
+   are no menu's, so they stay their controls' as a key does: Mouse 4 on A confirmed nothing in the text box's choices */
 static int mouse_vk_slot(int vk) {
     return vk == VK_LBUTTON ? 0 : vk == VK_RBUTTON ? 1 : vk == VK_MBUTTON ? 2 : vk == VK_XBUTTON1 ? 3 : vk == VK_XBUTTON2 ? 4 : -1;
 }
 static int mouse_armed[5];
-static void mouse_buttons_arm(int captured) {   /* (once a read) */
+static void mouse_buttons_arm(int captured, int menu) {   /* (once a read) */
     static const int vks[5] = {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2};
-    for (int i = 0; i < 5; i++) mouse_armed[i] = captured && (mouse_armed[i] || !key(vks[i]));
+    for (int i = 0; i < 5; i++) mouse_armed[i] = (captured || (menu && i >= 3)) && (mouse_armed[i] || !key(vks[i]));
 }
-/* whether a control's key is down: a key always (kmap_down: not Enter with Alt), a mouse button only with mouse (captured
-   and armed) */
+/* whether a control's key is down: a key always (kmap_down: not Enter with Alt), a mouse button only with mouse (the
+   mouse captured or a game menu's, and the button armed) */
 static int bound_down(int i, int mouse) {
     for (int k = 0; k < 2; k++) {
         const int vk = (int)key_bind[i][k];
@@ -1041,10 +1104,11 @@ static uint64_t oc_pad_word(uint64_t buttons) {
    are its own, as the keyboard is (key()), and after it closed until they are let go (the press that closed it never
    reaches the game). They are read either way, so the letting go is seen. Whether they were used (a button, or a stick
    past a third) */
-static int pads_merge(uint64_t *buttons, int32_t stick[4]) {
+static int pads_merge(uint64_t *buttons, int32_t stick[4], uint64_t *down) {
     uint64_t pb = 0;
     int32_t ps[4] = {0};
     pads_read(&pb, ps);
+    if (down) *down |= pb;   /* (the pads' buttons down at this read: read_input's player's input check) */
     /* (each input the Insert menu had waits until it is let go; the others and the sticks count again at once, so one input
        that stays down, a worn trigger or a second pad, no longer keeps the rest from the game) */
     static int menu_was;
@@ -1056,8 +1120,8 @@ static int pads_merge(uint64_t *buttons, int32_t stick[4]) {
         *buttons |= pad_after_menu ? bound_pad_buttons(pad_raw_game & ~pad_after_menu) : pb;
         stick_max(stick, ps);
     }
-    return pb || ps[0] > 12000 || ps[0] < -12000 || ps[1] > 12000 || ps[1] < -12000 || ps[2] > 12000 || ps[2] < -12000 ||
-           ps[3] > 12000 || ps[3] < -12000;
+    return ps[0] > 12000 || ps[0] < -12000 || ps[1] > 12000 || ps[1] < -12000 || ps[2] > 12000 || ps[2] < -12000 ||
+           ps[3] > 12000 || ps[3] < -12000;   /* (a stick pushed; the buttons count by *down) */
 }
 /* (hookshot) Walking on the keyboard. The movement keys push the left stick to its edge, so on the keyboard Link always
    ran. While the Walk control's key is held (Caps Lock unless the Controls page changes it), or with the Controls tab's
@@ -1132,14 +1196,20 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
         static const char *env;
         static int looked;
         if (!looked) looked = 1, env = getenv("HOS_INPUT_BACKGROUND");
-        if (pads_in_background(env, rx_option(4, 0))) pads_merge(buttons, stick);
+        if (pads_in_background(env, rx_option(4, 0))) pads_merge(buttons, stick, NULL);
         walk_held(0, 0, rx_option(HOS_OPT_WALK_MODE, 0) == 1);   /* (behind: a toggled walk is kept) */
         return;
     }
-    if (pads_merge(buttons, stick)) player_used();
+    uint64_t down = 0;   /* (the pads' buttons and the bound keys down at this read) */
+    if (pads_merge(buttons, stick, &down)) player_used();
     binds_load();   /* (the keys: key_default's, or hookshot_options.ini's; the mouse's buttons once its capture is known) */
     for (int i = 0; i < HOS_SW_N; i++)
-        if (bound_down(i, 0)) *buttons |= 1ULL << i, player_used();
+        if (bound_down(i, 0)) *buttons |= 1ULL << i, down |= 1ULL << i;
+    /* (a button or a key counts as the player's input when it goes down, not at every read while it stays down: held, as
+       ZL is for the ocarina's song sheet, it kept the game menus' cursor hidden, which the mouse shows by moving) */
+    static uint64_t down_was;
+    if (down & ~down_was) player_used();
+    down_was = down;
     int32_t mouse[4] = {0};
     /* the mouse's motion: the camera itself (mouse_native.c) with the menu's Mouse camera on Native, else the right
        stick; also the stick while the game does not give the camera free control (a menu, a lock-on, the pause menu,
@@ -1148,7 +1218,7 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
     static const char *native_env;
     static int native_looked;
     if (!native_looked) native_looked = 1, native_env = getenv("HOS_MOUSE_NATIVE");
-    const int mode = native_env ? atoi(native_env) != 0 : rx_option(6, 0);   /* (2: Off, the mouse never captured) */
+    const int mode = native_env ? !env_value_off(native_env) : rx_option(6, 0);   /* (2: Off, the mouse never captured) */
     const int native = mode == 1;
     int hos_mouse_native(void);
     void hos_mouse_native_free(int free);
@@ -1165,7 +1235,11 @@ static void read_input(uint64_t *buttons, uint64_t *taps, int32_t stick[4]) {
         captured = mouse_stick(&mouse[2], &mouse[3], (int)((*buttons | *taps | toggles.latched) >> B_L & 1));
         if (captured) stick_max(stick, mouse);
     }
-    mouse_buttons_arm(captured);
+    /* (the side buttons in the game's menus; not with Mouse camera Off, where no button of the mouse is a control) */
+    int hos_mouse_in_game_menu(void);   /* display.c */
+    const int menu_mouse = mode != 2 && hos_mouse_in_game_menu();
+    mouse_buttons_arm(captured, menu_mouse);
+    captured |= menu_mouse;   /* (from here on: whether a mouse button can be a control; the armed ones are) */
     if (captured)
         for (int i = 0; i < HOS_SW_N; i++)
             if (bound_down(i, 1)) *buttons |= 1ULL << i;
@@ -1193,7 +1267,13 @@ volatile uint64_t hos_hid_buttons;   /* (the buttons the game was last given: Hi
 /* GetNpadStates(State* out, int count, unsigned int const& npadId): the latest state first */
 static void npad_states(Ctx *c) {
     uint64_t out = ARG(0);
-    int count = (int)ARG(1);
+    /* (hookshot) at most the 16 states a console keeps, all in guest memory: a count from the game's arguments wrote
+       0x28 bytes a state past any buffer, and past the guest window */
+    int count = (int)ARG(1) < 0 ? 0 : (int)ARG(1) > 16 ? 16 : (int)ARG(1);
+    if (!hos_guest_range(out, (uint64_t)count * STATE_SIZE) || !hos_guest_range(ARG(2), 4)) {
+        RET(0);
+        return;
+    }
     uint32_t id = G32(ARG(2));
     uint64_t buttons = 0, taps = 0;
     int32_t stick[4] = {0};
@@ -1270,6 +1350,9 @@ static void npad_states(Ctx *c) {
     if (connected) buttons = hos_title_input(buttons);
     uint64_t hos_frame_step_buttons(uint64_t buttons);   /* nn_vi.c: the frame step of the wheel and quick menus */
     if (connected) buttons = hos_frame_step_buttons(buttons);
+    /* (no stick direction bits 16-23 in the state: the game's own controllers take bits 16-19 as the D-pad, so the left
+       stick pushed forward, bit 17, held one and A pressed while running forward did not roll. They work out the
+       sticks' directions from the axes themselves) */
     /* oot_pause_menu.c: A on the pause menu's Recomp options button opens the Insert menu */
     uint64_t hos_pausebtn_buttons(uint64_t buttons, uint64_t a);
     if (connected) buttons = hos_pausebtn_buttons(buttons, 1ULL << B_A);
@@ -1332,7 +1415,8 @@ HLE(_ZN2nn3hid22GetSixAxisSensorStatesEPNS0_18SixAxisSensorStateEiRKNS0_19SixAxi
     static int64_t six_sampling, six_base;
     static int was_live;
     const uint64_t out = ARG(0);
-    const int count = (int)ARG(1) < 1 ? 0 : (int)ARG(1) > HOS_MOTION_HISTORY ? HOS_MOTION_HISTORY : (int)ARG(1);
+    int count = (int)ARG(1) < 1 ? 0 : (int)ARG(1) > HOS_MOTION_HISTORY ? HOS_MOTION_HISTORY : (int)ARG(1);
+    if (!hos_guest_range(out, (uint64_t)count * 0x60)) count = 0;   /* (hookshot: the states in guest memory, or none) */
     static const float at_rest[18] = {0, 0, -1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
     int hos_sdl_motion_history(HosMotionSample *out, int max);   /* pad_sdl.c */
     HosMotionSample h[HOS_MOTION_HISTORY];
@@ -1437,6 +1521,10 @@ static void vibration_send(uint64_t handle, uint64_t value) {
     }
     void hos_sdl_rumble_hd(int side, const float value[4]);   /* pad_sdl.c: the value as it is, for HD rumble */
     hos_sdl_rumble_hd(dev, v);
+    /* (hookshot) the same four values, as they are, to RenHDrum's backends (host/rumble_renhdrum.c): they keep the
+       bands apart, which rumble_map above has just flattened for the motors */
+    void rh_push(int side, const float value[4]);
+    rh_push(dev, v);
     void hos_sdl_rumble(float low, float high);   /* pad_sdl.c */
     hos_sdl_rumble(amp[0][0] > amp[1][0] ? amp[0][0] : amp[1][0], amp[0][1] > amp[1][1] ? amp[0][1] : amp[1][1]);
 }

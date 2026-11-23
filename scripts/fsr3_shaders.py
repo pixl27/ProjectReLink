@@ -92,8 +92,19 @@ OF_OPTIONS = ["-DFFX_GPU=1", "-DFFX_GLSL=1"]
 #     those still moved with the scene (#1310, #1420). Where the renderer has it, the colour's alpha says which pixels are
 #     the HUD (0: vk_framegen.cpp hud_source, what the game drew over its picture after the upscale), in this frame and,
 #     through the previous source's copy, the frame before: those pixels are what 2. calls the same in both frames.
+#  4. HUD-less mode's overlay taken whole. AMD lays the presented frame over the made one where it differs from the
+#     HUD-less colour, by a factor that grows with the difference, for a HUD-less colour that is only near the presented
+#     frame's. The renderer's (vk_framegen.cpp hud_source, shaders/fg_hud.comp) is the presented frame's to the bit
+#     wherever nothing was drawn over the picture, so any difference is the HUD or an effect drawn after the upscale (the
+#     fairy's glow): AMD's factor took its faint parts (soft edges, a glow's fall-off) at a fraction, the scene behind them
+#     shown instead, and the made frames had a cut edge around them. Taken whole, they are this frame's.
 FI_T = "InterpolationT()"
 FI_PATCHES = {
+    "ffx_frameinterpolation_inpainting.h": [
+        ("            const FfxFloat32 fStaticFactor = CalculateStaticContentFactor(RawRGBToLinear(fCurrentInterpolationSource), "
+         "RawRGBToLinear(fPresentColor));\n",
+         "            const FfxFloat32 fStaticFactor = 1.0f;   // (hookshot) the presented frame's pixel, whole (FI_PATCHES 4)\n", 1),
+    ],
     "ffx_frameinterpolation_callbacks_glsl.h": [
         ("        FfxInt32        _pad1;\n",
          "        FfxFloat32      fInterpolationT;   // (hookshot) the made frame's place: 0 the frame before, 1 this one\n", 1),

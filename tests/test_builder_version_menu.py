@@ -85,11 +85,11 @@ def check_linux():
 
 def check_windows_source():
     cs = (ROOT / "builder/HookshotBuilder/MainWindow.xaml.cs").read_text(encoding="utf-8")
-    for need in ("bool Switching => pinned != null || Track != Updater.TrackOf(Tools.Find()?.Version);",
+    for need in ("bool Switching => Tools.Find()?.RedTunicRelease != true && (pinned != null || Track != Updater.TrackOf(Tools.Find()?.Version));",
                  "async Task<string?> NewestTag() =>", "pinned ?? (Environment.GetEnvironmentVariable(\"HOOKSHOT_LATEST_TAG\")",
                  "releases = await ReleaseList.Fetch();", "VersionBox.DropDownOpened += VersionsOpened;",
-                 "updateTarget = pinned ?? Updater.Target(latestTag, builder, Track);",
-                 "updateTarget = pinned ?? Updater.Target(latestTag, Tools.Find()?.Version, Track);",
+                 "updateTarget = Tools.Find()?.RedTunicRelease == true ? builder : pinned ?? Updater.Target(latestTag, builder, Track);",
+                 "updateTarget = tools?.RedTunicRelease == true ? tools.Version : pinned ?? Updater.Target(latestTag, tools?.Version, Track);",
                  "Version = pinned };", "pinned = null;   // (a track chosen"):
         assert need in cs, "MainWindow.xaml.cs: " + need
     assert "await Updater.LatestTag(Track)" in cs and cs.count("await Updater.LatestTag(Track)") == 1, \

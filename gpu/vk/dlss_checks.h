@@ -44,6 +44,13 @@ inline int mode_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh, const Mode
     return -1;
 }
 
+/// (hookshot, RX_VK_DLSS_PREWARM: prefer_scaled) Whether prepare makes a DLAA-mode feature for a frame: DLAA asked (native_aa) at
+/// a full-size frame, always; DLSS at a full-size frame only with RX_VK_DLSS_PREWARM=0. With it DLSS takes the scaled mode whose range
+/// holds the full size (MaxQuality's at 2560x1440: 1280x720 to 2560x1440), DLAA's mode only where none does (mode_for's -1).
+/// The Render resolution's Auto starts each area at full size, and the DLAA-mode feature made then was made again 17 frames
+/// later once the size dropped (119 ms, then 29.5 ms)
+inline bool dlaa_feature(bool full, bool native_aa, bool prefer_scaled) { return full && (native_aa || !prefer_scaled); }
+
 /// The preset DLSS draws with while the DLSS model row is stepped through (vk_dlss.cpp prepare). The row goes K, M, L,
 /// NVIDIA's default, so K to L passes M, and a feature made for each preset passed over costs 20 to 35 ms of CPU and its
 /// video memory, which NGX keeps for some seconds after the feature is let go: issue 17's 12 GB card at 3440x1440 DLAA held

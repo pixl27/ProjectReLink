@@ -50,6 +50,17 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    /* env_on_or: the default only when unset; set, as env_on reads it (empty: off) */
+    put("HOOKSHOT_T_SWITCH", NULL);
+    if (!env_on_or("HOOKSHOT_T_SWITCH", 1) || env_on_or("HOOKSHOT_T_SWITCH", 0)) return 5;
+    put("HOOKSHOT_T_SWITCH", "false");
+    if (env_on_or("HOOKSHOT_T_SWITCH", 1)) return 6;
+    put("HOOKSHOT_T_SWITCH", "yes");
+    if (!env_on_or("HOOKSHOT_T_SWITCH", 0)) return 7;
+#ifndef _WIN32   /* (Windows has no variable that is set and empty) */
+    put("HOOKSHOT_T_SWITCH", "");
+    if (env_on_or("HOOKSHOT_T_SWITCH", 1)) return 8;
+#endif
     put("HOOKSHOT_T_NUMBER", "12");
     if (env_int("HOOKSHOT_T_NUMBER", 5) != 12) return 2;
     put("HOOKSHOT_T_NUMBER", "x");
@@ -104,6 +115,8 @@ def main():
     forms = [re.compile(name + r"\s*[!=]=\s*(?:nullptr|NULL)"), re.compile(r"!\s*" + name),
              re.compile(name + r"\s*(?:\?|&&|\|\|)"),
              re.compile(r"(?:(?<![A-Za-z0-9_])\(|(?<=\bif)\(|(?<=while)\(|&&|\|\|)\s*" + name + r"\s*(?:\)|&&|\|\||$)")]
+    # (asked only whether it is set, on purpose, where the value is read by the rule elsewhere)
+    set_at_all = {"HOS_FULLSCREEN": "gpu/vk/vk_menu.cpp: a run that names it at all keeps the menu's Fullscreen row out of it"}
     reads, presence = {}, {}
     for path in sorted(p for d in ("host", "gpu") for p in (ROOT / d).rglob("*") if p.suffix in (".c", ".cpp", ".h")):
         rel = path.relative_to(ROOT).as_posix()
@@ -118,10 +131,37 @@ def main():
                 if line.count('getenv("%s")' % n) == 1 and 'env_on("%s")' % n not in line and \
                         any(f.group(1) == n for form in forms for f in form.finditer(line)):
                     presence.setdefault(n, []).append("%s:%d" % (rel, number))
-    old = sorted(n for n, where in presence.items() if len(where) == reads.get(n, 0))
+    old = sorted(n for n, where in presence.items() if len(where) == reads.get(n, 0) and n not in set_at_all)
     if old:
         raise SystemExit("FAIL: on/off switches still read as set-means-on (set to 0 they are on): use env_on:\n  " +
                          "\n  ".join("%s (%s)" % (n, ", ".join(presence[n])) for n in old))
+    # (no on/off switch of host/ read as a number: atoi says off for true, yes and on. Seen as atoi(getenv(name)), and as
+    # atoi(e) within a few lines of e = getenv(name). A switch that is a number says so here)
+    numbers = {"HOS_CORES", "HOS_PROFILE", "HOS_COND_RECORD", "HOS_FPS_TARGET", "HOS_REALTIME_WINDOW", "HOS_FRAME_SLEEP_MS",
+               "HOS_MKW_INTERVAL", "RX_NVN_WATCH_AFTER", "HOS_MUTEX_TRACE", "HOS_FPS_MAX", "HOS_AUDIO_CHANNELS",
+               "HOS_AUDIO_DEVICE", "HOS_CRASH_TEST", "HOS_LOG_BATCH_MS", "HOS_NVN_REC_SHIFT", "HOS_NVN_WATCH_DRAW",
+               "HOS_SDL_VERSION", "HOS_STATS_AFTER", "HOS_TEXT_SIZE", "HOS_THREAD_TIMES", "HOS_VIDEO_INPUT_LIMIT",
+               "HOS_WIDE_UI_LOG", "HOS_PROFILE_EVERY", "HOS_SHADOW_BUCKET"}
+    switch = r'"((?:RX|HOS|HOOKSHOT|EDEN|NVN)_[A-Z0-9_]+)"'
+    direct = re.compile(r"atoi\(getenv\(" + switch + r"\)\)")
+    taken = re.compile(r"\b(\w+)\s*=\s*getenv\(" + switch + r"\)")
+    atoi_read = set()
+    for path in sorted((ROOT / "host").rglob("*.c")):
+        if "win32_posix" in path.name:
+            continue
+        rel = path.relative_to(ROOT).as_posix()
+        held = {}   # (a variable: the switch it was last given, and the line)
+        for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").split("\n"), 1):
+            found = [m.group(1) for m in direct.finditer(line)]
+            for m in taken.finditer(line):
+                held[m.group(1)] = (m.group(2), number)
+            for var, (n, at) in held.items():
+                if number - at <= 6 and re.search(r"atoi\(%s\b" % re.escape(var), line):
+                    found.append(n)
+            atoi_read.update("%s (%s:%d)" % (n, rel, number) for n in found if n not in numbers)
+    if atoi_read:
+        raise SystemExit("FAIL: switches of host/ read with atoi: an on/off switch reads env_on, env_on_or or env_value_off, a "
+                         "number env_int or a place in this check's list:\n  " + "\n  ".join(sorted(atoi_read)))
     print("PASS: env_on's rule in C, C++ and Python (%d values); no on/off switch read the old way" % len(CASES))
 
 

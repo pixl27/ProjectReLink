@@ -126,6 +126,14 @@ the scene: a HUD that smeared and shook at every turn of the camera (#1310, #142
 draws that upscale (`vk_framegen.cpp` `framegen_hud_before`, from `vk_draw.cpp`'s dispatch), and at the present what the
 game drew over it since is the HUD, marked 0 in the interpolation source's alpha (`hud_source`, `shaders/fg_hud.comp`;
 dispatchFlags bit 17). Those pixels are this frame's, and a sample landing on the HUD in either frame takes the other's. A
-frame with no gameplay upscale (menus, movies) or a picture not the presented one's size keeps the guess. Under a
-see-through HUD the scene shows at the game's frame rate. This does not solve the separate general scene-transition
-flicker.
+frame with no gameplay upscale (menus, movies) or a picture not the presented one's size keeps the guess. Since #1487,
+FSR 3.1 interpolates that copy (AMD's HUD-less colour) and the frame's HUD is laid over each made frame. Laid over whole,
+the presented pixel brought the real frame's scene through the HUD's see-through parts (the hearts' glow, the item box's
+shadow, faint icons, the minimap): a halo of the real frame's background around every HUD element against the made frame's
+moved scene (#1565). So how see-through each HUD pixel is, T, is learned from frame to frame: the HUD stays where it is
+while the scene behind it moves, so the picture before and after the HUD give D1 - D0 = T (S1 - S0), fitted over the
+colour's channels and kept from frame to frame (`shaders/fg_hud_layer.comp`), and started again where T no longer
+explains a frame (the HUD changed). FSR 3.1 is given the HUD-less colour as its present too, so it lays nothing over, and
+each made frame gets B + T times its own scene, B the HUD's own colour (`shaders/fg_hud_composite.comp`); where T is not
+known (the HUD just appeared or changed, nothing moved behind it yet) the presented pixel, as before
+(`RX_VK_FSR_FG_HUD_LAYER=0`: everywhere, for an A/B). This does not solve the separate general scene-transition flicker.

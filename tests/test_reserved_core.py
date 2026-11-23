@@ -54,8 +54,8 @@ def main():
     assert '#elif !defined(__EMSCRIPTEN__)' in reserved and reserved.index('last_fastest_core(&cores)', reserved.index('#elif')) > 0, \
         'hos_reserved_cpus no longer asks last_fastest_core on Linux'
     # (hookshot) the fallback keeps a core the process may run on: one outside its affinity is where a pinned replay would leave it
-    assert 'GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys)' in reserved and \
-        '!((uint64_t)info[i].ProcessorMask & ~(uint64_t)proc)' in reserved, \
+    assert 'const uint64_t proc = process_cpus();' in reserved and \
+        '!((uint64_t)info[i].ProcessorMask & ~proc)' in reserved, \
         "hos_reserved_cpus' fallback no longer keeps to the cores the process may run on"
     assert '/sys/devices/cpu_core/cpus' in linux and 'parse_cpu_list(' in linux and 'pick_reserved_core(' in linux, \
         "Linux's last_fastest_core no longer reads the performance cores from /sys/devices/cpu_core/cpus"
@@ -91,7 +91,7 @@ uint64_t pick(const Core* cores, int n) {
     uint64_t masks[256];
     unsigned char classes[256];
     for (int i = 0; i < n; i++) { masks[i] = cores[i].mask; classes[i] = cores[i].cls; }
-    return pick_reserved_core(masks, classes, n);
+    return pick_reserved_core(masks, classes, n, ~0ull);   // (every processor allowed; masks: test_reserved_core_mask.py)
 }
 struct L3 { uint64_t mask, size; int per = 1; };   // (per: logical processors a core, 2 with SMT)
 uint64_t cache(const L3* l3, int nl3) {
@@ -198,6 +198,7 @@ int main() {
 
 THREADS = r'''
 #include <windows.h>
+#include <atomic>
 #include <pthread.h>
 #include <sched.h>
 #include <sys/syscall.h>
@@ -337,7 +338,9 @@ def threads_check(cxx, cc):
     texture = (ROOT / 'gpu/vk/vk_texture.cpp').read_text(encoding='utf-8')
     gather = block(texture, 'const uint8_t* guest_bytes(uint64_t gpu, uint64_t n, std::vector<uint8_t>& scratch) {')
     helpers = block(texture, 'void helper_thread_start() {') + '\n' if 'void helper_thread_start() {' in texture else ''
-    fixture = THREADS.replace('@REPLAY@', pin).replace('@TEXTURE@', helpers + gather)
+    escape = (ROOT / 'gpu/vk/cxx_escape.h')   # (the gather's helper threads: fork_join)
+    escape = '#include "%s"\n' % escape.as_posix() if escape.exists() else ''
+    fixture = escape + THREADS.replace('@REPLAY@', pin).replace('@TEXTURE@', helpers + gather)
     with tempfile.TemporaryDirectory(prefix='reserved-core-threads-') as tmp:
         tmp = Path(tmp)
         (tmp / 'posix.c').write_text(counted, encoding='utf-8')

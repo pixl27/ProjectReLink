@@ -14,6 +14,13 @@ original instruction instead of a replacement of it.
 Each site's original instruction word is checked: another game version leaves the site out (and says so).
 """
 
+import os
+
+
+class VectorOnly(str):
+    """Spliced C that accesses no guest integer registers or flags."""
+
+
 MAIN = 0x80020000   # (main's base in this image: nx2/eden_image.py)
 UI_M00, UI_M11 = "(2.0f / 3840.0f)", "(2.0f / 2160.0f)"   # (the UI's full-screen orthographic projection, 3840x2160 grid)
 # (the screens whose UI keeps the whole picture: the item-wheel and pause / system menu backgrounds redraw a capture of
@@ -39,6 +46,15 @@ def _ratio(vreg, base=None):
             "memcpy(&_r, c->vreg[%d], 4); const float _d = _r - (16.0f / 9.0f); if (_d <= 0.01f && _d >= -0.01f) { "
             "uint32_t _u; memcpy(&_u, &_w, 4); a64_vset64(c->vreg[%d], _u); %s} } }   /* (nx2/oot_wide.py: camera ratio) */"
             % (vreg, vreg, store))
+
+
+def _clearance(vreg):
+    """The camera's near-plane clearance sphere keeps the game's ratio, not the picture's."""
+    return VectorOnly("{ extern volatile float hos_wide_ratio; const float _w = hos_wide_ratio; "
+            "if (_w > 0.0f && _w != (16.0f / 9.0f)) { float _r; memcpy(&_r, c->vreg[%d], 4); "
+            "if (_r == _w) { "
+            "const float _normal = 16.0f / 9.0f; uint32_t _u; memcpy(&_u, &_normal, 4); "
+            "a64_vset64(c->vreg[%d], _u); } } }   /* (nx2/oot_wide.py: camera clearance) */" % (vreg, vreg))
 
 
 def _size(name):
@@ -117,6 +133,12 @@ UI_SITES = (
     (0x152ac40, 0x2d4b0400, UI_SIZE),               # ldp s0, s1, [x0, #0x58]: the size as drawn
 )
 
+# AArch64 LDR (immediate, unsigned offset), 32-bit SIMD/FP: fixed fields and
+# imm12 scaled by four, Rn and Rt, from the Arm Architecture Reference Manual.
+def _ldr_s(rt, rn, offset):
+    return (0b1011110101 << 22) | ((offset // 4) << 10) | (rn << 5) | rt
+
+
 # (main offset, the original instruction word there, the C after it)
 SITES = (
     # the picture: the graphics setup and the display settings object build {2560, 1440} in x8 (mov, then this movk)
@@ -131,6 +153,9 @@ SITES = (
     (0x4f1e8, 0x2d558ea0, _ratio(3, 21)),
     (0x23b9a8, 0x2d558c00, _ratio(3, 0)),
     (0x33b82c, 0x2d558440, _ratio(1, 2)),
+    # the near-plane clearance sphere and its follow-up branch: ldr s10/s14, [x19, #0x51c]
+    (0x71a844, _ldr_s(10, 19, 0x51c), _clearance(10)),
+    (0x71b624, _ldr_s(14, 19, 0x51c), _clearance(14)),
     # the 2D canvas setup: the layout's projection rows (ldp q1, q4, [x2]); the canvas is x0, its screen 0x1b8 before it
     (0x774368, 0xad401041, HUD),
     # the speech bubble's anchor: after fmul s1, s2, s1 (y * 1080; x * 1920 already in s0)
@@ -154,6 +179,22 @@ def install(lifter, img):
         if have != word:
             print("widescreen: main+%#x holds %s, not %08x: left out" % (off, "?" if have is None else "%08x" % have, word))
             continue
+        if isinstance(text, VectorOnly) and os.environ.get("A64_CAMERA_DIAGNOSTICS") == "1":
+            # A marker enables a bounded trace around an action; counters continue while it is absent.
+            text = text.replace("if (_r == _w) {",
+                                "if (_r == _w) { __atomic_fetch_add(&_changed, 1, __ATOMIC_RELAXED); ")
+            text = text.replace("const float _w = hos_wide_ratio;", "const float _w = _ratio;")
+            reg = word & 31
+            text = VectorOnly("{ extern volatile float hos_wide_ratio; static unsigned long long _hits, _changed, _traced; uint32_t _input, _host; "
+                              "float _ratio = hos_wide_ratio; memcpy(&_input, c->vreg[%d], 4); "
+                              "memcpy(&_host, &_ratio, 4); " % reg +
+                              "unsigned long long _n = __atomic_add_fetch(&_hits, 1, __ATOMIC_RELAXED); " + text +
+                              " { extern int hos_camera_trace_enabled(void); "
+                              "if (!hos_camera_trace_enabled()) __atomic_store_n(&_traced, 0, __ATOMIC_RELAXED); "
+                              "else { if (__atomic_fetch_add(&_traced, 1, __ATOMIC_RELAXED) < 256) { "
+                              "extern void hos_log(const char *, ...); "
+                              "hos_log(\"camera clearance main+%#x: hits=%%llu changed=%%llu input=%%08x host=%%08x\", "
+                              "_n, __atomic_load_n(&_changed, __ATOMIC_RELAXED), _input, _host); } } } }" % off)
         lifter.after[pc] = text
         n += 1
     print("widescreen: %d of %d sites" % (n, len(SITES)))

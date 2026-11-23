@@ -19,13 +19,17 @@ struct Choice {
 /// (the commit rule's), and 25-29 GB in play. Create there held 4-5 GB less and the same fps or better (RX 5600 XT, GTX 1060). The one fallback GPU measured where loads at create
 /// waited seconds (an RX 580, 16 GB) is what the marker is for. marker: an earlier session of this install met the safety
 /// net below. compressed: the compressed program cache is in use
-inline Choice choose(const char* env, bool native_mesh, bool marker, bool compressed = false) {
+/// prepared: the shader preparation runs (RX_VK_PRECOMPILE). start loads the listed programs inside it, so without it start
+/// loads nothing before the title and every program is read at its first draw: the marker is left aside there
+inline Choice choose(const char* env, bool native_mesh, bool marker, bool compressed = false, bool prepared = true) {
     // (the compressed program cache, RX_VK_PROGRAM_CACHE_ZSTD: a record is only read whole, unpacked. The loads at a create call
     // read records by their parts' places and have not been run on it: start, whatever RX_VK_LOAD says)
     if (compressed) return {false, "the program cache is compressed (RX_VK_PROGRAM_CACHE_ZSTD), whose records are only read whole"};
     if (env && !std::strcmp(env, "create")) return {true, "RX_VK_LOAD=create"};
     if (env && !std::strcmp(env, "start")) return {false, "RX_VK_LOAD=start"};
-    if (marker) return {false, "in an earlier session first uses waited too long for loads (hookshot_load_start.txt)"};
+    if (marker && prepared) return {false, "in an earlier session first uses waited too long for loads (hookshot_load_start.txt)"};
+    if (marker) return {true, "hookshot_load_start.txt is left aside: without the shader preparation (RX_VK_PRECOMPILE=0) start "
+                              "would load nothing before the title"};
     return {true, native_mesh ? "the default where the GPU has mesh shaders"
                               : "the default, on the compute fallback too (RX_VK_LOAD=start: every listed program before the title)"};
 }

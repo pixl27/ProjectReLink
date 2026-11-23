@@ -15,14 +15,15 @@ zstd decoder over a small guest window, on frames made here with python-zstandar
   DDict whose ID libzstd reads otherwise, or with all 64 host entries in use (and an entry is free again once its stream
   ends);
 - every page changed is marked for the GPU mirror (HOS_WRITTEN) after its last change, and the virtual core is given up and
-  taken back once a call (kept with HOS_NATIVE_ZSTD=2);
+  taken back once a call with HOS_NATIVE_ZSTD=1, and unset where the renderer says 1 for its GPU (kept with =2, unset where
+  it says 2, and unset before it can answer: the next call asks again); a value set wins over the renderer's;
 - a broken copy (the staging buffer's fill never stored) must fail.
 
 The game's whole-buffer decode (hos_zstd_frames for f_8010b380, HOS_NATIVE_ZSTD_FRAMES) on the same kinds of frames in one
 call, and two frames with a skippable one between: the result is the content's size and the output the original; failures
 give zstd's error code (wrong checksum, too little room, a wrong or missing dictionary, a bad magic, bytes after the frame);
 a DDict made again in place is taken anew; the switch off, a raw dictionary or another format are left to the lifted code,
-writing nothing; nothing is written outside the output room, and all of it is marked; the core is kept. A broken copy (the
+writing nothing; nothing is written outside the output room, and all of it is marked. Large calls hand the core back for the decode, small calls keep it. A broken copy (the
 DDict never passed to libzstd) must fail.
 
 Byte-for-byte equality with the game's own decoder (f_80115c80 run in Unicorn on the game's image) needs the game: checked
@@ -49,6 +50,7 @@ SOURCES = ["common/debug.c", "common/entropy_common.c", "common/error_private.c"
            "common/zstd_common.c", "decompress/huf_decompress.c", "decompress/zstd_ddict.c", "decompress/zstd_decompress.c",
            "decompress/zstd_decompress_block.c"]
 ENV_ON_H = ROOT / "gpu/vk/compat/hookshot_env.h"
+VK_API_H = ROOT / "gpu/vk/vk_api.h"   # (HOS_OPT_NATIVE_ZSTD; hos_zstd.c includes it beside hookshot_env.h, which the copy cannot reach)
 BROKEN = ("                S_STAGED(g) = (uint32_t)staged;\n", "")   # (the staging fill never stored)
 BROKEN_F = ("ZSTD_decompress_usingDDict(z, GP(dst), room, GP(src), n, d->dd)",   # (the whole-buffer decode's DDict not passed)
             "ZSTD_decompress_usingDDict(z, GP(dst), room, GP(src), n, NULL)")
@@ -108,6 +110,10 @@ int hos_vcore_away(void) { aways++; return 1; }
 void hos_vcore_back(void) { backs++; }
 void hos_log(const char *fmt, ...) { (void)fmt; }
 #include "hos_zstd.c"
+int rx_option(int id, int otherwise) {   /* (the renderer: ZS_RENDERER_ZSTD's value for HOS_OPT_NATIVE_ZSTD, unset: no renderer) */
+    const char *e = getenv("ZS_RENDERER_ZSTD");
+    return id == HOS_OPT_NATIVE_ZSTD && e ? atoi(e) : otherwise;
+}
 static FILE *in;
 static void rd(void *p, size_t n) {
     if (fread(p, 1, n, in) != n) { fprintf(stderr, "short case\n"); exit(2); }
@@ -224,6 +230,10 @@ static int cold_env_on(const char *name) {
 }
 #define env_on cold_env_on
 #include "hos_zstd.c"
+int rx_option(int id, int otherwise) {   /* (the renderer: ZS_RENDERER_ZSTD's value for HOS_OPT_NATIVE_ZSTD, unset: no renderer) */
+    const char *e = getenv("ZS_RENDERER_ZSTD");
+    return id == HOS_OPT_NATIVE_ZSTD && e ? atoi(e) : otherwise;
+}
 #undef env_on
 THR_FN(call) {
     fn((Ctx *)p);
@@ -370,7 +380,7 @@ class Crash(Exception):
     pass
 
 
-def run(exe, tmp, ops, mode="1", pre=()):
+def run(exe, tmp, ops, mode="1", pre=(), renderer=None):
     img = bytearray(SIZE)
     for a, b in pre:
         img[a - BASE:a - BASE + len(b)] = b
@@ -382,9 +392,11 @@ def run(exe, tmp, ops, mode="1", pre=()):
             parts.append(struct.pack("<QI", a, len(b)) + b)
         parts.append(struct.pack("<I8Q", len(x) == 8, *(list(x) + [0] * (8 - len(x)))))
     case.write_bytes(b"".join(parts))
-    env = {k: v for k, v in os.environ.items() if k not in ("HOS_NATIVE_ZSTD", "HOS_NATIVE_ZSTD_FRAMES")}
+    env = {k: v for k, v in os.environ.items() if k not in ("HOS_NATIVE_ZSTD", "HOS_NATIVE_ZSTD_FRAMES", "ZS_RENDERER_ZSTD")}
     if mode is not None:   # (None: both switches unset, the default)
         env.update(HOS_NATIVE_ZSTD=mode, HOS_NATIVE_ZSTD_FRAMES=mode)
+    if renderer is not None:   # (the renderer's default for this GPU, as HOS_OPT_NATIVE_ZSTD answers; None: no renderer)
+        env.update(ZS_RENDERER_ZSTD=renderer)
     r = subprocess.run([str(exe), str(case), str(res)], env=env)
     if r.returncode:
         raise Crash("the fixture stopped with %#x" % (r.returncode & 0xFFFFFFFF))
@@ -416,17 +428,17 @@ def check_calls(chk, name, calls, mode="1"):
     for k, (h, changed, unmarked, aways, backs, x0, *_) in enumerate(calls):
         chk(unmarked == 0, "%s: call %d changed %d page(s) without a mark after the change" % (name, k, unmarked))
         if h:
-            chk(aways == backs and aways == (1 if mode in ("1", "", None) else 0) or (aways == backs == 0 and signed(x0) == -1),
+            chk(aways == backs and aways == (1 if mode == "1" else 0) or (aways == backs == 0 and signed(x0) == -1),
                 "%s: call %d gave the core up %d times and took it back %d" % (name, k, aways, backs))
         else:
             chk(changed == 0, "%s: call %d left to the lifted code but wrote %d page(s)" % (name, k, changed))
 
 
-def good(chk, exe, tmp, name, data, frame, split, d=None, kind=None, seed=0, mode="1"):
+def good(chk, exe, tmp, name, data, frame, split, d=None, kind=None, seed=0, mode="1", renderer=None, expect=None):
     pre = []
     dd = place(pre, 0, d, kind) if d else 0
-    calls, mem = run(exe, tmp, stream(0, frame, split, dd, s_init(0), seed), mode=mode, pre=pre)
-    check_calls(chk, name, calls, mode)
+    calls, mem = run(exe, tmp, stream(0, frame, split, dd, s_init(0), seed), mode=mode, pre=pre, renderer=renderer)
+    check_calls(chk, name, calls, expect or mode)
     chk(all(c[0] == 1 for c in calls), "%s: a call was not done on the host" % name)
     got = [signed(c[5]) for c in calls]
     chk(got[-1] == 0 and all(r >= 0 for r in got), "%s: results %s" % (name, got[-4:]))
@@ -536,9 +548,17 @@ def checks(exe, tmp, quick=False):
     chk(calls[65][0] == 1 and signed(calls[65][5]) == 0 and calls[66][0] == 1, "64 entries: not free again after a stream ended")
     # the core kept with =2
     good(chk, exe, tmp, "HOS_NATIVE_ZSTD=2", text, compress(text), 4096, mode="2")
-    # the default: unset or empty, done on the host and the core given up, as with =1
+    # the default: unset or empty, done on the host and the core kept, as with =2
     good(chk, exe, tmp, "the switch unset", text, compress(text), 4096, mode=None)
     good(chk, exe, tmp, "the switch empty", text, compress(text), 4096, mode="")
+    # the default by the GPU (gpu/vk/device_policy.h native_zstd_mode, asked through HOS_OPT_NATIVE_ZSTD): unset or empty, the core
+    # given up where the renderer says 1 and kept where it says 2; kept while it cannot answer yet (0); a value set wins
+    good(chk, exe, tmp, "unset, the renderer says 1", text, compress(text), 4096, mode=None, renderer="1", expect="1")
+    good(chk, exe, tmp, "empty, the renderer says 1", text, compress(text), 4096, mode="", renderer="1", expect="1")
+    good(chk, exe, tmp, "unset, the renderer says 2", text, compress(text), 4096, mode=None, renderer="2", expect="2")
+    good(chk, exe, tmp, "unset, the renderer cannot answer yet", text, compress(text), 4096, mode=None, renderer="0", expect="2")
+    good(chk, exe, tmp, "=2 over the renderer's 1", text, compress(text), 4096, mode="2", renderer="1", expect="2")
+    good(chk, exe, tmp, "=1 over the renderer's 2", text, compress(text), 4096, mode="1", renderer="2", expect="1")
     return chk.failed
 
 
@@ -588,7 +608,9 @@ def frames_checks(exe, tmp, quick=False):
         h, changed, unmarked, aways, backs, x0 = calls[0][:6]
         chk(h == 1 and x0 == len(data), "whole %s: handled %d, result %#x" % (name, h, x0))
         chk(mem[DST - BASE:DST - BASE + len(data)] == data, "whole %s: the output is not the original" % name)
-        chk(unmarked == 0 and aways == backs == 0, "whole %s: %d page(s) unmarked, core given up %d" % (name, unmarked, aways))
+        handoff = int(max(room, len(frame)) >= 128 << 10)
+        chk(unmarked == 0 and aways == backs == handoff,
+            "whole %s: %d unmarked pages, %d/%d core handoffs, expected %d" % (name, unmarked, aways, backs, handoff))
         off = run(exe, tmp, [x], mode="0", pre=pre)[1]   # (memory as it was: nothing changes outside the output room)
         chk(mem[:DST - BASE] == off[:DST - BASE] and mem[DST - BASE + room:] == off[DST - BASE + room:],
             "whole %s: memory outside the output room changed" % name)
@@ -607,6 +629,8 @@ def frames_checks(exe, tmp, quick=False):
         h, changed, unmarked, x0 = calls[0][0], calls[0][1], calls[0][2], calls[0][5]
         chk(h == 1 and zerr(x0) == want, "whole %s: handled %d, error %d, wanted %d" % (name, h, zerr(x0), want))
         chk(unmarked == 0, "whole %s: %d page(s) unmarked" % (name, unmarked))
+        handoff = int(max(room, len(frame)) >= 128 << 10)
+        chk(calls[0][3:5] == (handoff, handoff), "whole %s: unbalanced error-path handoff" % name)
         off = run(exe, tmp, [whole(frame, room, dd)], mode="0", pre=pre)[1]   # (nothing written outside the output room)
         chk(mem[:DST - BASE] == off[:DST - BASE] and mem[DST - BASE + room:] == off[DST - BASE + room:],
             "whole %s: memory outside the output room changed" % name)
@@ -668,7 +692,7 @@ def build(cxx, tmp, broken=False, conc=False):
             subprocess.run([cc, "-c", str(ZSTD / f), "-o", str(o), "-w"] + flags, check=True)
         objs.append(str(o))
     exe = d / "fixture.exe"
-    subprocess.run([cc, "-std=gnu11", "-include", str(ENV_ON_H), "-Wall", "-Wextra", "-I", str(d), str(d / "fixture.c"),
+    subprocess.run([cc, "-std=gnu11", "-include", str(ENV_ON_H), "-include", str(VK_API_H), "-Wall", "-Wextra", "-I", str(d), str(d / "fixture.c"),
                     "-o", str(exe)] + flags + objs + (["-pthread"] if conc and os.name != "nt" else []), check=True)
     return exe
 

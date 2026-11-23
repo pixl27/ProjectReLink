@@ -16,6 +16,10 @@
 #include <stdbool.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#ifdef TRACY_ENABLE
+#define HT_WRAP_LOCKS   /* (HOOKSHOT_TRACY: this file's locks that have to wait are zones) */
+#include "hos_tracy.h"
+#endif
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION   /* (older Windows SDKs lack it: Windows 10 1803 and later take it) */
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif
@@ -539,6 +543,10 @@ static uint64_t wake_chain_key(HosThread *t) { return 1ULL << 62 | (uint64_t)(ui
 void hos_thread_wait(HosThread *t, int64_t timeout_ns, int *timed_out) {
     DWORD ms = timeout_ns < 0 ? INFINITE : (DWORD)((timeout_ns + 999999) / 1000000);
     HOS_CHAIN(HOS_CHAIN_WAIT, wake_chain_key(t));
+#ifdef TRACY_ENABLE
+    HT_WAIT(tz, "kernel wait");   /* (svc mutexes, condition variables, the address arbiter: host/hos_svc.c) */
+    HT_ZONE_TEXTF(tz, "lr %#llx", (unsigned long long)(hos_ctx() ? hos_ctx()->x[30] : 0));
+#endif
     const int away = hos_vcore_away();
     *timed_out = WaitForSingleObject(t->wake, ms) == WAIT_TIMEOUT;
     if (away) hos_vcore_back();
@@ -592,6 +600,9 @@ Ctx *hos_boot_main_thread(uint64_t stack_size) {
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &t->handle, 0, FALSE,
                     DUPLICATE_SAME_ACCESS);   /* a real handle, for the profiler */
     SetThreadDescription(GetCurrentThread(), L"MainThread");   /* (HOS_SAMPLE finds threads by it) */
+#ifdef TRACY_ENABLE
+    HT_THREAD_NAME("MainThread");
+#endif
     hos_thread_pin(t->handle, t->name);
     setup_guest(t);
     t->ctx.x[31] = (t->stack + stack_size) & ~15ULL;
@@ -601,10 +612,36 @@ Ctx *hos_boot_main_thread(uint64_t stack_size) {
     return &t->ctx;
 }
 
+/* (hookshot) The host's MXCSR follows the guest's FPCR.FZ: results flushed to zero (FTZ) and subnormal operands read as zeros
+   (DAZ), which is what Arm's flush-to-zero mode does. The hot functions' floating point runs on the host's own
+   instructions (third_party/a64-kit/lift/a64_lift.py, NATIVE_FP), and those flush as the guest expects only with both
+   bits set. The exact helpers keep their values under them: with FZ they flush what they compute themselves. Called by
+   lifted code after every MSR FPCR, and at a thread's and a fiber's start (MXCSR is a thread's, and a fiber's with
+   FIBER_FLAG_FLOAT_SWITCH). HOS_FPCR_SYNC=0: MXCSR left alone, as before */
+void hos_fpcr_sync(Ctx *c) {
+#if defined(__x86_64__) || defined(_M_X64)
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("HOS_FPCR_SYNC");
+        on = !(e && e[0] == '0');
+    }
+    if (!on) return;
+    const unsigned want = ((uint32_t)c->fpcr & (1u << 24)) ? 0x8040u : 0u;
+    const unsigned now = _mm_getcsr();
+    if ((now & 0x8040u) != want) _mm_setcsr((now & ~0x8040u) | want);
+#else
+    (void)c;
+#endif
+}
+
 static DWORD WINAPI thread_main(void *p) {
     HosThread *t = (HosThread *)p;
     cur = t;
+#ifdef TRACY_ENABLE
+    HT_THREAD_NAME(t->name);   /* (the guest thread's whole name: the system's keeps 15 characters on Linux) */
+#endif
     Ctx *c = &t->ctx;
+    hos_fpcr_sync(c);
     c->x[0] = t->arg;
     c->x[30] = 0;
     c->x[31] = (t->stack + t->stack_size) & ~15ULL;
@@ -676,6 +713,10 @@ void hos_thread_start(HosThread *t) {
 
 void hos_thread_join(HosThread *t) {
     if (!t->handle) return;
+#ifdef TRACY_ENABLE
+    HT_WAIT(tz, "thread join");
+    HT_ZONE_TEXTF(tz, "%s", t->name);
+#endif
     const int away = hos_vcore_away();
     /* (EvilOOT, 11-07: a freeze after Load, one thread joining another for good: a join of over 10 s says who joins whom, once) */
     if (WaitForSingleObject(t->handle, 10000) == WAIT_TIMEOUT) {
@@ -768,6 +809,9 @@ void hos_thread_set_name(HosThread *t, const char *name) {
     snprintf(t->name, sizeof t->name, "%s", name);
     __atomic_store_n(&t->serial, serial_name(t->name), __ATOMIC_RELAXED);   /* (atomic: SetThreadName may name another thread) */
     vc_name_prio(t);
+#ifdef TRACY_ENABLE
+    if (t == cur) HT_THREAD_NAME(t->name);   /* (another thread's: Tracy shows the system's name, set below) */
+#endif
     if (t->handle) {
         wchar_t w[48];
         MultiByteToWideChar(CP_UTF8, 0, t->name, -1, w, 48);
@@ -823,7 +867,8 @@ static void vc_name_prio(HosThread *t) {
    fastest kind (8+ logical processors always have them on a CPU of one kind): a laptop's 2 performance cores and 8
    efficiency ones (i5-1235U) would keep one of the two from the game; then none is kept. The calling thread's
    processor group's cores: the masks the affinity calls take are its group's. On Linux the same choice from
-   /sys/devices/cpu_core/cpus (Intel's hybrid CPUs; last_fastest_core below); without that file, the last core, as before. */
+   /sys/devices/cpu_core/cpus (Intel's hybrid CPUs; last_fastest_core below); without that file, the last core, as before.
+   Every way, only among the cores the process may run on wholly (its affinity mask: process_cpus). */
 /* (hookshot) The cores that share the largest L3, on a CPU whose cores do not all share one of the same size: AMD's X3D CPUs
    with two CCDs (7900X3D, 7950X3D, 9900X3D, 9950X3D) have the 3D V-Cache on one CCD only (96 MB against 32 MB). Windows
    moves a game there only when its Game Bar knows the program as a game; this one it does not know, so its threads ran on
@@ -855,12 +900,25 @@ static uint64_t pick_cache_cores(const uint64_t *masks, const uint64_t *sizes, i
     if (physical < 8) return 0;
     return best;
 }
-/* (the choice: the cores' logical processor masks and EfficiencyClass, n of them; 0 for none. tests/test_reserved_core.py) */
-static uint64_t pick_reserved_core(const uint64_t *masks, const unsigned char *classes, int n) {
+/* (hookshot) The logical processors this process may run on (its affinity mask: `start /affinity`, a launcher's, Process
+   Lasso's, taskset's), for the reserved core's choice; every one when the mask cannot be read (Windows gives 0 for a process
+   with threads in more than one processor group) */
+static uint64_t process_cpus(void) {
+    DWORD_PTR proc = 0, sys = 0;
+    if (!GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys) || !proc) return ~0ull;
+    return (uint64_t)proc;
+}
+/* (the choice: the cores' logical processor masks and EfficiencyClass, n of them, among the cores whose logical processors
+   are all in allowed (process_cpus); 0 for none. A core outside the process's mask is no candidate and is not counted: the
+   replay thread cannot be pinned there (Windows refuses the mask; Linux lets the thread leave the set it was given), and
+   the game's threads would lose a core of the mask's for nothing. As the earlier fallback below, which the enhanced choice
+   skipped: under 0x0FFF of 16 the last core of all, 0xC000, was kept, the replay's pin was refused and the log said it held.
+   tests/test_reserved_core.py, tests/test_reserved_core_mask.py) */
+static uint64_t pick_reserved_core(const uint64_t *masks, const unsigned char *classes, int n, uint64_t allowed) {
     uint64_t last = 0;
     int best = -1, fast = 0, logical = 0;
     for (int i = 0; i < n; i++) {
-        if (!masks[i]) continue;
+        if (!masks[i] || (masks[i] & ~allowed)) continue;
         logical += __builtin_popcountll(masks[i]);
         if ((int)classes[i] > best) {
             best = classes[i], last = masks[i], fast = 1;
@@ -875,8 +933,9 @@ static uint64_t pick_reserved_core(const uint64_t *masks, const unsigned char *c
     static bool logged = false;
     if (!logged) {
         logged = true;
-        hos_log("vk: reserved core selection: %d cores, %d logical, best class=%d, fast cores=%d, selected=%#llx",
-                n, logical, best, fast, (unsigned long long)last);
+        hos_log("vk: reserved core selection: %d cores, %d logical, best class=%d, fast cores=%d, selected=%#llx "
+                "(of the logical processors %#llx)", n, logical, best, fast, (unsigned long long)last,
+                (unsigned long long)allowed);
         for (int i = 0; i < n; i++) {
             if (masks[i]) {
                 hos_log("vk:   core %d: mask=%#llx, class=%d, popcount=%d",
@@ -892,7 +951,7 @@ uint64_t hos_cache_cpus(void) {
     static uint64_t mask = ~0ull;
     if (mask != ~0ull) return mask;
     mask = 0;
-    if (getenv("HOS_CACHE_CORES") && !atoi(getenv("HOS_CACHE_CORES"))) return mask;
+    if (!env_on_or("HOS_CACHE_CORES", 1)) return mask;
     static uint64_t masks[64], sizes[64], cores[256];
     DWORD len = 0;
     int n = 0, ncores = 0;
@@ -947,9 +1006,10 @@ static uint64_t last_fastest_core_legacy(int *cores) {
     }
 
     int logical = 0;
-    int current_core = 0;
+    int current_core = 0, listed = 0;
     uint64_t masks[256];
     unsigned char classes[256];
+    const uint64_t allowed = process_cpus();   /* (hookshot: the cores the process may run on wholly, as pick_reserved_core) */
 
     int pcore_candidates = 0;
     int ecore_candidates = 0;
@@ -957,6 +1017,8 @@ static uint64_t last_fastest_core_legacy(int *cores) {
     for (DWORD i = 0; i < len / sizeof info[0] && current_core < 256; i++) {
         if (info[i].Relationship == RelationProcessorCore) {
             uint64_t mask = (uint64_t)info[i].ProcessorMask;
+            listed++;
+            if (mask & ~allowed) continue;
             int popcount = __builtin_popcountll(mask);
             logical += popcount;
 
@@ -974,15 +1036,15 @@ static uint64_t last_fastest_core_legacy(int *cores) {
         }
     }
 
-    *cores = current_core;
+    *cores = listed;
 
-    hos_log("vk: legacy API fallback: %d cores, %d logical, P-candidates=%d, E-candidates=%d",
-            current_core, logical, pcore_candidates, ecore_candidates);
+    hos_log("vk: legacy API fallback: %d cores, %d logical, P-candidates=%d, E-candidates=%d (of the logical processors %#llx)",
+            current_core, logical, pcore_candidates, ecore_candidates, (unsigned long long)allowed);
 
     // If mixed core types detected, use enhanced picker
     if (pcore_candidates > 0 && ecore_candidates > 0) {
         hos_log("vk: Intel hybrid CPU detected via legacy API heuristic");
-        return pick_reserved_core(masks, classes, current_core);
+        return pick_reserved_core(masks, classes, current_core, allowed);
     }
 
     // Single CPU type - use original logic (last core)
@@ -1036,7 +1098,7 @@ static uint64_t last_fastest_core(int *cores) {
     }
 
     *cores = n;
-    return pick_reserved_core(masks, classes, n);
+    return pick_reserved_core(masks, classes, n, process_cpus());
 }
 #endif
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
@@ -1087,7 +1149,7 @@ static uint64_t last_fastest_core(int *cores) {
             n++;
         }
     *cores = n;
-    return pick_reserved_core(masks, classes, n);
+    return pick_reserved_core(masks, classes, n, process_cpus());
 }
 #endif
 uint64_t hos_reserved_cpus(void) {
@@ -1109,7 +1171,7 @@ uint64_t hos_reserved_cpus(void) {
         return mask;
     }
 
-    if (getenv("HOS_RESERVE_CORE") && !atoi(getenv("HOS_RESERVE_CORE"))) {
+    if (!env_on_or("HOS_RESERVE_CORE", 1)) {
         hos_log("vk: HOS_RESERVE_CORE=0, no core reserved");
         return mask;
     }
@@ -1119,13 +1181,14 @@ uint64_t hos_reserved_cpus(void) {
        then took 9.8-10.0 ms a frame but the frame rate stayed at 56.9-57.4; with the 8 shared, 10.1-10.5 ms and 59.9 fps.
        HOS_RESERVE_CORE=1: the last core of the fastest kind is kept all the same, as on other CPUs. That is normally a core of
        the other CCD, not the cache core of the 9.8-10.0 ms above, and the game's threads then have all of the cache cores */
-    if (hos_cache_cpus() && !(getenv("HOS_RESERVE_CORE") && atoi(getenv("HOS_RESERVE_CORE")))) return mask;
+    if (hos_cache_cpus() && !env_on("HOS_RESERVE_CORE")) return mask;
     {
         int cores = 0;
         const uint64_t fast = last_fastest_core(&cores);
         if (cores) {
             mask = fast;
-            hos_log("vk: reserved core mask (enhanced): %#llx (%d cores)", (unsigned long long)mask, cores);
+            hos_log("vk: reserved core mask (enhanced): %#llx (%d cores; a core the process may run on wholly, of %#llx)",
+                    (unsigned long long)mask, cores, (unsigned long long)process_cpus());
             return mask;
         }
     }
@@ -1135,7 +1198,8 @@ uint64_t hos_reserved_cpus(void) {
         const uint64_t fast = last_fastest_core(&cores);
         if (cores) {
             mask = fast;
-            hos_log("vk: reserved core mask (hybrid, /sys/devices/cpu_core): %#llx (%d cores)", (unsigned long long)mask, cores);
+            hos_log("vk: reserved core mask (hybrid, /sys/devices/cpu_core): %#llx (%d cores; a core the process may run on "
+                    "wholly, of %#llx)", (unsigned long long)mask, cores, (unsigned long long)process_cpus());
             return mask;
         }
     }
@@ -1147,13 +1211,13 @@ uint64_t hos_reserved_cpus(void) {
        affinity) had the PC's last core kept all the same, outside its set, and a thread may leave the set: the replay ran
        there, beside whatever else did. A timed session kept to one CCD of a 7900X (CPUs 0-5,12-17) replayed on CPUs 11 and
        23 of the other, with the builds: frames of 2-8 s whenever one ran, and a 13th core when none did. A core counts
-       when all its logical processors are allowed; with every processor allowed, the last core as before */
-    DWORD_PTR proc = 0, sys = 0;
-    if (!GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys) || !proc) proc = ~(DWORD_PTR)0;
+       when all its logical processors are allowed; with every processor allowed, the last core as before. (The choices
+       above keep the same rule: pick_reserved_core) */
+    const uint64_t proc = process_cpus();
     int logical = 0;
     uint64_t last = 0;
     for (DWORD i = 0; i < len / sizeof info[0]; i++)
-        if (info[i].Relationship == RelationProcessorCore && !((uint64_t)info[i].ProcessorMask & ~(uint64_t)proc)) {
+        if (info[i].Relationship == RelationProcessorCore && !((uint64_t)info[i].ProcessorMask & ~proc)) {
             logical += __builtin_popcountll((uint64_t)info[i].ProcessorMask);
             if ((uint64_t)info[i].ProcessorMask > last) last = (uint64_t)info[i].ProcessorMask;
         }
@@ -1253,10 +1317,18 @@ static int hos_short_sleep_pollers(const char *asked, int threads) {
 /* (virtual cores: a sleep gives the core up, SleepThread(0) offers it to a waiter as good) guest: the game's own sleep */
 static void sleep_away(int64_t ns, int guest) {
     if (ns <= 0) {
+#ifdef TRACY_ENABLE
+        HT_WAIT(yz, "sleep 0 (yield)");
+#endif
         hos_vcore_yield();
         SwitchToThread();
         return;
     }
+#ifdef TRACY_ENABLE
+    HT_WAIT(tz, "sleep");
+    HT_ZONE_TEXTF(tz, "%s %.3f ms, lr %#llx", guest ? "guest" : "host", ns / 1e6,
+                  (unsigned long long)(guest && hos_ctx() ? hos_ctx()->x[30] : 0));
+#endif
     HOS_CHAIN(HOS_CHAIN_SLEEP, (uint64_t)ns);
     const int away = hos_vcore_away();
     sleep_ns(ns, guest);
@@ -1458,9 +1530,28 @@ HLE(_ZN2nn2os19GetCurrentStackInfoEPmS1_) {
     if (ARG(1)) G64(ARG(1)) = cur->stack_size;
 }
 
+/* (hookshot) nn::os::YieldThread gives up the virtual core only, not the processor (HOS_OS_YIELD=1: SwitchToThread as
+   well, as before; HOS_AB may flip it, each yield deciding alone). OoT yields after every job and actor callback. On a
+   PC of 4 cores in Castle Town's market the job threads' CPU time was about their running time plus their time inside
+   SwitchToThread (the six BaseProc executors 107 % of a core measured, 45.5 % of it running, 51.6 % in SwitchToThread):
+   kernel time handing the processor to another thread and taking it back, about 0.75 of the four processors over the
+   job threads. hos_vcore_yield already hands the virtual core to a waiting game thread of better or equal priority, which
+   is what the game's yield asks for; the OS still moves threads between processors at the end of their time slices. */
+static int os_yield(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("HOS_OS_YIELD");
+        v = e && !env_value_off(e);
+    }
+    return hos_ab_value("HOS_OS_YIELD", v);
+}
 HLE(_ZN2nn2os11YieldThreadEv) {
+#ifdef TRACY_ENABLE
+    HT_WAIT(tz, "YieldThread");
+    HT_ZONE_TEXTF(tz, "lr %#llx", (unsigned long long)c->x[30]);
+#endif
     hos_vcore_yield();
-    SwitchToThread();
+    if (os_yield()) SwitchToThread();
 }
 /* HOS_SLEEP_LOG=1 (diagnostic): guest sleeps by caller (LR) every 5 s: count, asked, slept */
 void hos_sleep_logged(int64_t ns, uint64_t lr) {
@@ -1514,7 +1605,7 @@ void hos_sleep_logged(int64_t ns, uint64_t lr) {
 static int present_poll(Ctx *c, int64_t ns) {
     static int on = -1;
     static uint64_t fn_ok, fn_bad;
-    if (on < 0) on = getenv("HOS_PRESENT_POLL") && atoi(getenv("HOS_PRESENT_POLL")) != 0;
+    if (on < 0) on = env_on("HOS_PRESENT_POLL");
     if (!on || c->x[30] != 0x80590520 || ns <= 0 || ns > 20000000) return 0;
     const uint64_t fp = G64(c->x[24]);
     if (fp != fn_ok) {
@@ -1655,6 +1746,9 @@ typedef struct HosFiber {
     void *host;
     int started, done;
     struct HosFiber *next;
+#ifdef TRACY_ENABLE
+    char tracy_name[32];   /* (HOOKSHOT_TRACY: the fiber's row in a capture; Tracy keeps the pointer) */
+#endif
 } HosFiber;
 static SRWLOCK fibers_lock = SRWLOCK_INIT;
 static HosFiber *fibers;
@@ -1689,6 +1783,7 @@ static void WINAPI fiber_main(void *p) {
     c->x[0] = f->arg;
     c->x[30] = 0;
     c->x[31] = (f->stack + f->size) & ~15ULL;
+    hos_fpcr_sync(c);   /* (a new fiber has the default MXCSR and the FPCR of whoever started it) */
     a64_icall(c, f->fn);   /* FiberType* (*)(void*) */
     const uint64_t next = c->x[0];
     f->done = 1;
@@ -1722,6 +1817,19 @@ static void fiber_switch(Ctx *from, HosFiber *to) {
     dst->thread = t->ctx.thread;
     if (from->poll) dst->poll = 1;   /* (a pending virtual-core request follows the thread) */
     t->run_ctx = to ? &to->ctx : NULL;
+#ifdef TRACY_ENABLE
+    /* (the zones from here on are the fiber's, or the thread's own again: a fiber's open zones follow it to the thread
+       that runs it next, and Tracy checks each one's begins and ends by itself) */
+    {
+        extern _Thread_local int hos_tracy_calls_open;
+        static volatile LONG told;
+        if (hos_tracy_calls_open && InterlockedIncrement(&told) <= 5)
+            hos_log("tracy: a fiber switch (to %s) with %d game call zones open on %s", to ? to->tracy_name : "the thread's own",
+                    hos_tracy_calls_open, t->name);
+    }
+    if (to) HT_FIBER_ENTER(to->tracy_name);
+    else HT_FIBER_LEAVE();
+#endif
     SwitchToFiber(to ? to->host : t->host_fiber);
     /* back in `from`, maybe on another thread: take that one's identity (fiber_switch's caller set it already) */
 }
@@ -1732,6 +1840,9 @@ HLE(_ZN2nn2os15InitializeFiberEPNS0_9FiberTypeEPFS2_PvES3_S3_mi) {
     if (!f) {
         f = (HosFiber *)calloc(1, sizeof *f);
         f->ft = ARG(0);
+#ifdef TRACY_ENABLE
+        snprintf(f->tracy_name, sizeof f->tracy_name, "fiber %llx", (unsigned long long)ARG(0));
+#endif
         AcquireSRWLockExclusive(&fibers_lock);
         f->next = fibers, fibers = f;
         ReleaseSRWLockExclusive(&fibers_lock);
@@ -1812,8 +1923,7 @@ static struct { int64_t takes, waits, wait_ns, max_ns, escapes, kicks, yields, b
 int hos_vcores_on(void) {
     static int on = -1;
     if (on < 0) {
-        const char *e = getenv("HOS_VCORES");
-        on = e ? atoi(e) != 0 : 1;   /* (mkw-recomp: on unless HOS_VCORES=0; the game's job queues need it) */
+        on = env_on_or("HOS_VCORES", 1);   /* (mkw-recomp: on unless HOS_VCORES=0; the game's job queues need it) */
     }
     return on;
 }
@@ -1897,7 +2007,7 @@ static void vc_take(HosThread *t, int c) {
     vc_owner[c] = t;
     t->vc_held = c + 1;
     t->vc_last = c + 1;
-    t->vc_kick = 0;
+    __atomic_store_n(&t->vc_kick, 0, __ATOMIC_RELAXED);
     t->vc_starved = 0;
     t->vc_took = hos_now_ns();
     /* (hookshot, vc_bg_cap) a frame thread took a core past the cap: the worst background holder not left alone gives
@@ -1925,7 +2035,9 @@ static void vc_take(HosThread *t, int c) {
 static void vc_dequeue(HosThread *t) {
     for (int i = 0; i < vc_nq; i++)
         if (vc_queue[i] == t) {
-            vc_queue[i] = vc_queue[--vc_nq];
+            const int last = vc_nq - 1;
+            vc_queue[i] = vc_queue[last];
+            __atomic_store_n(&vc_nq, last, __ATOMIC_RELEASE);
             break;
         }
     t->vc_queued = 0;
@@ -2132,12 +2244,18 @@ static void vc_acquire(HosThread *t) {
                (uintptr_t)h);
     }
     const int64_t t0 = hos_now_ns();
+#ifdef TRACY_ENABLE
+    HT_WAIT(tz, "vcore wait");   /* (a guest thread ready to run, waiting for one of the game's cores) */
+#endif
     HOS_CHAIN(HOS_CHAIN_WAIT, vc_chain_key(t));
     t->vc_since = t0;
     t->vc_by[0] = 0;
     int how = 1;   /* (vc_long_wait: 0 a grant, 1 found free, 2 an escape) */
     t->vc_queued = 1;
-    if (vc_nq < 1024) vc_queue[vc_nq++] = t;
+    if (vc_nq < 1024) {
+        vc_queue[vc_nq] = t;
+        __atomic_store_n(&vc_nq, vc_nq + 1, __ATOMIC_RELEASE);
+    }
     vc_st.waits++;
     for (;;) {
         /* the worst holder worse than t on a core t may use gives it up at its next checkpoint; after
@@ -2160,7 +2278,7 @@ static void vc_acquire(HosThread *t) {
                 if ((m >> k & 1) && h && (!worst || vcp(h) > vcp(worst))) worst = h;
             }
         if (worst && !worst->vc_kick) {
-            worst->vc_kick = vcp(worst) > vcp(t) ? 1 : 2;
+            __atomic_store_n(&worst->vc_kick, vcp(worst) > vcp(t) ? 1 : 2, __ATOMIC_RELAXED);
             worst->vc_kick_at = hos_now_ns();
             Ctx *rc = worst->run_ctx;   /* (a fiber's context while it runs one) */
             __atomic_store_n(rc ? &rc->poll : &worst->ctx.poll, 1, __ATOMIC_RELAXED);
@@ -2227,6 +2345,11 @@ static void vc_acquire(HosThread *t) {
         }
     }
     const int64_t waited = hos_now_ns() - t0;
+#ifdef TRACY_ENABLE
+    HT_ZONE_TEXTF(tz, "%s%.47s, priority %d", how == 0 ? "given by " : how == 1 ? "found free" : "ran without one",
+                  how == 0 ? t->vc_by : "", t->priority);
+    HT_ZONE_END(tz);
+#endif
     HOS_CHAIN(HOS_CHAIN_WOKE, vc_chain_key(t));
     if (t->vc_cap_until && t0 + waited >= t->vc_cap_until) t->vc_free_until = t0 + waited + vc_bg_run_ns;   /* (vc_bg_cap) */
     vc_st.wait_ns += waited;
@@ -2240,13 +2363,11 @@ static void vc_acquire(HosThread *t) {
     ReleaseSRWLockExclusive(&vc_lock);
     HOS_JT(JT_VC_WAIT_E, 0, 0);
 }
-static void vc_release(HosThread *t) {
-    if (!t->vc_held) return;
-    AcquireSRWLockExclusive(&vc_lock);
+static void vc_release_locked(HosThread *t) {
     const int c = t->vc_held - 1;
     vc_owner[c] = NULL;
     t->vc_held = 0;
-    t->vc_kick = 0;
+    __atomic_store_n(&t->vc_kick, 0, __ATOMIC_RELAXED);
     t->vc_boost = 0;   /* (its place ahead ends with the core it was for: hos_vcore_back_first) */
     vc_grant(c, t);
     /* (hookshot, vc_bg_cap) fewer cores held: a background thread kept waiting by the cap may take a free core of its own
@@ -2254,11 +2375,19 @@ static void vc_release(HosThread *t) {
     if (vc_nq && vc_bg_cap())
         for (int k = 0; k < vc_cores(); k++)
             if (!vc_owner[k]) vc_grant(k, t);
+}
+static void vc_release(HosThread *t) {
+    if (!t->vc_held) return;
+    AcquireSRWLockExclusive(&vc_lock);
+    vc_release_locked(t);
     ReleaseSRWLockExclusive(&vc_lock);
 }
 /* gives the core to a waiter allowed on it that is better than t (strict) or as good (a yield), or starved */
 static void vc_yield(HosThread *t, int strict) {
     if (!t->vc_held) return;
+    /* An empty queue has nobody to yield to. A later waiter can still request a checkpoint.
+       A stale kick goes through the lock so it is cleared without losing a newer request. */
+    if (!__atomic_load_n(&vc_nq, __ATOMIC_ACQUIRE) && !__atomic_load_n(&t->vc_kick, __ATOMIC_RELAXED)) return;
     AcquireSRWLockExclusive(&vc_lock);
     const int c = t->vc_held - 1;
     int any = 0;
@@ -2267,15 +2396,22 @@ static void vc_yield(HosThread *t, int strict) {
         any = (vc_allowed(w) >> c & 1) && (w->vc_starved || (strict ? vcp(w) < vcp(t) : vcp(w) <= vcp(t)));
     }
     /* (hookshot, vc_bg_cap) asked by vc_take: a background thread while too many cores are held */
-    if (!any && t->vc_kick == 3 && vc_held_n() > vc_bg_cap() && hos_now_ns() >= t->vc_free_until) any = 1;
-    t->vc_kick = 0;
-    if (any) vc_st.yields++;
+    if (!any && __atomic_load_n(&t->vc_kick, __ATOMIC_RELAXED) == 3 && vc_held_n() > vc_bg_cap() &&
+        hos_now_ns() >= t->vc_free_until) any = 1;
+    __atomic_store_n(&t->vc_kick, 0, __ATOMIC_RELAXED);
+    if (any) {
+        const int boost = t->vc_boost;   /* (a yield to a better waiter is not the block that ends its place ahead) */
+        vc_st.yields++;
+        vc_release_locked(t);
+        t->vc_boost = boost;
+    }
     ReleaseSRWLockExclusive(&vc_lock);
-    if (!any) return;
-    const int boost = t->vc_boost;   /* (a yield to a better waiter is not the block that ends its place ahead) */
-    vc_release(t);
-    t->vc_boost = boost;
-    vc_acquire(t);
+    if (any) {
+#ifdef TRACY_ENABLE
+        HT_SCOPE("vcore yield");
+#endif
+        vc_acquire(t);
+    }
 }
 /* 1 when the caller is to take a core again after its block (hos_vcore_back): it gave its core up, or it has run without
    one since an escape. An escape lasts until the thread's next block, as every other thread waits for a core after one;
@@ -2322,7 +2458,7 @@ void hos_vcore_back(void) {
    mkw_glue.c: the poll hands over no context, so the compiler need not spill them). It, and everything it calls, must never
    read or write the thread's guest context (Ctx) or run guest code: what it would see there may be older than the loop. A
    stall dump of a thread spinning in a polled loop shows such older registers for the same reason. */
-/* (Hookshot, sprint 5) HOS_BG_THROTTLE=<run us>:<sleep us> (off by default here; 300:3000 the fork's): OoT's OptimizeChangeBanc (guest
+/* (Hookshot, sprint 5) HOS_BG_THROTTLE=<run us>:<sleep us> (300:3000 by default, as in the fork; =0 off): OoT's OptimizeChangeBanc (guest
    priority 27, the lowest: on the console it gets only the time nothing else wants) runs without end here, 35-44% of a logical
    processor at the Market, at the host's lowest priority, which keeps it off no SMT sibling: the executor, module worker or
    replay thread on the other half of its core runs up to 1.7x slower while it does (the replay's measurement, hos_reserved_cpus).
@@ -2332,7 +2468,7 @@ static void bg_throttle(HosThread *t) {
     static int64_t run_ns = -1, sleep_ms;
     if (run_ns < 0) {
         const char *e = getenv("HOS_BG_THROTTLE");
-        long long r = 0, s = 3000;   /* (off by default here: HOS_BG_THROTTLE=300:3000 is the fork's) */
+        long long r = 300, s = 3000;   /* (on by default, the fork's 300:3000: HOS_BG_THROTTLE=0 off) */
         if (e && sscanf(e, "%lld:%lld", &r, &s) < 1) r = 300;
         sleep_ms = s >= 1000 ? s / 1000 : 1;
         if (r > 0) hos_log("threads: OptimizeChangeBanc runs %lld us, then sleeps %lld ms (HOS_BG_THROTTLE)", r, (long long)sleep_ms);
@@ -2351,7 +2487,8 @@ static void bg_throttle(HosThread *t) {
 void hos_vcore_checkpoint(void) {
     HosThread *t = cur;
     if (t && t->bg_kind != 2) bg_throttle(t);
-    if (t && t->vc_kick) vc_yield(t, t->vc_kick == 1);
+    const int kick = t ? __atomic_load_n(&t->vc_kick, __ATOMIC_RELAXED) : 0;
+    if (kick) vc_yield(t, kick == 1);
 }
 void hos_vcore_yield(void) {
     HosThread *t = cur;
@@ -2361,8 +2498,14 @@ void hos_vcore_yield(void) {
    core is taken again (waiting for a core while holding it could stall the thread that will wake the next waiter),
    so callers see a spurious wake-up and look at their condition again, as they do anyway */
 int hos_cv_sleep(void *cv, void *lk, unsigned ms) {
+#ifdef TRACY_ENABLE
+    HT_WAIT(tz, "asleep");   /* (inside a wait's zone: the part of it slept, after its spin; then the core taken again) */
+#endif
     const int away = hos_vcore_away();
     const BOOL r = SleepConditionVariableSRW((PCONDITION_VARIABLE)cv, (PSRWLOCK)lk, ms, 0);
+#ifdef TRACY_ENABLE
+    HT_ZONE_END(tz);
+#endif
     if (away) {
         ReleaseSRWLockExclusive((PSRWLOCK)lk);
         hos_vcore_back();

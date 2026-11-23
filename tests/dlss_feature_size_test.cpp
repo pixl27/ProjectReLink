@@ -50,11 +50,13 @@ struct State {
 State state;
 State& st() { return state; }
 std::atomic<bool> present_native_pq{false};
+bool temporal_hdr_input() { return false; }   // (vk_temporal.cpp: DLAA before the bloom, not in this fixture)
 uint64_t frame = 0;
 uint64_t texture_frame_no() { return frame; }
 unsigned preset = 11;
 unsigned wanted_preset() { return preset; }
 void logf(const char*, ...) {}
+bool temporal_prewarm_on() { return true; }   // (vk_temporal.cpp: RX_VK_DLSS_PREWARM on, as by default)
 void note_work() {}
 void temporal_later(std::function<void()> f) { f(); }
 void NVSDK_NGX_VULKAN_ReleaseFeature(NVSDK_NGX_Handle*) {}

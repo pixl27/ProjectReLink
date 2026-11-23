@@ -42,12 +42,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#define HL_JOBS_DEFAULT HL_JOBS_OFF   /* (off by default here: HL_JOBS=1 on; the fork had HL_JOBS_THROUGH) */
-#define HL_DISPATCH_DEFAULT 0   /* (off by default here: =1 on) */ /* the fork: (validated 2026-11-13: invariants clean in 18 runs over the three scenes, two PCs) */
-#define HL_DISPATCH_ALL_DEFAULT 0   /* (off by default here: =1 on) */ /* the fork: (validated 2026-11-13: invariants clean in 14 runs over the three scenes, two PCs) */
-#define HL_STAGES_DEFAULT 0   /* (off by default here: =1 on) */ /* the fork: (validated 2026-11-13: invariants clean in 15 runs over the three scenes, two PCs) */
-#define HL_JOBGROUP_DEFAULT 0   /* (off by default here: =1 on) */ /* the fork: (validated 2026-11-13: invariants clean in 11 runs over the three scenes, two PCs) */
-#define HL_MODSTAGES_DEFAULT 0   /* (off by default here: =1 on) */ /* the fork: (validated 2026-11-13 on the PC 3050 only: invariants clean, the three scenes, shots right) */
+#define HL_JOBS_DEFAULT HL_JOBS_THROUGH   /* (on by default, as in the fork; =0 off) */ 
+#define HL_DISPATCH_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ /* the fork: (validated 2026-11-13: invariants clean in 18 runs over the three scenes, two PCs) */
+#define HL_DISPATCH_ALL_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ /* the fork: (validated 2026-11-13: invariants clean in 14 runs over the three scenes, two PCs) */
+#define HL_STAGES_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ /* the fork: (validated 2026-11-13: invariants clean in 15 runs over the three scenes, two PCs) */
+#define HL_JOBGROUP_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ /* the fork: (validated 2026-11-13: invariants clean in 11 runs over the three scenes, two PCs) */
+#define HL_MODSTAGES_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ /* the fork: (validated 2026-11-13 on the PC 3050 only: invariants clean, the three scenes, shots right) */
 #define HL_WORKER_MESSAGE 0x8004aae0ULL   /* (hl::bridge::kWorkerMessage: hl_jobs_on checks the two agree) */
 
 static int hl_log_on;

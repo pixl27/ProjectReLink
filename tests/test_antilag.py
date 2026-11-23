@@ -60,7 +60,7 @@ if "antilag_present_frame = p.antilag_frame;" not in commit or "antilag_present_
 framegen = (ROOT / "gpu" / "vk" / "vk_framegen.cpp").read_text(encoding="utf-8")
 if "set->antilag_id = antilag_frame();" not in framegen:
     raise SystemExit("framegen_record: the set does not keep its game frame")
-pick = "antilag_present_frame = (timed ? j.set->game[k] : k == j.set->made) ? j.set->antilag_id : 0;"
+pick = "antilag_present_frame = (timed ? j.set->game[f] : f == j.set->made) ? j.set->antilag_id : 0;"
 if block(framegen, "void display_main()").count(pick) != 2:
     raise SystemExit("display_main: a set's presents (direct and present ahead) do not say which frame they show")
 

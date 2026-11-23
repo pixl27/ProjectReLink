@@ -21,3 +21,34 @@ inline bool intel_side_by_side_measured(uint32_t device, uint32_t version) {
 inline bool intel_side_by_side_chosen(int row, uint32_t device, uint32_t version) {
     return row == 1 || (row == 0 && intel_side_by_side_measured(device, version));
 }
+
+// (hookshot) The shader preparation on the other Intel GPUs, with the row on Auto. With one thread in the
+// compiler it took hours: an Arc iGPU (Core Ultra 7 155H, driver 101.9175) at 77% after 7 h 35 min, its CPU and GPU both
+// at 8%; an Arc A730M at 34% of its pipelines with "about 1187 min left". The same A730M on the same driver with the row
+// on Side by side built 25,005 of 32,623 noted pipelines in 2,753 s on 16 workers (5 to 35 a second) with no driver
+// fault: what ended that run was memory (a 16 GB PC at its commit limit, pipelines refused with -3).
+// The fault the gate was put in for (igvk64 read 0x170 on a UHD, driver 101.7088) was the pipeline cache's data
+// fetched while other threads built into it, which the fetch lock now keeps apart on every Intel GPU on Windows
+// (device_policy.h pcache_fetch_lock). So from driver 101.9175, where side by side was run, the preparation's
+// graphics pipelines and shader modules go side by side on Auto (vk_internal.h IntelPrepareLane), as many at once as
+// the free memory allows (intel_prepare_workers); play keeps the row's choice. Compute pipelines stay one at a time
+// (the gate, and compute_builds_serial: four at once froze a PC). Before 101.9175 (the Iris Xe's and UHD's legacy
+// drivers among them) nothing changes, and the row's Side by side and One at a time hold in the preparation too.
+constexpr uint32_t kIntelPrepareSideBySideFrom = 101u << 14 | 9175u;
+constexpr uint64_t kIntelPrepareReserveMB = 4096;   // (memory left to the rest of the PC, as prepare_workers.h)
+constexpr uint64_t kIntelPrepareWorkerMB = 768;     // (a worker, as prepare_workers.h's; Intel's own peak not measured yet)
+
+/// Whether the preparation's graphics builds go side by side: the row (0 Auto, 1 Side by side, 2 One at a time) on this
+/// Intel GPU and Windows driver. Wherever play's are; on Auto also from kIntelPrepareSideBySideFrom
+inline bool intel_prepare_side_by_side_chosen(int row, uint32_t device, uint32_t version) {
+    return intel_side_by_side_chosen(row, device, version) || (row == 0 && version >= kIntelPrepareSideBySideFrom);
+}
+
+/// The preparation's pipeline workers while Intel's compiler takes them side by side: want (the threads it would run) held
+/// to what the free memory allows past kIntelPrepareReserveMB at kIntelPrepareWorkerMB each, at least 1. avail_mb: the
+/// physical memory free now, UINT64_MAX when the system does not say (want, as before)
+inline unsigned intel_prepare_workers(unsigned want, uint64_t avail_mb) {
+    if (want <= 1 || avail_mb == UINT64_MAX) return want ? want : 1;
+    const uint64_t room = avail_mb > kIntelPrepareReserveMB ? (avail_mb - kIntelPrepareReserveMB) / kIntelPrepareWorkerMB : 0;
+    return (unsigned)(room < 1 ? 1 : room < want ? room : want);
+}

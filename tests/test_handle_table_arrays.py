@@ -72,11 +72,16 @@ def main():
         'uint32_t stage_handle_eval(const NvnState& s, const Stage& st, uint32_t program, uint32_t element);',
         block(shader, 'uint32_t stage_handle(const NvnState& s, const Stage& st, uint32_t program, uint32_t element)'),
         block(shader, 'uint32_t stage_handle_eval(const NvnState& s, const Stage& st, uint32_t program, uint32_t element) {'),
+        # (stage_handles asks them for the table's own count: tests/test_handle_table_count.py)
+        block(shader, 'uint32_t handle_table_live('),
+        block(shader, 'bool handle_table_count_on()'),
         block(shader, 'void stage_handles('),
     ])
     prelude = r'''
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <mutex>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -103,12 +108,15 @@ uint32_t stage_cbuf_word(const NvnState&, const Stage&, uint32_t index, uint32_t
  ++cbuf_reads; return index == 3 && offset / 4 < 64 ? bank[offset / 4] : 0;
 }
 bool env_on(const char*) { return false; }
-void ub_read(uint64_t addr, void* out, size_t n) {
+void logf(const char*, ...) {}
+bool ub_read(uint64_t addr, void* out, size_t n) {
  ++memory_reads; uint32_t v = addr >= 0x10000 && addr < 0x10000 + 4096 ? memory[(addr - 0x10000) / 4] : 0; std::memcpy(out, &v, n);
+ return true;
 }
 struct Host { void gpu_read(uint64_t addr, void* out, size_t n) { ub_read(addr, out, n); } } host_object;
 Host* host = &host_object;
 uint32_t stage_handle(const NvnState& s, const Stage& st, uint32_t program, uint32_t element = 0);   // (vk_shader.h's)
+void stage_handles(const NvnState& s, const Stage& st, uint32_t program, uint32_t count, uint32_t* out, uint64_t key = 0);   // (vk_shader.h's)
 '''
     checks = r'''
 int main() {
@@ -224,7 +232,7 @@ int main() {
             'shaderbatch translates with handle tables as live does')
     pointer = block(draw, 'bool handle_is_storage_pointer(')
     require(pointer, 'if (d.handle_is_pointer_word) return true;', 'a pointer word binds no texture')
-    require(draw, 'stage_handles(s, st, d.handle_program, d.count, table.data());', 'the draw binds every entry of a handle table')
+    require(draw, 'stage_handles(s, st, d.handle_program, d.count, table.data(), p.key);', 'the draw binds every entry of a handle table')
     require(draw, 'is_table && view && tex && d.is_depth && !is_depth_format(tex->format)',
             'a table entry naming a colour texture for a depth comparison binds nothing')
     require(draw, 'if (is_table && k + 1 == d.count && view) {',

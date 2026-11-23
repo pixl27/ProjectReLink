@@ -19,6 +19,8 @@ job queue*). Python's standard library only.
         its place but waits while you play. --group: timed runs of one group go one at a time, so one agent's batch lets
         others' go between its runs (default: the name's first word).
     python -I scripts/job_queue.py status [--json]     who plays, what runs, the queue and why each waits, memory and disk
+                                                       (who plays: a game of HOOKSHOT_QUEUE_GAMES whose environment has no
+                                                       HOOKSHOT_JOB; /proc on Linux, the process's own PEB on Windows)
     python -I scripts/job_queue.py history [-n N] [--json]   the last jobs: waited, ran, status, and a timed run's noise
     python -I scripts/job_queue.py cancel ID|NAME      stop a job of yours (its runner gets SIGTERM and stops its command; on
                                                        Windows the runner and every process under it end, its job object's)
@@ -348,14 +350,161 @@ def alive(t):
     return False
 
 
+# (Windows) What Linux reads from /proc: every process with its parent and its program's name (a Toolhelp snapshot), and a
+# process's command line and environment, read from its own memory (its PEB's process parameters), as /proc/<pid>/cmdline
+# and environ are. Only a 64-bit process another of the user's may read: anything else (elevated, another user's, 32-bit, a
+# 32-bit Python) is not readable, as on Linux
+def _win_snapshot():
+    """{pid: (parent pid, program's file name)}"""
+    import ctypes
+    from ctypes import wintypes
+
+    class Entry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k.Process32FirstW.argtypes = k.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    snap = k.CreateToolhelp32Snapshot(0x2, 0)   # (TH32CS_SNAPPROCESS)
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return {}
+    out = {}
+    try:
+        e = Entry()
+        e.dwSize = ctypes.sizeof(Entry)
+        more = k.Process32FirstW(snap, ctypes.byref(e))
+        while more:
+            if e.th32ProcessID:
+                out[e.th32ProcessID] = (e.th32ParentProcessID, e.szExeFile)
+            more = k.Process32NextW(snap, ctypes.byref(e))
+    finally:
+        k.CloseHandle(snap)
+    return out
+
+
+def _win_params(pid):
+    """(command line, environment block) read from the process's PEB, or None"""
+    import ctypes
+    from ctypes import wintypes
+    if ctypes.sizeof(ctypes.c_void_p) != 8:
+        return None
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.OpenProcess.restype = wintypes.HANDLE
+    k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k.ReadProcessMemory.argtypes = [wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t,
+                                    ctypes.POINTER(ctypes.c_size_t)]
+    k.IsWow64Process.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    nt = ctypes.WinDLL("ntdll")
+    nt.NtQueryInformationProcess.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.ULONG,
+                                             ctypes.POINTER(wintypes.ULONG)]
+    h = k.OpenProcess(0x1000 | 0x10, False, pid)   # (PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ)
+    if not h:
+        return None
+
+    def read(addr, size):
+        buf = ctypes.create_string_buffer(size)
+        got = ctypes.c_size_t()
+        if not addr or not k.ReadProcessMemory(h, ctypes.c_void_p(addr), buf, size, ctypes.byref(got)):
+            return None
+        return buf.raw[:got.value]
+
+    try:
+        wow = wintypes.BOOL()
+        if not k.IsWow64Process(h, ctypes.byref(wow)) or wow.value:
+            return None
+        basic = (ctypes.c_void_p * 6)()   # (PROCESS_BASIC_INFORMATION: [1] is the PEB's address)
+        if nt.NtQueryInformationProcess(h, 0, basic, ctypes.sizeof(basic), None) != 0:
+            return None
+        raw = read(basic[1] or 0, 0x28)
+        if not raw or len(raw) < 0x28:
+            return None
+        params = int.from_bytes(raw[0x20:0x28], "little")   # (PEB.ProcessParameters)
+        raw = read(params, 0x3F8)   # (RTL_USER_PROCESS_PARAMETERS up to EnvironmentSize)
+        if not raw or len(raw) < 0x88:
+            return None
+        cmd_len = int.from_bytes(raw[0x70:0x72], "little")   # (CommandLine: a UNICODE_STRING)
+        cmd = read(int.from_bytes(raw[0x78:0x80], "little"), cmd_len) if cmd_len else b""
+        env_at = int.from_bytes(raw[0x80:0x88], "little")
+        env_size = int.from_bytes(raw[0x3F0:0x3F8], "little") if len(raw) >= 0x3F8 else 0
+        env = read(env_at, min(env_size, 1 << 20)) if env_size else None
+        if env is None:   # (no size: read until the block's closing empty string)
+            env, at = b"", env_at
+            while b"\0\0\0\0" not in env and len(env) < 1 << 20:
+                part = read(at, 4096)
+                if not part:
+                    break
+                env, at = env + part, at + len(part)
+        return (cmd or b"").decode("utf-16-le", "replace"), env.decode("utf-16-le", "replace")
+    finally:
+        k.CloseHandle(h)
+
+
+def _win_split(cmd):
+    """A command line as the program's argv (CommandLineToArgvW)"""
+    import ctypes
+    from ctypes import wintypes
+    if not cmd.strip():
+        return []
+    sh = ctypes.WinDLL("shell32")
+    sh.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    sh.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    n = ctypes.c_int()
+    argv = sh.CommandLineToArgvW(cmd, ctypes.byref(n))
+    if not argv:
+        return []
+    try:
+        return [argv[i] for i in range(n.value)]
+    finally:
+        ctypes.windll.kernel32.LocalFree(argv)
+
+
 def all_pids():
+    if WINDOWS:
+        return sorted(_win_snapshot())
     try:
         return [int(d) for d in os.listdir("/proc") if d.isdigit()]
     except OSError:
         return []
 
 
+def exes():
+    """{pid: the program's file name} of every process ("" when it can't be read): one snapshot on Windows"""
+    if WINDOWS:
+        return {pid: exe for pid, (_, exe) in _win_snapshot().items()}
+    return {pid: exe_of(pid) for pid in all_pids()}
+
+
+def exe_of(pid):
+    """The program's file name ("" when it can't be read)"""
+    if WINDOWS:
+        return _win_snapshot().get(pid, (0, ""))[1]
+    try:
+        return os.path.basename(os.readlink("/proc/%d/exe" % pid)).replace(" (deleted)", "")
+    except OSError:
+        return ""
+
+
+def comm_of(pid):
+    """Linux's short name of the process ("" elsewhere)"""
+    if WINDOWS:
+        return ""
+    try:
+        with open("/proc/%d/comm" % pid) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 def argv_of(pid):
+    if WINDOWS:
+        got = _win_params(pid)
+        return _win_split(got[0]) if got else []
     try:
         with open("/proc/%d/cmdline" % pid, "rb") as f:
             return [a.decode("utf-8", "replace") for a in f.read().split(b"\0") if a]
@@ -365,17 +514,44 @@ def argv_of(pid):
 
 def env_of(pid):
     """None: not readable (starting, ending, or not ours)"""
-    try:
-        with open("/proc/%d/environ" % pid, "rb") as f:
-            data = f.read()
-    except OSError:
-        return None
-    env = dict(kv.split("=", 1) for kv in data.decode("utf-8", "replace").split("\0") if "=" in kv)
+    if WINDOWS:
+        got = _win_params(pid)
+        if not got:
+            return None
+        text = got[1]
+    else:
+        try:
+            with open("/proc/%d/environ" % pid, "rb") as f:
+                text = f.read().decode("utf-8", "replace")
+        except OSError:
+            return None
+    # (Windows' block holds "=C:=C:\\..." entries for the drives' folders: a name never starts with "=")
+    env = dict(kv.split("=", 1) for kv in text.split("\0") if "=" in kv and not kv.startswith("="))
     return env or None
+
+
+def _win_tree(pid):
+    """(Windows) pid and the processes it started, and theirs: by parent pid, each started after its parent (a pid used again
+    is not its child)"""
+    procs = _win_snapshot()
+    kids = {}
+    for p, (parent, _) in procs.items():
+        kids.setdefault(parent, []).append(p)
+    out, todo = [], [pid]
+    while todo:
+        p = todo.pop()
+        out.append(p)
+        born = _win_start(p)
+        for c in kids.get(p, []):
+            if c != p and c not in out and born is not None and (_win_start(c) or 0) >= born:
+                todo.append(c)
+    return out
 
 
 def tree(pid):
     """pid and its descendants"""
+    if WINDOWS:
+        return _win_tree(pid)
     out, todo = [], [pid]
     while todo:
         p = todo.pop()
@@ -412,18 +588,12 @@ def game_procs(s):
     (yours), None when its environment can't be read"""
     names = {n.strip().lower() for n in s["HOOKSHOT_QUEUE_GAMES"].split(",") if n.strip()}
     out = []
-    for pid in all_pids():
-        try:
-            exe = os.path.basename(os.readlink("/proc/%d/exe" % pid)).replace(" (deleted)", "")
-        except OSError:
-            exe = ""
+    for pid, exe in sorted(exes().items()):
+        if WINDOWS and exe.lower() not in names:   # (Windows: the program's name; reading every process's memory costs)
+            continue
         argv = argv_of(pid)
-        a0 = os.path.basename(argv[0]) if argv else ""
-        try:
-            with open("/proc/%d/comm" % pid) as f:
-                comm = f.read().strip()
-        except OSError:
-            comm = ""
+        a0 = os.path.basename(argv[0].replace("\\", "/")) if argv else ""
+        comm = comm_of(pid)
         hit = next((n for n in (exe, a0, comm) if n.lower() in names), None)
         if not hit:
             continue
@@ -439,7 +609,7 @@ def user_playing(s):
     fake = os.environ.get("HOOKSHOT_QUEUE_PLAYING_FILE")   # (tests: you "play" while this file is there)
     if fake:
         return os.path.exists(fake)
-    if WINDOWS or not any(g["job"] == "" for g in game_procs(s)):
+    if not any(g["job"] == "" for g in game_procs(s)):
         return False
     time.sleep(1)   # (looked at twice: a job's game between its exec and its first readable environ looks like yours)
     return any(g["job"] == "" for g in game_procs(s))
@@ -450,11 +620,12 @@ def heavy_procs(s, skip=()):
     pats = [p.strip() for p in s["HOOKSHOT_QUEUE_HEAVY"].split(",") if p.strip()]
     skip = set(skip)
     out = []
-    for pid in all_pids():
-        if pid in skip:
+    for pid, exe in sorted(exes().items()):
+        if pid in skip or WINDOWS and "python" not in exe.lower():   # (Windows: the program's name first, as game_procs)
             continue
         argv = argv_of(pid)
-        if argv and "python" in os.path.basename(argv[0]) and any(a.endswith(p) for a in argv[1:4] for p in pats):
+        if argv and "python" in os.path.basename(argv[0].replace("\\", "/")).lower() and \
+                any(a.replace("\\", "/").endswith(p) for a in argv[1:4] for p in pats):
             env = env_of(pid) or {}
             if not env.get("HOOKSHOT_JOB") and not env.get("OOT_STATUS_LOCK"):
                 out.append(pid)
@@ -974,7 +1145,7 @@ def status(s, as_json=False):
     ts = read_tickets(qdir, clean=can_clean) + legacy_tickets(s)
     slots = slots_now(s)
     quiet = s["HOOKSHOT_QUEUE_QUIET"] != "0"
-    games = [] if WINDOWS else game_procs(s)
+    games = game_procs(s)
     info = meminfo()
     timing_cpus, other_cpus = cpu_sets(s)
     running = sorted((t for t in ts if t["state"] == "active"), key=lambda t: t.get("since", t["t"]))
@@ -983,7 +1154,7 @@ def status(s, as_json=False):
     for t in waiting:
         why = "you are playing (keeps its place)" if not t.get("ready", True) else blocker(t, ts, now, slots, quiet)
         rows.append(dict(t, why=why or "starting (or waiting for memory)"))
-    heavy = [] if WINDOWS else heavy_procs(s, [p for t in running if t.get("child") for p in tree(t["child"])])
+    heavy = heavy_procs(s, [p for t in running if t.get("child") for p in tree(t["child"])])
     if as_json:
         print(json.dumps({"games": games, "running": running, "waiting": rows, "builds_outside": heavy, "slots": slots,
                           "memory": {"available_gb": info.get("MemAvailable", 0) / GB, "pressure": pressure()},

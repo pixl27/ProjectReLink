@@ -532,8 +532,7 @@ static DWORD WINAPI switch2_main(LPVOID unused) {
 /* Started with the pads (host/pad_sdl.c), once */
 void hos_switch2_start(void) {
     static LONG started;
-    const char *e = getenv("HOS_SWITCH2");
-    if (e && env_value_off(e)) return;   /* (=0, off, false or no: the switches' one rule) */
+    if (!env_on_or("HOS_SWITCH2", 1)) return;   /* (=0, off, false or no: the switches' one rule) */
     if (!InterlockedExchange(&started, 1)) {
         CreateThread(NULL, 0, switch2_main, NULL, 0, NULL);
         CreateThread(NULL, 0, rumble_main, NULL, 0, NULL);

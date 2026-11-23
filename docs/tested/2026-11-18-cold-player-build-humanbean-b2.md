@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-18 | 736b82fd | CachyOS Linux 7.3.3, headless | RTX 3090, NVIDIA 620.70.06 | Ryzen 9 7900X, 32 GB | Fresh package install and driver caches, Most, release toolchain, 316 shipped library objects, shared OS file cache | Full cold player build, both changes, run 2 | 800.66 s builder launch to ready. Read and translation 78.36 s, native compilation and linking 339.63 s, folder assembly 6.77 s, shader preparation through exit 375.72 s. 208 of 524 inputs compiled locally, 38,809 shader programs, zero failures, 32,655 noted graphics pipelines. Queue reported CPU pressure. Sampled peak aggregate RSS during extraction and translation was 20521 MiB. |

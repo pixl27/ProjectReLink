@@ -30,12 +30,16 @@ long_paths.install()   # (paths past 260 characters on Windows, before anything 
 import kit
 import nso2  # noqa: F401  (DT_RELR)
 import insn
+import fastvec   # (hookshot) TBL/EXT, vector loads, DUP and FMUL by element as single vector instructions
+import oot_patches   # (hookshot) the game's patches: asked which functions they change (nx2/guest_locals.py)
+import guest_locals as local_regs   # (hookshot) registers and flags as C locals (A64_LOCAL_REGS, A64_LOCAL_FLAGS): nx2/guest_locals.py
 import dead_flags   # (hookshot) the kit's dead_flags, answered at once for a function that writes no flag
 import walk   # (hookshot) the kit's walk, with one shared entry per plain op's word
 import discover   # (hookshot) the discovery's walks in new processes where there is no fork
 import lift_fixes
 import entry_hooks
 import suyu_rt_fixes
+import fpxkeep   # (hookshot) NaN and infinite operands, exact-zero multiply-adds kept off the software bodies (A64_FPXKEEP)
 import chunks
 import standalone
 import adr_entries  # noqa: E402
@@ -48,11 +52,15 @@ import a64_lift
 import a64_rtgen
 
 insn.install()
+fastvec.install()   # (around the kit's vectorize_fpx, op_text and fpx_header)
+local_regs.install(oot_patches.touches)   # (around the kit's emit_function, its fast float regions' too, and localize_regs; the defaults; the patches asked)
+local_regs.install_plain()   # (around those: the functions the patches name keep the kit's context-flag text)
 dead_flags.install()
 walk.install()
 lift_fixes.install()
 entry_hooks.install()   # (host/*.c's ENTRY_HOOK_SYM hooks at the entry of their SDK functions: add() below)
 suyu_rt_fixes.install()
+fpxkeep.install()   # (after fastvec's: it edits the kit's lane routes and wraps fpx_header around fastvec's)
 
 
 def module_of(img, pc):
@@ -186,9 +194,19 @@ def main():
         oot_shadow.install(L, img, next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), ""))
         import oot_gfx   # (view dists)
         oot_gfx.install(L, img, next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), ""))
+        import oot_shadow_fit   # (the sun's nearest cascade kept steady: a world-fixed basis, a square on whole texels)
+        oot_shadow_fit.install(L, img, next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), ""))
         import oot_jitter   # (the temporal upscalers' camera jitter, DLSS's and FSR 3.1's: none unless one runs, host/rx_backend.c)
         oot_jitter.install(L, img)
     discover.discover(L, img_dir, chunks.file_jobs(), max_insns=a.max_func)
+    if a64_lift.local_regs() or a64_lift.local_flags():   # (C spliced after an instruction reads and writes the context)
+        print("locals: %d functions with spliced code kept in the context" % local_regs.keep_spliced(L))
+        print("locals: %d functions entered above their first block kept in the context" % local_regs.keep_entered_below(L))
+        print("locals: %d functions that hold an address the patches name kept in the context" % (
+            local_regs.keep_mentioned(L, oot_patches.mentioned_addresses())))
+        cold = local_regs.keep_not_ran(L)   # (locals only where play runs the code: nx2/ran_funcs.txt, A64_LOCAL_FUNCS)
+        print("locals: every function may have them (A64_LOCAL_FUNCS=all, or no nx2/ran_funcs.txt)" if cold is None else
+              "locals: %d functions no play session ran kept in the context (nx2/ran_funcs.txt)" % cold)
     print("discovered %d functions (%.0fs)" % (len(L.funcs), time.time() - t0))
     last[0] = time.time()
 
@@ -212,7 +230,6 @@ def main():
         gen = os.path.join(out_dir, "gen")
         files = chunks.write(L, gen, os.path.join(a.work, "image"), a.rechunk and not a.standalone,
                              counters=[] if a.no_polls else [poll.stats], took=took, beside=report)
-        import oot_patches
         main_build = next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), "")
         def tables():   # (the runtime tables and the standalone files: they read the image, not the lifted C)
             lines = []
@@ -228,6 +245,10 @@ def main():
         # (made in a process of their own while the C is edited: 4-8 s that waited for the edits. Where there is no fork, after them)
         side = chunks.start_side(tables)
         chunks.edit_c(gen, L.stats, a.standalone and main_build == oot_patches.LIFE_BUILD_ID, whole=not a.max_func, took=took)
+        if a64_lift.local_regs() or a64_lift.local_flags():   # (nx2/guest_locals.py: the patched functions kept the context)
+            print("locals: %d functions kept in the context for the patches; %d patched functions checked in the written C" % (
+                L.stats["locals_kept_for_patches"], local_regs.check_patched(gen)))
+            took("locals check")
         print("\n".join(chunks.end_side(side, tables)), flush=True)
         took("runtime tables and standalone files (beside the edits)" if side else "runtime tables and standalone files")
         L.report()

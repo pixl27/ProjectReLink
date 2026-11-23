@@ -3,7 +3,11 @@ check that vk_texture.cpp still lists finalized textures, copies from them and r
 import argparse
 import subprocess
 import tempfile
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from srccut import block
 
 RUN_ALL_ARGS = ["--cxx", "g++"]
 
@@ -22,8 +26,8 @@ def check_source():
                    "went.swap(reuse_gone);"):
         if needle not in src:
             raise SystemExit("vk_texture.cpp no longer has: " + needle)
-    forget = src[src.index("void forget_gpu(Texture* tex) {"):]
-    if "reuse_drop(*tex);" not in forget[:200]:
+    forget = block(src, "void forget_gpu(Texture* tex) {")
+    if "reuse_drop(*tex);" not in forget:
         raise SystemExit("forget_gpu no longer takes a destroyed texture out of the reuse list")
 
 

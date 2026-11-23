@@ -45,6 +45,21 @@ def _parts(axis, sticks, dpad, face, small, home, shoulders, **boxes):
 
 SWITCH_PARTS = _parts(1159, ((348, 227, 48), (683, 348, 48)), (455, 348, 45, 17),
                       ((800, 168), (731, 227), (869, 227), (800, 286), 32), (477, 161, 19), (631, 227, 21), ((375, 39), (290, 60)))
+# the PlayStation faces' picture, drawn by hand (nx2/prompt_faces/ps4/ and ps5/Controller_Pro.png, the same DualSense): its
+# parts, and the lines it gives for the game's other textures (ControllerGuide_Pro_02 to 04) were drawn to them
+_DUALSENSE = _parts(1158, ((442, 334, 44), (716, 334, 44)), (312, 213, 45, 21), ((848, 146), (786, 213), (910, 213), (848, 279), 27),
+                    (379, 115, 11), (579, 327, 26), ((340, 49), (265, 68)), touchpad=(413, 57, 751, 240), mute=(559, 376, 599, 388))
+# the Xbox face's picture, drawn by hand (nx2/prompt_faces/xbox/Controller_Pro.png, an Xbox One pad): its parts, and its lines
+# for ControllerGuide_Pro_02 to 04 were drawn to them; a bumper's end is under its trigger's, as the Menu line leaves no other
+# way to RB without a crossing
+_XBOX = _parts(1158, ((357, 202, 44), (695, 335, 44)), (462, 346, 41, 17), ((805, 146), (746, 205), (865, 206), (805, 260), 28),
+               (516, 203, 18), (581, 116, 31), ((425, 39), (385, 69)))
+# the Steam Deck face's picture, drawn by hand (nx2/prompt_faces/steamdeck/Controller_Pro.png): its parts, and its lines
+# for ControllerGuide_Pro_02 to 04 were drawn to them (L2/R2 sit inward of View/Menu so their lines don't cross View/Menu)
+_STEAMDECK = _parts(1162, ((287, 241, 35), (874, 241, 35)), (206, 228, 20, 9),
+                    ((955, 200), (930, 225), (981, 225), (955, 250), 12), (255, 196, 8), (303, 409, 10),
+                    ((272, 162), (212, 162)), screen=(355, 197, 810, 482), ltrackpad=(231, 288, 326, 383),
+                    rtrackpad=(834, 288, 929, 383), more=(836, 399, 883, 418))
 
 FACES = {
     "xbox": dict(
@@ -54,8 +69,7 @@ FACES = {
             ("face", .700, .275, .080, "west"), ("face", .775, .375, .080, "south"), ("face", .775, .175, .080, "north"),
             ("face", .850, .275, .080, "east"), ("small", .498, .120, .090, "guide"), ("small", .420, .275, .052, "back"),
             ("small", .576, .275, .052, "start"), ("small", .498, .355, .044, None)]),
-        parts=_parts(1156, ((343, 210, 43), (696, 344, 43)), (451, 364, 44, 16), ((809, 160), (746, 218), (871, 218), (809, 275), 31),
-                     (513, 218, 19), (578, 129, 34), ((330, 59), (470, 57)), share=(558, 243, 598, 283)),
+        parts=_XBOX,
         icons=dict(_DPAD, south="button_a", east="button_b", west="button_x", north="button_y", back="button_view",
                    start="button_menu", lshoulder="lb", rshoulder="rb", ltrigger="lt", rtrigger="rt", lstick="ls", rstick="rs")),
     "ps4": dict(
@@ -65,8 +79,7 @@ FACES = {
             ("pad", .499, .200, (.320, .280), None), ("face", .742, .285, .072, "west"), ("face", .814, .175, .072, "north"),
             ("face", .814, .395, .072, "south"), ("face", .886, .285, .072, "east"), ("small", .298, .130, .036, "back"),
             ("small", .702, .130, .036, "start"), ("small", .500, .510, .046, "guide")]),
-        parts=_parts(1160, ((447, 357, 40), (713, 357, 40)), (326, 237, 49, 18), ((841, 177), (781, 234), (901, 234), (841, 292), 28),
-                     (412, 153, 12), (580, 352, 16), ((320, 67), (408, 97)), touchpad=(446, 117, 712, 263)),
+        parts=_DUALSENSE,
         icons=dict(_DPAD, south="button_cross", east="button_circle", west="button_square", north="button_triangle",
                    back="/playstation4_button_share", start="/playstation4_button_options", lshoulder="trigger_l1",
                    rshoulder="trigger_r1", ltrigger="trigger_l2", rtrigger="trigger_r2", lstick="button_l3", rstick="button_r3")),
@@ -77,8 +90,7 @@ FACES = {
             ("pad", .498, .175, (.400, .300), None), ("face", .765, .265, .078, "west"), ("face", .840, .150, .078, "north"),
             ("face", .840, .380, .078, "south"), ("face", .915, .265, .078, "east"), ("small", .248, .080, .036, "back"),
             ("small", .750, .080, .036, "start"), ("small", .496, .480, .046, "guide"), ("small", .496, .575, .030, None)]),
-        parts=_parts(1158, ((430, 341, 39), (730, 341, 39)), (305, 217, 51, 19), ((863, 153), (800, 217), (925, 217), (863, 281), 30),
-                     (370, 114, 12), (577, 336, 16), ((321, 52), (383, 70)), touchpad=(412, 84, 744, 250), mute=(563, 375, 591, 403)),
+        parts=_DUALSENSE,
         icons=dict(_DPAD, south="button_cross", east="button_circle", west="button_square", north="button_triangle",
                    back="/playstation5_button_create", start="/playstation5_button_options", lshoulder="trigger_l1",
                    rshoulder="trigger_r1", ltrigger="trigger_l2", rtrigger="trigger_r2", lstick="button_l3", rstick="button_r3")),
@@ -90,9 +102,7 @@ FACES = {
             ("face", .935, .090, .036, "north"), ("face", .935, .270, .036, "south"), ("face", .900, .180, .036, "west"),
             ("face", .970, .180, .036, "east"), ("small", .125, .075, .024, "back"), ("small", .875, .075, .024, "start"),
             ("small", .150, .755, .030, "guide"), ("small", .850, .755, .030, None)]),
-        parts=_parts(1159, ((242, 230, 27), (917, 230, 27)), (157, 222, 25, 9), ((1009, 180), (974, 215), (1043, 215), (1009, 249), 16),
-                     (209, 174, 9), (234, 437, 12), ((115, 153), (165, 144)), screen=(294, 159, 866, 491),
-                     ltrackpad=(169, 290, 279, 394), rtrackpad=(880, 290, 990, 394), more=(908, 420, 942, 454)),
+        parts=_STEAMDECK,
         icons=dict(_DPAD, south="button_a", east="button_b", west="button_x", north="button_y", back="button_view",
                    start="button_options", lshoulder="button_l1", rshoulder="button_r1", ltrigger="button_l2",
                    rtrigger="button_r2")),

@@ -14,7 +14,7 @@ import nup as _nup  # noqa: E402
 
 TITLE_FILE = "hookshot_title.txt"
 ICON_FILE = ".hookshot_icon.jpg"
-RES_FILE = "hookshot_game.res"   # (in the work folder: linked into the exe instead of a developer's hookshot.res, nx2/build.py)
+RES_FILE = "hookshot_game.res"   # (in the work folder: the name Windows shows, linked into the exe beside Hookshot's icon, nx2/build.py)
 SUFFIX = " (Hookshot)"
 RED_TUNIC_TITLE = "Red Tunic"
 RED_TUNIC_ICON_FILE = ".red_tunic_icon.png"
@@ -126,8 +126,8 @@ def picture(icon):
 
 
 def write_res(out, path):
-    """(Windows) the exe's icon and the name Windows shows for it, at path; True when written. Removed when the folder has
-    neither, so a developer's own hookshot.res (nx2/make_icon.py) is linked instead"""
+    """(Windows) the name Windows shows for the exe, at path (version strings alone: the exe's icon is always Hookshot's,
+    builder/setup/hookshot.ico, nx2/build.py exe_resources); True when written. Removed when the folder has no name"""
     import make_icon
     title, icon = kept(out)
     bundled = title == RED_TUNIC_TITLE

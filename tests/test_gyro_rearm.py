@@ -1,10 +1,12 @@
-"""A gyroscope that stops changing gets its sensors turned off and on again (host/pad_sdl.c motion_poll).
+"""A gyroscope and accelerometer that stop changing get their sensors turned off and on again (host/pad_sdl.c motion_poll).
 
 Seen with a Steam Controller started from Steam: after Alt+Tab out and back, Steam's layout switch left the pad's
 sensors off while SDL still had them on, so the gyro read the same values for good until Motion controls was toggled.
 The block from host/pad_sdl.c that notices this is compiled over a stand-in pad, then checked:
 
 - readings that keep changing never turn the sensors off;
+- a gyroscope that reads the same at rest while its accelerometer still moves a little (a Steam Deck in its dock: its
+  gyroscope reads 0 when still) is a healthy pad: never;
 - the very same reading for 1.2 s or less does nothing (a pad that is simply still for a moment);
 - the same reading for over 1.2 s turns both sensors off once and clears motion_on (the poll turns them on again);
 - after that it waits 3 s before it would do it again, so a pad that stays frozen is not toggled every poll;
@@ -40,11 +42,13 @@ static int offs, logs;
 static int hos_sdl_pad_sensor_enable(void *gc, int sensor, int on) { (void)gc; (void)sensor; if (!on) offs++; return 1; }
 static const char *hos_sdl_pad_name(void *gc) { (void)gc; return "Steam Controller"; }
 static void hos_log(const char *fmt, ...) { (void)fmt; logs++; }
-static void step(int64_t now, int read, float gx) {
+static void step_a(int64_t now, int read, float gx, float ay) {
     const int pick = 0;
-    float g[3] = {gx, 0.25f, -0.5f};
+    float a[3] = {0.0f, ay, -3.5f}, g[3] = {gx, 0.25f, -0.5f};
+    (void)a;
 ''' + block + r'''
 }
+static void step(int64_t now, int read, float gx) { step_a(now, read, gx, -8.6f); }
 #define MS 1000000LL
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "FAIL:%d %s\n", __LINE__, #x); return 1; } } while (0)
 int main(void) {
@@ -54,6 +58,9 @@ int main(void) {
     /* changing readings: never */
     for (int n = 0; n < 1000; n++, t += 4 * MS) step(t, 1, (float)(n % 7) * 0.01f);
     CHECK(offs == 0 && pads[0].motion_on == 1);
+    /* a gyroscope at rest reading exactly 0 for 10 s, its accelerometer moving by its last bit: never */
+    for (int n = 0; n < 2500; n++, t += 4 * MS) step_a(t, 1, 0.0f, -8.6f + (float)(n % 3) * 0.0006f);
+    CHECK(offs == 0 && pads[0].motion_on == 1 && logs == 0);
     /* the same reading for 1.2 s: still nothing */
     int64_t from = t;
     for (; t - from <= 1200 * MS; t += 4 * MS) step(t, 1, 3.0f);
@@ -73,7 +80,8 @@ int main(void) {
     pads[0].motion_on = 1;
     for (int n = 0; n < 2000; n++, t += 4 * MS) step(t, 0, 3.0f);
     CHECK(offs == 4 && pads[0].motion_on == 1);
-    printf("PASS: a frozen gyroscope's sensors are turned off and on again, at most every 3 s; a changing one never\n");
+    printf("PASS: a frozen gyroscope's sensors are turned off and on again, at most every 3 s; a changing one, or one "
+           "at rest beside a moving accelerometer, never\n");
     return 0;
 }
 '''

@@ -35,4 +35,8 @@ below is this folder's, not upstream's (python -I scripts/check_third_party.py).
 Licensing: `lift/suyu/arm64_to_c.h` is suyu's (GPL-2.0-or-later, texts in `lift/suyu/`), so `a64emit.dll`, the
 generated runtime and all lifted C are GPL. See `NOTICE.TOTKPort.md`.
 
-tree-sha256: 62e2b3b6441109ccfce200785d57c114292887e5184c12f8c604893cf4dbd0a4
+
+
+Red Tunic 4.0.2 refreshes this copy through Hookshot commit 38b90dfe on 23 November 2026, including the upstream AArch64 lift changes.
+
+tree-sha256: a9f65e695d570892e9f58ec8b98a270a9e0639c5e5f9b808b9e75732facb37c6

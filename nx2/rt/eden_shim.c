@@ -21,6 +21,8 @@ static MkwHost host;
 static int attached;
 
 void a64_svc(Ctx *c, uint32_t imm) { host.svc(host.user, c, imm); }
+/* (the lifted MSR FPCR's call, a64_lift.py NATIVE_FP: the emulator host keeps its own MXCSR) */
+void hos_fpcr_sync(Ctx *c) { (void)c; }
 
 void a64_poll(Ctx *c) {
     __atomic_store_n(&c->poll, 0, __ATOMIC_RELAXED);

@@ -35,6 +35,7 @@ HARNESS = r"""
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define _Thread_local thread_local
 typedef long LONG;
 typedef struct { int x; } SRWLOCK;
 typedef struct { int x; } CONDITION_VARIABLE;
@@ -55,7 +56,7 @@ static void ReleaseSRWLockExclusive(SRWLOCK *l) { lock_depth--; if ((void *)l ==
 static void WakeAllConditionVariable(CONDITION_VARIABLE *cv) { (void)cv; wakes++; }
 typedef struct Obj {
     uint64_t key, event; int sem_max, kind; struct Obj **links; int nlinks, caplinks; struct Obj *mw;
-    int64_t due_ns, sig_ns; int sem, qlen, qcap, signaled, autoclear; SRWLOCK lk; CONDITION_VARIABLE cv;
+    int64_t due_ns, sig_ns; int sem, qlen, qcap, signaled, autoclear, mwait; SRWLOCK lk; CONDITION_VARIABLE cv;
 } Obj;
 typedef unsigned long DWORD;
 #define INFINITE 0xFFFFFFFFu
@@ -214,9 +215,8 @@ def fixture(source):
         marker = re.search(r"HLE\((_ZN2nn2os\d+%sE\w*)\)" % name, source)
         parts.append(block(source, marker.group(0)))
         defines.append("#define %s %s" % (alias, marker.group(1)))
-    parts.append(block(source, "static int event_wait(Obj *e, int64_t timeout_ns, int try_only) {"))   # (the real one)
-    if "static int event_peek(Obj *e) {" in source:
-        parts.append(block(source, "static int event_peek(Obj *e) {"))
+    parts.append(block(source, "static int event_peek(Obj *e) {"))
+    parts.append(block(source, "static int event_wait(Obj *e, int64_t timeout_ns, int try_only) {"))
     parts += [block(source, "static int holder_ready("), block(source, "static uint64_t wait_any(")]
     enum = re.search(r"enum \{ H_EVENT[^}]*\};", source).group(0)
     return HARNESS.replace("HOLDER_ENUM", enum).replace("FUNCTIONS", "\n".join(parts + defines))
@@ -244,7 +244,7 @@ def main():
     # another file included, fails)
     safe_external = {"AcquireSRWLockExclusive", "AcquireSRWLockShared", "ReleaseSRWLockExclusive", "ReleaseSRWLockShared",
                      "InitializeSRWLock", "InitializeConditionVariable", "InterlockedIncrement", "InterlockedDecrement",
-                     "InterlockedCompareExchange", "InterlockedExchange", "__atomic_load_n", "__atomic_store_n",
+                     "InterlockedCompareExchange", "InterlockedExchange", "__atomic_load_n", "__atomic_store_n", "__atomic_compare_exchange_n",
                      "malloc", "calloc", "realloc", "free", "memset", "memcpy", "memmove", "getenv", "env_on", "hos_now_ns", "offsetof"}
     not_calls = {"if", "for", "while", "switch", "return", "sizeof", "case", "SLEEP_LETS_MW_LOCK_GO"}
 
@@ -323,8 +323,8 @@ def main():
     unsafe = locked_regions_unsafe(source)
     if unsafe:
         raise SystemExit("FAIL: waits for a virtual core while holding a lock WaitAny's scan takes: " + ", ".join(unsafe))
-    for what, old, new in (("a checkpoint in event_signal holding e->lk", "    AcquireSRWLockExclusive(&e->lk);\n    e->signaled = 1;",
-                            "    AcquireSRWLockExclusive(&e->lk);\n    hos_vcore_checkpoint();\n    e->signaled = 1;"),
+    for what, old, new in (("a checkpoint in event_signal holding e->lk", "        if (__atomic_load_n(&e->mwait, __ATOMIC_RELAXED) == 1) WakeConditionVariable",
+                            "        hos_vcore_checkpoint();\n        if (__atomic_load_n(&e->mwait, __ATOMIC_RELAXED) == 1) WakeConditionVariable"),
                            ("an obj() lookup under table_lock", "static Obj *obj_lookup(uint64_t key, int kind) {",
                             "static Obj *obj_lookup(uint64_t key, int kind) { AcquireSRWLockShared(&table_lock); obj(1, 2); ReleaseSRWLockShared(&table_lock);")):
         if old not in source:

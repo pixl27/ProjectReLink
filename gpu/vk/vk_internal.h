@@ -46,6 +46,16 @@ void queue_flush();          // (the same, taking dev.present_mu)
 // (hookshot) held submits out, then vkDeviceWaitIdle with the present queue's lock taken too (dev.present_mu held): the device's
 // every queue is synchronized by the host around it
 void device_wait_idle_locked();
+// (hookshot) why the swapchain is SDR though the Insert menu's HDR is on (Device::hdr_sdr_why): no VK_EXT_swapchain_colorspace;
+// HDR off in Windows' display settings; HDR on there but the driver lists no HDR10 surface
+// (docs/common-issues.md); the display lists none and the system's setting is not known (Linux, or a Windows that doesn't say).
+// hdr_sdr_count: how many, for the log's and the menu's line for each
+enum HdrSdrWhy : int { hdr_sdr_none, hdr_sdr_no_extension, hdr_sdr_os_off, hdr_sdr_driver, hdr_sdr_unknown, hdr_sdr_count };
+
+inline bool is_rdna4(uint32_t vendor_id, const char* device_name) {
+    return vendor_id == 0x1002 && device_name &&
+           (std::strstr(device_name, "RX 9") || std::strstr(device_name, "GFX12"));
+}
 
 struct Device {
     VkInstance instance = VK_NULL_HANDLE;
@@ -78,20 +88,28 @@ struct Device {
     bool eds3_polygon = false, eds3_clamp = false, eds3_blend = false, eds3_a2c = false;
     bool swapchain_colorspace = false;   // (hookshot) VK_EXT_swapchain_colorspace: HDR10 surfaces are listed
     bool hdr = false;                    // (hookshot) the swapchain is HDR10 (ST 2084, Rec. 2020): framegen_hdr writes it
+    // (hookshot) why it is SDR with HDR on, for the log and the menu's hint: written by create_swapchain and read by the menu on
+    // the presenting thread both (menu_record), as hdr is
+    HdrSdrWhy hdr_sdr_why = hdr_sdr_none;
     bool mesh_fallback = false;   // (hookshot) no VK_EXT_mesh_shader: task and mesh programs as compute shaders (vk_shader.cpp)
     // (hookshot) the float controls the device reports, a bit a width (1: 16 bits, 2: 32, 4: 64): a program declaring a denorm mode the
     // device lacks is invalid (vkCreateShaderModule's validation error), and an older driver need not ignore it (strip_float_controls)
     uint32_t denorm_preserve_widths = 0, denorm_flush_widths = 0;
     bool task_mesh_fallback = false;
+    bool mesh_only_fallback = false;   // (the Windows RDNA 2 workaround includes mesh-only programs)
     bool mesh_capable = false;    // (hookshot) the card has task and mesh shaders, whatever the Mesh shaders mode this run uses
                                   // (mesh_shader): the Quality preset Auto (this PC)'s tier, vk_main.cpp auto_profile
     bool uses_mesh_fallback(bool has_task) const {
-        return mesh_fallback || (task_mesh_fallback && has_task);
+        return mesh_fallback || (task_mesh_fallback && (has_task || mesh_only_fallback));
     }
     VkPhysicalDeviceVulkan12Features vk12{};
     VkPhysicalDeviceVulkan13Features vk13{};
+    VkPhysicalDeviceFloatControlsProperties float_controls{};   // (the float execution modes shaders may declare: make_profile)
+    VkShaderStageFlags subgroup_stages = 0;   // (subgroupSupportedStages: the stages subgroup operations may be used in)
     VkShaderStageFlags sg32_stages = 0;   // (stages that run at 32 lanes when asked: the size the translated programs assume)
+    uint32_t subgroup_min = 0;            // (the fewest lanes a stage can be held to: fallback_lanes.h)
     uint32_t subgroup_size = 32, subgroup_max = 32;   // (the lanes a stage not pinned runs at, and the most it can have)
+    uint32_t max_workgroup_subgroups = 0;   // (maxComputeWorkgroupSubgroups: a workgroup held to 32 lanes has at most 32 times this)
     VkDriverId driver_id{};
     bool radv_gcn = false;   // (hookshot) RADV on a GCN 1-4 card (GFX6-8: RX 400/500, R9 2xx/3xx/Fury): fallback_size_policy.h
     // (hookshot) what create_device learnt of this PC and the defaults it gets by it (device_policy.h); driver is what facts'
@@ -100,6 +118,7 @@ struct Device {
     DeviceFacts facts{};
     DevicePolicy policy{};
     uint32_t max_push_descriptors = 0;
+    uint32_t max_vertex_divisor = 0;   // (maxVertexAttribDivisor, with dev.vertex_divisor)
     // no window (HOS_HEADLESS): presents go to an image of their own, which RX_VK_SHOTS can write out
     bool offscreen = false;
     // the window
@@ -152,8 +171,15 @@ extern Device dev;
 /// ask: a create that compiles nothing (VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT), on the replay thread so a
 /// draw or dispatch never waits for a compile. It never waits here either: while a worker holds the gate, busy is set and
 /// the caller answers VK_PIPELINE_COMPILE_REQUIRED (cold) without asking the driver.
+/// (The UHD's 0x170 read was the pipeline cache's data fetched beside builds, which pcache_fetch_lock keeps apart
+/// on its own: the preparation's graphics builds pass the gate on Auto from driver 101.9175, IntelPrepareLane below.)
 bool intel_compiles_side_by_side();   // (vk_menu.cpp: the row as this run started with it)
 bool intel_quick_compute();   // (vk_menu.cpp: the Intel quick compute builds row, as it is now: vk_draw.cpp compute_optimize)
+
+/// Whether translated shaders keep 16-bit floats (vk_shader.cpp): the device's shaderFloat16, or RX_VK_NO_F16 / RX_VK_F16. Without
+/// them the translator lowers the game's f16 math to 32 bits and the cooperative-matrix networks are left out (vk_draw.cpp's
+/// stand-ins draw their upscale)
+bool float16_shaders();
 inline bool intel_gate_on() {
 #ifdef _WIN32
     static const bool on = [] {
@@ -167,11 +193,37 @@ inline bool intel_gate_on() {
     return false;
 #endif
 }
+/// (hookshot) The shader preparation's threads (vk_draw.cpp prepare_run, precompile_warm, precompile_run) while they build:
+/// where intel_prepare_open, their graphics pipelines and shader modules pass the gate side by side (intel_compiles.h
+/// intel_prepare_side_by_side_chosen: on Auto from driver 101.9175). Their compute pipelines still take it
+inline thread_local bool intel_prepare_lane_on = false;
+struct IntelPrepareLane {
+    bool was = intel_prepare_lane_on;
+    explicit IntelPrepareLane(bool on = true) { intel_prepare_lane_on = was || on; }   // (on false: as it was)
+    ~IntelPrepareLane() { intel_prepare_lane_on = was; }
+    IntelPrepareLane(const IntelPrepareLane&) = delete;
+    IntelPrepareLane& operator=(const IntelPrepareLane&) = delete;
+};
+bool intel_prepare_side_by_side();   // (vk_menu.cpp: the row as this run started with it, the GPU and its driver)
+/// Whether the preparation's graphics builds pass a gate that is on (said once)
+inline bool intel_prepare_open() {
+    static const bool open = [] {
+        const bool o = intel_gate_on() && intel_prepare_side_by_side();
+        if (o)
+            logf("vk: Intel's compiler is given the shader preparation's graphics pipelines side by side (Intel shader "
+                 "compiles row: Auto, driver 101.9175 or newer); its compute pipelines and play one at a time");
+        return o;
+    }();
+    return open;
+}
 struct IntelDriverGate {
     std::unique_lock<std::mutex> hold;
     bool busy = false;
-    explicit IntelDriverGate(bool ask = false) {
+    /// prepare_ok: a graphics pipeline or a shader module, which a preparation thread builds side by side where
+    /// intel_prepare_open (never a compute pipeline)
+    explicit IntelDriverGate(bool ask = false, bool prepare_ok = false) {
         if (!intel_gate_on()) return;
+        if (prepare_ok && intel_prepare_lane_on && intel_prepare_open()) return;
         static std::mutex mu;
         static std::once_flag once;
         std::call_once(once, [] {
@@ -185,6 +237,17 @@ struct IntelDriverGate {
         }
     }
 };
+
+/// (hookshot) Whether a stage of this many invocations runs at 32 lanes (pin_subgroup, profile_pinned, profile_graphics): one
+/// the GPU pins, and for a stage with a workgroup (compute, task, mesh) 32-lane subgroups that cover it, at most
+/// requiredSubgroupSize * maxComputeWorkgroupSubgroups invocations (VUID-VkPipelineShaderStageCreateInfo-pNext-02756), a
+/// limit the spec sets no minimum for. The default, 64: a task or mesh workgroup has 63 threads at most (a 6-bit count), and
+/// the mesh fallback runs the same workgroups as compute shaders
+inline bool pins_32(VkShaderStageFlags stage, uint64_t invocations = 64) {
+    if (!(dev.sg32_stages & stage)) return false;
+    const VkShaderStageFlags workgroup = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT;
+    return !(stage & workgroup) || invocations <= 32ull * dev.max_workgroup_subgroups;
+}
 
 /// (hookshot) Where a storage buffer binding starts: the address rounded down to this, the shaders' offsets counted from there
 /// (vk_shader.cpp make_profile / host_info, the translator's ssbo_align_mask; vk_draw.cpp's descriptor writer). At least 16
@@ -216,7 +279,9 @@ void memory_table_begin();                         // (hookshot: a recording's p
 bool memory_table_flush();
 uint64_t memory_guest_pages();                        // (hookshot: the device address of guest memory's page table, 0: none)
 void page_table_census_log(const char* when);         // (hookshot: the guest pools outside the page table's windows, page_table_census.h)
+void import_stats_log(const char* when);              // (hookshot: guest-memory imports made, refused by the driver, held)
 void memory_sync();                                   // (at each submit: pools the game made or let go)
+extern std::atomic<int> native_zstd_default;          // (HOS_OPT_NATIVE_ZSTD: 1 or 2 once the device's policy is made, 0 before)
 extern std::atomic<int64_t> memsync_lock_wait_ns;     // (hookshot, diagnostics: time memory_sync waited for its two locks; the slow-submit line)
 extern std::atomic<int64_t> memsync_part_ns[3];       // (hookshot, diagnostics: submit_memory_work's memory_sync, memory_take_capture, memory_collect_written)
 bool memory_pool_mirror_on();   // (RX_VK_POOL_MIRROR)
@@ -421,8 +486,11 @@ void memory_stamp_gpu(uint64_t guest, uint64_t size);   // (a GPU write: memory_
 void memory_protect_gpu(uint64_t guest, uint64_t size);  // (RX_VK_PROTECT_BARE=1: pages a shader writes through a table pointer)
 /// (vk_replay.cpp) guest memory as the stream's place sees it: as submitted, the stream's uniform updates before it over it
 bool ub_read(uint64_t addr, void* dst, uint64_t n);
-/// [guest, guest + n) as of the submit being replayed: live itself, or scratch holding it with the kept pages over it
-const uint8_t* memory_as_submitted(uint64_t guest, const uint8_t* live, uint64_t n, std::vector<uint8_t>& scratch);
+/// [guest, guest + n) as of the submit being replayed: live itself, or scratch holding it with the kept pages over it. first: a
+/// texture's first upload, which takes only the copies the submission being recorded took (RX_VK_FIRST_UPLOAD_OWN, issue 66);
+/// again: a re-upload, the same (RX_VK_REUPLOAD_OWN)
+const uint8_t* memory_as_submitted(uint64_t guest, const uint8_t* live, uint64_t n, std::vector<uint8_t>& scratch, bool first = false,
+                                   bool again = false);
 void memory_drop_shadow(uint64_t guest, uint64_t size);   // (a write the capture did not take: the copies go)
 /// (EvilBoyce) the newest submission value whose write-back reaches into [guest, guest + size) (0: none ever); *ever set
 /// when any write-back ever did
@@ -627,7 +695,8 @@ void present_thread_drain();   // (vk_replay.cpp: the presenter thread's present
 /// swapchain's images drawable, as ReShade's effects and RenoDX's HDR pass need. RX_VK_RESHADE=0: never
 bool reshade_compat();
 int swapchain_framegen();   // (vk_main.cpp: frame generation's fixed multiplier as the swapchain is made for it, 0 none)
-/// (hookshot) present_image's frame slots (vk_replay.cpp frames[]), at most; ImGui keeps one more vertex buffer (vk_imgui.cpp)
+/// (hookshot) present_image's frame slots (vk_replay.cpp frames[]), at most; ImGui keeps one more vertex buffer, and the
+/// overlays keep what they let go one more present (vk_imgui.cpp ImageCount, kFramesLater)
 constexpr int kPresentSlotsMax = 8;
 int present_slots_for(int framegen, bool two_sets);   // (vk_replay.cpp: the slots present_image uses; create_swapchain's)
 bool swapchain_dlssg();     // (vk_main.cpp: and DLSS-G makes its sets: V-Sync Auto's FIFO)
@@ -637,6 +706,7 @@ bool replay_start();                          // vk_replay.cpp
 bool precompile_wanted();                     // vk_draw.cpp
 void precompile_run(void (*progress)(size_t done, size_t total));
 void precompile_index_only();   // cached load-at-create metadata, without a preparation pass
+void texture_pipelines_warm();                 // (vk_texture.cpp: the ASTC decoder, BC encoders and GPU unswizzle made before the game)
 bool prepare_run(void (*progress)(size_t done, size_t total), bool background, bool refresh_states = false);
 bool prepare_is_update();
 void prepare_background();
@@ -654,6 +724,9 @@ bool compile_all();   // vk_draw.cpp
 /// (hookshot) The CPUs this process may run on: its affinity mask (sched_getaffinity on Linux, through host/posix), not every CPU
 /// the PC has. The prepare's pools are sized from it: a process limited to 12 of 24 CPUs ran 24 threads on them
 unsigned usable_cpus();   // vk_progcache.cpp
+/// (hookshot) The physical cores among those CPUs, a core's SMT siblings counted once (usable_cpus where they cannot be read):
+/// Threaded rendering's Auto counts by it (threaded_rendering.h)
+unsigned usable_cores();   // vk_progcache.cpp
 /// (hookshot) Half the PC's CPUs (one a core where a core runs two threads: the translation's and the stage libraries' workers, at
 /// below normal priority), and never more than usable_cpus: on 12 of 24 CPUs, 6 workers made the translation 40% slower than 12
 unsigned half_cpus();   // vk_progcache.cpp
@@ -663,6 +736,7 @@ unsigned prepare_cpus();   // vk_progcache.cpp
 bool segment_heap();       // vk_progcache.cpp (the process heap is the segment heap: nx2/win_manifest.py)
 /// (hookshot) The driver's shader cache folders' size, logged with when: at the start, after the prediction
 void driver_cache_log(const char* when);   // vk_draw.cpp
+void driver_env_note();   // vk_draw.cpp: (Linux) the environment the pipelines were built in, for later starts
 /// (hookshot) At the start after a preparation, behind the game: a sample of its predicted pipelines asked of the driver without
 /// compiling, "the driver's shader cache kept N of M" (none: this driver keeps nothing the prediction builds)
 void predicted_check();   // vk_draw.cpp
@@ -744,7 +818,7 @@ struct ProfThread {
     int open, k;     // (the PROF_HOT scopes open, and the outermost one's weight: 0 not timed)
     int64_t exact;   // (the nanoseconds PROF / PROF_EXACT timed on this thread so far)
 };
-inline thread_local ProfThread prof_t;
+inline constinit thread_local ProfThread prof_t{};
 struct ProfScope {
     int phase;   // (-1: PROF_EXACT, no phase of its own)
     int64_t t0, x0;

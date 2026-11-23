@@ -3,6 +3,9 @@
 #define _GNU_SOURCE
 #include <windows.h>
 #include <mmsystem.h>
+#ifdef TRACY_ENABLE
+#include "../hos_tracy.h"
+#endif
 
 #include <dirent.h>
 #include <dlfcn.h>
@@ -428,6 +431,9 @@ HRESULT SetThreadDescription(HANDLE h, PCWSTR name) {
     char shortname[16];
     snprintf(shortname, sizeof shortname, "%s", t->name);   /* (the kernel keeps 15 characters) */
     pthread_setname_np(t->th, shortname);
+#ifdef TRACY_ENABLE
+    if (pthread_equal(t->th, pthread_self())) HT_THREAD_NAME(t->name);   /* (HOOKSHOT_TRACY: the whole name) */
+#endif
     return S_OK;
 }
 HRESULT GetThreadDescription(HANDLE h, PWSTR *name) {

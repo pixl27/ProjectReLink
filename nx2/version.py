@@ -18,7 +18,8 @@ import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = ("host", "gpu", "nx2")
-SOURCE_EXT = (".c", ".cc", ".cpp", ".h", ".hpp", ".inc", ".py", ".glsl", ".comp", ".vert", ".frag", ".spv")
+# (.inl and .def: files an #include names besides headers, gpu/vk/switches.def; as nx2/build.py's HEADER_EXTS)
+SOURCE_EXT = (".c", ".cc", ".cpp", ".h", ".hpp", ".inc", ".inl", ".def", ".py", ".glsl", ".comp", ".vert", ".frag", ".spv")
 
 
 def release(root=ROOT):

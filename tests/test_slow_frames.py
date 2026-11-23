@@ -37,6 +37,9 @@ DRIVER = r'''
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32   /* (no setenv in the Windows C runtime) */
+static int setenv(const char *name, const char *value, int overwrite) { (void)overwrite; return _putenv_s(name, value); }
+#endif
 int64_t fake_now;
 static void sweep(int64_t t, const char *a, const char *b) {
     fake_now = t;
@@ -49,7 +52,7 @@ int main(int argc, char **argv) {
     (void)argc;
     setenv("HOS_SLOW_FRAMES", argv[1], 1);
     assert(hos_slow_frames_path() && !strcmp(hos_slow_frames_path(), argv[1]));
-    char longest[600] = "Long|";
+    char longest[800] = "Long|";   /* ("Long|" and 40 frames: 684 bytes, past the ring's 232) */
     for (int i = 0; i < 40; i++) strcat(longest, i ? ";hookshot+1234567" : "hookshot+1234567");
     int64_t t = 1000000000;   /* 1 s */
     for (int i = 0; i < 100; i++, t += 4000000) {   /* (400 ms of sweeps, 4 ms apart, frames on time every 16 ms) */
@@ -121,7 +124,7 @@ def sources():
     need("if (vc_log_ns() && waited >= vc_log_ns()) vc_long_wait(t, waited, how, vc_allowed(t));" in acquire,
          "a long wait for a virtual core is not logged")
     need("if (hos_fps_timing) t->vc_wait_total += waited;" in acquire, "the virtual core's waits are not counted")
-    need("vc_grant(c, t);" in block(threads, "static void vc_release(HosThread *t)"), "a grant does not know who let the core go")
+    need("vc_grant(c, t);" in block(threads, "static void vc_release_locked(HosThread *t)"), "a grant does not know who let the core go")
     need("t->blocked_total += hos_now_ns() - t->away_at" in block(threads, "void hos_vcore_back(void) {\n    HosThread *t = cur;"),
          "a block's time is not counted")
     need("host_main_thread_times" in (ROOT / "host/rx_backend.c").read_text(encoding="utf-8"), "the host does not give the main thread's times")

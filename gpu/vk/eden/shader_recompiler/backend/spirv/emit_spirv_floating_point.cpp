@@ -105,6 +105,9 @@ Id EmitFPMul16(EmitContext& ctx, IR::Inst* inst, Id a, Id b) {
 }
 
 Id EmitFPMul32(EmitContext& ctx, IR::Inst* inst, Id a, Id b) {
+    if (ctx.mesh_fallback && mesh_fallback_strict_fmul && inst->Flags<IR::FpControl>().no_contraction) {
+        return Decorate(ctx, inst, ctx.OpFma(ctx.F32[1], a, b, ctx.Const(-0.0f)));
+    }
     return Decorate(ctx, inst, ctx.OpFMul(ctx.F32[1], a, b));
 }
 

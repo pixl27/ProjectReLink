@@ -16,7 +16,7 @@ def main():
     draw = (ROOT / "gpu/vk/vk_draw.cpp").read_text(encoding="utf-8")
     checks = [
         ('const bool v = e ? !env_value_off(e) : dev.props.vendorID == 0x10de;' in tex, "NVIDIA by default, the switch over it"),
-        ('const bool on = e ? !strcmp(e, "game") : game_order();' in tex, "RX_VK_PASS_BARRIER still sets the pass part"),
+        ('const bool on = e ? !strcmp(e, "game") :' in tex and 'red_tunic_apu(dev.props.vendorID,' in tex, "RX_VK_PASS_BARRIER still sets the pass part"),
         ('const bool after_dispatch = !indirect && cmd == last_dispatch_cmd &&' in draw, "an indirect dispatch keeps its barrier"),
         ('work_epoch.load(std::memory_order_relaxed) == last_dispatch_epoch && game_order() &&' in draw,
          "only with nothing recorded since the last dispatch"),

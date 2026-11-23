@@ -34,7 +34,7 @@ def main():
     fsr4_sink = re.search(r"d\.reset = [^;]+;", fsr4).group()
     xess_sink = re.search(r"p\.resetHistory = [^;]+;", xess).group()
     fsr_sink = re.search(r"f\.reset = [^;]+;", fsr).group()
-    for tag, value in [("/* CHAIN_POLICY */", decision(chain, "bool temporal_upscale(")),
+    for tag, value in [("/* CHAIN_POLICY */", decision(chain, "bool draw_engine(")),
                        ("/* FSR_POLICY */", decision(fsr, "bool prepare(")),
                        ("/* CHAIN_SINK */", chain_sink), ("/* DLSS_SINK */", dlss_sink),
                        ("/* FSR4_SINK */", fsr4_sink), ("/* XESS_SINK */", xess_sink), ("/* FSR_SINK */", fsr_sink)]:

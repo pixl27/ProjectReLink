@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "../gpu/vk/fallback_size_policy.h"   // (program_cache_save and _read note each stage's phis)
+#include "../gpu/vk/fallback_lanes.h"         // (and whether it has no subgroup instruction)
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -78,7 +79,7 @@ int vkCreateShaderModule(uintptr_t device, const VkShaderModuleCreateInfo* info,
 }
 using VkResult = int;
 constexpr VkResult VK_SUCCESS = 0;
-struct IntelDriverGate { bool busy = false; explicit IntelDriverGate(bool = false) {} };   // (vk_internal.h's, never held here)
+struct IntelDriverGate { bool busy = false; explicit IntelDriverGate(bool = false, bool = false) {} };   // (vk_internal.h's, never held here)
 thread_local uint64_t module_program = 0;
 bool driver_faulted_program(uint64_t) { return false; }
 void driver_faulted_module(uint64_t) {}
@@ -131,6 +132,7 @@ struct { int64_t play_loads = 0, play_load_ns = 0; } census;
 std::atomic<bool> programs_in_play{false};
 void programs_load_wait(uint64_t) {}   // (the load at a program's create call, gpu/vk/vk_programs.cpp: none here)
 void module_id_learned(uint64_t, uint64_t, VkShaderModule) {}   // (shader module identifiers, vk_programs.cpp: none here)
+void descriptor_arrays_note(const Program&) {}   // (the census of indexed descriptor arrays, vk_programs.cpp: none here)
 #include "cache_functions.inc"
 
 void save(uint64_t key, bool empty_second = false, int bad_answer = 0) {

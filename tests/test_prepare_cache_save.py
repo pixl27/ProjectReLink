@@ -1,4 +1,4 @@
-"""Exercise the Builder's state-list import and cache save with game-free call stubs."""
+"""Exercise FSR 4 warm-up ordering, state-list import and cache save with game-free call stubs."""
 import argparse, os, struct, subprocess, tempfile
 from pathlib import Path
 RUN_ALL_ARGS = ["--cxx", "{cxx}"]
@@ -79,6 +79,7 @@ bool state_list_pending(){return false;}   // (no shipped list newer than the pr
 void state_list_run(){std::exit(4);}
 void pipeline_cache_save(bool force){if(!force)std::exit(2);calls.push_back(3);}
 std::string skipped_path(){return "sentinel";}
+void fsr4_prepare_shaders(){calls.push_back(7);}
 void prepare_watchdog(){}   // (vk_main.cpp: the run's watchdog, tests/test_prepare_stall.py)
 void prepare_moved(int,size_t,size_t){}
 bool prepare_left_workers(){return false;}
@@ -112,7 +113,7 @@ int main(int argc,char** argv){
  empty_states=mode=="empty";
  pending=mode=="pending";
  all_mode=std::string(argv[2])=="all";
- std::vector<int> want{1};
+ std::vector<int> want{7,1};
  if(!fresh_seed)want.push_back(6);
  if(std::string(argv[3])=="1")want.push_back(5);
  for(int call:{2,3,4})want.push_back(call);
@@ -127,6 +128,7 @@ with tempfile.TemporaryDirectory(prefix='prepare-cache-') as tmp:
     env={k:v for k,v in os.environ.items() if k not in ('RX_VK_SEED_CHECK','RX_VK_PREPARE_AGAIN')}
     # (Most: the prediction's part of the bar goes after a fresh seed too, out of the total (0.600 at half the noted pipelines).
     # Left in, the step to the noted pipelines counted it done at its guess: the bar jumped by the prediction's share, 0.714)
+    # (and on Most a refresh's steps leave the prediction out of the total too: 0.166 and 0.666, not 0.125 and 0.500)
     records={
         'missing':None, 'zero':struct.pack('<QQ',42,0), 'nonzero':struct.pack('<QQQQ',42,2,7,9),
         'empty':b'', 'header':struct.pack('<Q',42), 'wrong-stamp':struct.pack('<QQ',43,0),
@@ -155,6 +157,6 @@ with tempfile.TemporaryDirectory(prefix='prepare-cache-') as tmp:
             for level in ('all','most'): check(mode,level,record,level=='all')
     check('recheck','all','missing',False)   # Missing -> valid zero -> truncated, in one process: no cached absence.
     for mode, level, expected in [('fresh', 'all', ['0.714']), ('fresh', 'most', ['0.600']), ('refresh', 'all', ['0.125','0.500','0.750']),
-                                  ('refresh', 'most', ['0.125','0.500','0.750']), ('empty', 'all', ['0.500']), ('empty', 'most', ['0.500'])]:
+                                  ('refresh', 'most', ['0.166','0.666','0.750']), ('empty', 'all', ['0.500']), ('empty', 'most', ['0.500'])]:
         check(mode,level,'zero',mode=='fresh' and level=='all',expected)
     print("PASS: Builder upgrades Most to All, skips valid completed predictions (including zero keys), and preserves import/progress/save")

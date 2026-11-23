@@ -621,6 +621,9 @@ HLE(_ZN2nn3nfp12GetModelInfoEPNS0_9ModelInfoERKNS0_12DeviceHandleE) {
         uint8_t *m = GP(ARG(0));
         memset(m, 0, 0x40);
         memcpy(m, tag + 0x54, 7);
+        /* The tag stores the model number big endian; ModelInfo returns a native u16. */
+        m[4] = tag[0x59];
+        m[5] = tag[0x58];
     }
     ReleaseSRWLockShared(&nfc_lk);
     RET(ok ? 0 : NFP_WRONG_STATE);

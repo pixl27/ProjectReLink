@@ -171,15 +171,37 @@ void script_fonts(const char* lang) {
                 std::vector<unsigned char> b = reader.read_script(g);
                 if (!b.empty()) merged += std::string(merged.empty() ? "" : ", ") + g, merge(std::move(b), g);
             }
+        static std::vector<std::string> system_merged;   // (Linux's one CJK file serves four scripts: its bytes held once)
         for (const char* sp : f.system) {
             const std::string path = sp ? expand(sp) : "";
             if (path.empty()) continue;
+            if (std::find(system_merged.begin(), system_merged.end(), path) != system_merged.end()) {
+                merged += std::string(merged.empty() ? "" : ", ") + path + " (already merged)";
+                break;
+            }
             std::vector<unsigned char> b;
             if (!game_font::read_file(path, b)) continue;
             merged += std::string(merged.empty() ? "" : ", ") + path, merge(std::move(b), path.c_str());
+            system_merged.push_back(path);
             break;   // (one system font a script)
         }
-        logf("vk: ui: the menu in %s: %s", lang, merged.empty() ? "no font of its letters found (they may show as boxes)" : merged.c_str());
+        logf("vk: ui: the letters of %s: %s", lang, merged.empty() ? "no font of them found (they may show as ?)" : merged.c_str());
+    }
+}
+/// The languages' names the Language rows showed (vk_menu_i18n.h names_shown_since) that the fonts lack a letter of: that
+/// language's fonts merged in as for a menu in it, so an English menu draws 日本語 and Русский rather than ??? (Clarimo has Latin
+/// letters only, Libertinus no CJK). Only a name shown, and only when its letters are missing: a merged font holds its file's
+/// bytes for the process's life
+void name_fonts() {
+    for (const auto& [code, name] : i18n::names_shown_since()) {
+        bool missing = false;
+        for (const char* p = name.c_str(); *p && !missing;) {
+            unsigned c = 0;
+            p += ImTextCharFromUtf8(&c, p, nullptr);
+            for (ImFont* f : {fonts_.body, fonts_.strong})
+                missing |= f && !f->IsGlyphInFont((ImWchar)c);
+        }
+        if (missing) script_fonts(code.c_str());
     }
 }
 
@@ -203,7 +225,15 @@ struct Dead {   // (no longer used by anything recorded after `at`: gone once th
     uint64_t value = retired_value();   // (with no window: the timeline value past its last use)
 };
 std::vector<Dead> dead;
-constexpr int64_t kFramesLater = 4;   // (present_image keeps three frames in flight)
+// doc: docs/design.md#13-frame-generations-presents-as-rules (rule 4: what a copy reads lives through the slots)
+// (in a window, what a present's copy used is let go this many presents later. present_image waits for a frame slot's last
+// copy before the overlays record into it, so at present M the copies up to M less its slots are done: 3 slots, and while
+// frame generation's sets are on the game's timeline a slot per frame of two sets, up to kPresentSlotsMax (present_slots_for);
+// one more as a spare, as the backend's vertex buffers (ii.ImageCount). At 4, frame generation at 3x and up (6 to 8
+// slots, a set's copies on the GPU behind the game's next frame) let the staging buffers and the old atlas go while copies
+// could still read them, the font atlas grown at the start-up screen or new glyphs with the menu open: a likely cause of a
+// tester's lost device on an RTX 5080, not reproduced on an RTX 5090, where a test-only log showed the early let-gos)
+constexpr int64_t kFramesLater = kPresentSlotsMax + 1;
 void reap(bool all) {
     for (size_t i = 0; i < dead.size();) {
         Dead& d = dead[i];
@@ -377,7 +407,7 @@ void update_texture(VkCommandBuffer cmd, ImTextureData* tex) {
     vkCmdCopyBufferToImage(cmd, buf, t->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)copies.size(), copies.data());
     layout(cmd, t->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT,
            VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-    dead.push_back({presents, Tex{}, buf, buf_alloc});   // (the staging buffer: let go once this frame is done)
+    dead.push_back({presents, Tex{}, buf, buf_alloc});   // (the staging buffer: let go once the presents in flight are done, kFramesLater)
     tex->SetStatus(ImTextureStatus_OK);
 }
 
@@ -466,6 +496,7 @@ bool begin(uint32_t w, uint32_t h) {
     io.DeltaTime = last && now > last ? std::min((float)((now - last) / 1e9), 0.25f) : 1.0f / 60.0f;
     last = now;
     script_fonts(i18n::lang_code());   // (the menu's language's letters: merged in once, before the frame)
+    name_fonts();   // (and those of the languages' names last frame's Language rows showed: the frame after, ? until then)
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
     bake_some();

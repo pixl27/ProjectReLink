@@ -18,9 +18,10 @@ struct Options {
     int pace = 0;         // frames shown on an even line (vk_framegen.cpp)
     int vsync = 0;        // (hookshot) V-Sync, the swapchain's present mode (vk_main.cpp create_swapchain, made again at once): 0 Auto
                           // (mailbox where the driver has it), 1 On (FIFO), 2 Off (immediate). RX_VK_FIFO / RX_VK_IMMEDIATE over it
-    int threaded_rendering = 0;   // (hookshot) Threaded rendering (threaded_rendering.h): 0 Auto (by the CPU; off everywhere were
-                          // threaded::kAutoEnabled off), 1 On (the render thread and the recorder thread), 2 Off. Read once, at the
-                          // start (menu_threaded_rendering); RX_VK_ASYNC and RX_VK_RECORDER, when set, over it
+    int threaded_rendering = 0;   // (hookshot) Threaded rendering (threaded_rendering.h): 0 Auto (by the CPU's cores: both threads
+                          // from 6, the render thread alone with 4 or 5; off everywhere were threaded::kAutoEnabled off), 1 On (the
+                          // render thread and the recorder thread), 2 Off. Read once, at the start (menu_render_thread,
+                          // menu_recorder_thread); RX_VK_ASYNC and RX_VK_RECORDER, when set, over it
     int hdr = 0;          // (hookshot) HDR10 out (vk_framegen.cpp framegen_hdr): 0 off, 1 the SDR picture expanded, 2 the game's own (native) HDR; when the display has it (the swapchain made again at once)
     int hdr_white = 200;  // HDR paper white, nits (the picture's white)
     int hdr_peak = 1000;  // HDR peak brightness, nits (its brightest highlights)
@@ -44,6 +45,8 @@ struct Options {
     int dlss_model = 0;   // DLSS's network, by its preset: 0 K (transformer; E, the CNN, under 7 GB of video memory), 1 M, 2 L
                           // (second-generation transformer), 3 NVIDIA's default (upscaler_rows.h model_preset; vk_dlss.cpp).
                           // RX_VK_DLSS_PRESET over it
+    int dlss_pre_bloom = 0;   // (hookshot) DLAA before the bloom: 0 off (DLAA after the game's bloom and tone map), 1 on
+                              // (vk_temporal.cpp pre_bloom_wanted; DLAA only). Saved as dlss_pre_bloom; RX_VK_DLSS_PRE_BLOOM over it
     int sharpness = 0;    // 0 to 100
     int texture_detail = 0;   // (hookshot) Texture detail: 0 Auto, 1 Full, 2 Medium, 3 Low (the big textures' top levels left out,
                               // gpu/vk/vk_texture.cpp texture_detail_dims; read as each texture is made)
@@ -96,7 +99,8 @@ struct Options {
     int camera_speed = 100;   // (hookshot) the right stick's camera turn in percent of the game's, 50 to 400 (host/nn_vi.c, nx2/oot_patches.py: HOS_OPT_CAMERA_SPEED, 48)
     int invert_cam_x = 0; // right-stick camera horizontal inversion: 0 normal, 1 inverted
     int invert_cam_y = 0; // right-stick camera vertical inversion: 0 normal, 1 inverted
-    int rumble = 100;     // the controllers' rumble in percent of the game's: 0 Off, 25 to 150 (host/pad_sdl.c)
+    int rumble = 100;     // Vibration strength: percent of what the game asks for, 25 to 200 (host/pad_sdl.c; rumble_strength=)
+    int vibration = 0;    // (hookshot) Vibration: 0 Auto, 1 Basic (the motors), 2 Off (host/vibration.h)
     int stick_dead_zone = 0;  // circular stick cutoff: 0 XInput's 7849 (~24%), 1..5 5% to 30% (host/nn_hid.c)
     int hold_toggle = 0;  // enabled Switch buttons (1 << HOS_SW_*); persisted as toggle_<button>, not one mask entry
     int pad_layout = 0;   // 0 Nintendo (default), 1 Xbox / PC, 2 Swap Face Buttons, 3 Switch 2 Pro (every button the pad's own), 4 Custom
@@ -109,6 +113,8 @@ struct Options {
     int gyro_deadzone = 1;   // the motion's deadzone: 0 tight, 1 standard (the console's default), 2 loose
     int prompts = 0;      // the button icons: 0 Auto (the controller), 1 Switch, 2 Xbox, 3 PS4, 4 PS5, 5 Steam Deck (host/prompts.c)
     int robust = 0;       // bounds-checked buffer access: 0 Auto (on), 1 Off, 2 On (gpu/vk/vk_main.cpp; RX_VK_ROBUST)
+    int present_queue = 0;   // (hookshot) Present queue (Debug tab): 0 Off, 1 On, the presents on a compute family's queue of
+                             // their own (gpu/vk/vk_main.cpp create_device; RX_VK_PRESENT_QUEUE over it). Read once, at the start
     int descriptor_reuse = 1;  // (on by default since options_version 4) a draw keeps its descriptors through other slots' registrations (gpu/vk/vk_draw.cpp; RX_VK_DESC_REUSE)
     int sampler_cache = 0;     // sampler ids answer their parameters without the registrations' lock (gpu/vk/vk_draw.cpp; RX_VK_SAMPLER_CACHE)
     int astc_rgba8 = 0;   // (hookshot) big ASTC textures kept as decoded RGBA8, not re-encoded to BC3 (gpu/vk/vk_texture.cpp bc_ready;
@@ -151,10 +157,12 @@ void menu_auto_tune(double gpu_ms, double draws, double fps);   // (the replay's
 /// (for the run only: the row keeps the player's choice). 0 Auto, 1 On, 2 Off
 int menu_vsync();
 /// (hookshot) The Threaded rendering row as this run resolved it, once, at the start (threaded_rendering.h's rule: On, or what
-/// Auto picks for this PC): true, the render thread and the recorder thread. What the row says, not the environment's
-/// switches: RX_VK_ASYNC and RX_VK_RECORDER, when set, are read over it by their own readers (vk_replay.cpp
-/// render_thread_mode, vk_recorder.h mode_from_env). A change of the row applies at the next start. Any thread
-bool menu_threaded_rendering();
+/// Auto picks for this PC), in its two halves: menu_render_thread, the render thread (On; Auto from 4 cores), and
+/// menu_recorder_thread, the recorder thread (On; Auto from 6 cores, never without the render thread). What the row says,
+/// not the environment's switches: RX_VK_ASYNC and RX_VK_RECORDER, when set, are read over it by their own readers
+/// (vk_replay.cpp render_thread_mode, vk_recorder.h mode_from_env). A change of the row applies at the next start. Any thread
+bool menu_render_thread();
+bool menu_recorder_thread();
 void menu_set_gpu_count(int count);
 std::string driver_text();   // (vk_main.cpp: the driver as it names itself, for the log and Save my pipeline list)
 std::string device_name_text();   // (vk_main.cpp: the GPU the game runs on, as its driver names it)
@@ -179,6 +187,7 @@ int menu_memory_tier();
 int menu_shadow_res();   // (Shadow resolution, HOS_OPT_SHADOW_RES: the size drawn, Auto resolved)
 int menu_damage_taken();   // (Damage taken, HOS_OPT_DAMAGE_TAKEN: 1, Normal, while the tools are off)
 int menu_take_cheat_action();
+int menu_vibration_status_option();   // (hookshot) what plays the controller used last (HOS_OPT_VIBRATION_STATUS)
 void menu_note_frame(bool game_frame, int shown = 1);   // (the frame rates the FPS counter shows)
 int menu_item_count(int i);   // (hookshot) the game side's count of oot_cheat_items.h's item i, -1 unknown: the item wheel's numbers
 int menu_link_age();          // (hookshot) Link's age as the game side said it: 0 child, 1 adult, -1 unknown
@@ -205,5 +214,8 @@ struct StartupView;
 void startup_screen(const StartupView* view);
 /// The start-up screen's fade to black as it ends: 0 none, 1 black (vk_main.cpp prepare_with_screen)
 void startup_fade_to(float f);
+/// (hookshot) The Upscaler row's one-time questions (NGX's start among them) asked on a thread of their own, once a run, as the
+/// start-up screen asks them: for a run with no window, whose start-up screen never shows (vk_temporal.cpp temporal_prewarm)
+void upscalers_probe_start();
 
 } // namespace mkwvk

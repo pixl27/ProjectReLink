@@ -35,6 +35,7 @@ namespace win {
 [[maybe_unused]] static int mouse_captured, pointer_tracking, cursor_hidden;
 static HosPointer game_pointer = HOS_POINTER_INIT;
 static int menu_open = 1, game_menu_open;
+static LONG game_menu_mouse;   // (a game menu has the mouse, the Insert menu closed: the side buttons' rule, nn_hid.c)
 [[maybe_unused]] static LONG gm_mx, gm_my, gm_shown;
 static LONG play_wheel;
 static LONG64 play_wheel_ns;
@@ -247,8 +248,10 @@ int main() {
     CHECK(win::hos_mouse_game_pointer(&gx,&gy,&gw,&gh,&pressed,&wheel)==1 && wheel==1);
     CHECK(win::hos_mouse_pointer(&out) && !out.wheel);
     win::game_menu_press(MAKELPARAM(30,40),HOS_MOUSE_LEFT);
+    CHECK(win::game_menu_mouse == 1);
     toggle_clears = 0;
     win::menus_mouse(win::hwnd,1,1);
+    CHECK(win::game_menu_mouse == 0);   // the Insert menu over it: the mouse is that one's
     CHECK(toggle_clears == 1);   // Insert opens over a game menu too, with no HID poll needed
     CHECK(!win::hos_mouse_game_pointer(&gx,&gy,&gw,&gh,&pressed,&wheel) && !pressed);
     win::wheel_event(win::hwnd,MAKEWPARAM(0,120));

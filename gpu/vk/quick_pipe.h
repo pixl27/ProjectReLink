@@ -11,7 +11,7 @@
 
 namespace quick_pipe {
 
-/// RX_VK_QUICK_MS's suggested value (off unless set, on every driver, until a run on AMD measures it): half a frame at 60 fps,
+/// RX_VK_QUICK_MS's suggested numeric budget for skippable draws: half a frame at 60 fps,
 /// the same bound as RX_VK_TRANSLATE_WAIT_MS's tested 8. A skippable draw's quick build only stands in for leaving it out, so
 /// its cost has to stay under a frame's: Mako's 1000 traded a missing draw for a hitch of up to a second. Where a quick build
 /// takes longer than 8 ms (tens of ms on AMD's proprietary driver), it means one quick build a frame on each recording thread,
@@ -33,8 +33,7 @@ inline double read_ms(const char* env, double def, bool* bad) {
     }
     return ms > 0 ? ms : 0;
 }
-/// RX_VK_QUICK_MS: each recording thread's quick builds a frame, in ms (unset or 0: none, the draw left out or waited for as
-/// before, on every driver)
+/// Numeric budget for skippable draws. quick_budget_ms handles required-only mode and the unset default.
 inline double quick_ms(const char* env, bool* bad) { return read_ms(env, 0, bad); }
 /// RX_VK_PIPE_WAIT_MS: each recording thread's waits a frame for skippable draws' pipelines, in ms (off unless set)
 inline double wait_ms(const char* env, bool* bad) { return read_ms(env, 0, bad); }
@@ -122,7 +121,7 @@ Got take(Entry& e, bool must, double budget_ms, FrameBudget& budget, uint64_t fr
     bool busy = false;
     P pl = ask(busy);
     double t1 = 0;
-    if (pl == P{} && !busy) {
+    if (pl == P{} && !busy && !there()) {
         got = Got::kQuick, t1 = now_ms(), pl = build(busy);
         // (a build the gate let in, or one that will never be made: one that met the gate busy built nothing, and counted, it
         // would keep the frame's one build from the draws after it for as long as its program is in the driver)

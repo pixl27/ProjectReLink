@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-18 | main `7daafa7a` | Windows 11 build 26300; no game window | GeForce RTX 4060 / NVIDIA 610.88 | Intel Core i7-9700 / 32 GB | Test profile; 1920×1080 offscreen Vulkan; HOS_FPS_MAX=1000; baseline defaults | siantm main-7-quiet, 15:30:14 UTC. Kokiri Forest from kokiri-start; 300 warm-up frames followed by 900 frames holding the left stick forward; read renderer reports 2 s later. | Median 49 FPS across 9 periodic reports (range 47.5–49.9); exit 0. Not a per-frame percentile or visual inspection. |

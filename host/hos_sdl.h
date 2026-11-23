@@ -68,6 +68,7 @@ int hos_sdl_poll_event(HosSdlEvent *e);
 int hos_sdl_output_count(void);
 int hos_sdl_output_info(int index, char *id, int id_capacity, char *name, int name_capacity);
 int hos_sdl_output_resolve(const char *id);
+int hos_sdl_output_channels(int index);   /* (hookshot) the index'th device's channels, after hos_sdl_output_count; 0 unknown */
 void *hos_sdl_audio_open(unsigned device, int freq, int channels, int s16,
                          void (*pull)(void *user, uint8_t *out, int len), void *user);
 void hos_sdl_audio_close(void *audio);   /* stops callbacks before freeing their state */
@@ -114,3 +115,12 @@ int hos_sdl_pad_sensor(void *pad, int type, float *data, int n);   /* 1 when rea
 int hos_sdl_knows_steam_pads(void);
 uint16_t hos_sdl_pad_vendor(void *pad);
 uint64_t hos_sdl_pad_steam_handle(void *pad);
+/* (hookshot) vibration (host/pad_sdl.c, host/rumble_renhdrum.c): a pad's transport (1 wireless, 0 wired, -1 when SDL
+   cannot say); an Xbox pad's trigger motors (1 sent); a pad's device path ("" unknown) and a second handle on it */
+int hos_sdl_pad_wireless(void *pad);
+int hos_sdl_pad_rumble_triggers(void *pad, uint16_t left, uint16_t right, uint32_t ms);
+const char *hos_sdl_pad_path(void *pad);
+int hos_sdl_hid_can(void);
+void *hos_sdl_hid_open(const char *path);
+int hos_sdl_hid_write(void *hid, const void *data, int size);   /* the bytes written, -1 on failure */
+void hos_sdl_hid_close(void *hid);

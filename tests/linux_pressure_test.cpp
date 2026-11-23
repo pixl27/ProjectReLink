@@ -2,6 +2,7 @@
 // Game-free tests for gpu/vk/linux_pressure.h and the post-precompile shader-module release / reload in
 // gpu/vk/vk_progcache.cpp (compiled and run by tests/test_linux_pressure.py).
 #include "../gpu/vk/linux_pressure.h"
+#include "../gpu/vk/fallback_lanes.h"   // (program_cache_save and _read: a stage's free lanes)
 
 #include <atomic>
 #include <chrono>
@@ -124,6 +125,7 @@ std::unordered_map<uint64_t, std::vector<std::unique_ptr<Program>>> programs;
 void disk_init() {}
 void programs_load_wait(uint64_t) {}
 void module_id_learned(uint64_t, uint64_t, VkShaderModule) {}
+void descriptor_arrays_note(const Program&) {}   // (the census of indexed descriptor arrays, vk_programs.cpp: none here)
 bool env_on(const char*) { return false; }
 #define PROF_EXACT() ((void)0)
 

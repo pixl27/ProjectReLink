@@ -18,6 +18,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import socket
 import struct
 import subprocess
@@ -1098,6 +1099,74 @@ def vk_profile(tour, a):
                 raise
 
 
+def game_copy(tour):
+    """The tour's copy where the drive has no reflinks (ext4): romfs/ hard-linked, everything else real files (cache/ is written
+    in place, bin/ is where the game finds its folder), refused for a linked romfs/ or too little room, and a write into the
+    shared romfs/ found after the tour"""
+    import types
+    real_run = tour.subprocess.run
+
+    def no_reflinks(cmd, *a, **kw):   # (whatever this machine's drive can do, the ext4 path)
+        if "--reflink=always" in cmd:
+            return types.SimpleNamespace(returncode=1)
+        return real_run(cmd, *a, **kw)
+
+    tour.subprocess.run = no_reflinks
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            game = os.path.join(d, "game")
+            for rel, data in (("romfs/Pack/a.pack", b"A" * 4096), ("romfs/b.bin", b"B"), ("bin/hookshot", b"\x7fELF"),
+                              ("cache/hookshot_programs.bin", b"P"), ("hookshot_options.ini", b"dlss=2\n"), ("image.bin", b"I")):
+                os.makedirs(os.path.dirname(os.path.join(game, rel)), exist_ok=True)
+                with open(os.path.join(game, rel), "wb") as f:
+                    f.write(data)
+            copy = game + "-tour"
+            seal = tour.copy_game(game, copy)
+            if not seal or sorted(seal) != ["Pack/a.pack", "b.bin"]:
+                fail("the copy's romfs/ stamp is %s" % seal)
+            for rel in ("romfs/Pack/a.pack", "romfs/b.bin"):
+                if os.stat(os.path.join(game, rel)).st_ino != os.stat(os.path.join(copy, rel)).st_ino:
+                    fail("%s is not hard-linked in the copy" % rel)
+            for rel in ("bin/hookshot", "cache/hookshot_programs.bin", "hookshot_options.ini", "image.bin"):
+                p = os.path.join(copy, rel)
+                if os.path.islink(p) or os.stat(p).st_ino == os.stat(os.path.join(game, rel)).st_ino:
+                    fail("%s in the copy is not a file of its own" % rel)
+            with open(os.path.join(copy, "cache/hookshot_programs.bin"), "ab") as f:   # (as the program cache appends)
+                f.write(b"more")
+            if open(os.path.join(game, "cache/hookshot_programs.bin"), "rb").read() != b"P":
+                fail("a write to the copy's cache reached the game folder")
+            if tour.romfs_changed(copy, seal):
+                fail("an untouched romfs/ was reported changed")
+            with open(os.path.join(copy, "romfs/b.bin"), "r+b") as f:   # (a write the game should never make)
+                f.write(b"X")
+            if tour.romfs_changed(copy, seal) != ["b.bin"]:
+                fail("a write into the hard-linked romfs/ was not found")
+            shutil.rmtree(copy)
+            if open(os.path.join(game, "romfs/Pack/a.pack"), "rb").read() != b"A" * 4096:
+                fail("removing the copy changed the game folder")
+            real_usage = tour.shutil.disk_usage
+            tour.shutil.disk_usage = lambda p: types.SimpleNamespace(total=0, used=0, free=1 << 20)
+            try:
+                tour.copy_game(game, copy)
+                fail("a copy was made with 1 MB free")
+            except SystemExit as e:
+                if "free" not in str(e) or os.path.exists(copy):
+                    raise
+            finally:
+                tour.shutil.disk_usage = real_usage
+            moved = os.path.join(d, "romfs-elsewhere")
+            os.rename(os.path.join(game, "romfs"), moved)
+            os.symlink(moved, os.path.join(game, "romfs"))
+            try:
+                tour.copy_game(game, copy)
+                fail("a linked romfs/ was copied")
+            except SystemExit as e:
+                if "hard-link" not in str(e) or os.path.exists(copy):
+                    raise
+    finally:
+        tour.subprocess.run = real_run
+
+
 def main():
     tour = load("pipeline_tour", TOUR)
     a = tour.actions()
@@ -1119,7 +1188,9 @@ def main():
     memory_guard(tour, a)
     worth(tour, states, rec)
     vk_profile(tour, a)
-    print("pipeline tour: source, route, presses, command line, lists, bridge, memory guard, worth and renderer profile ok")
+    game_copy(tour)
+    print("pipeline tour: source, route, presses, command line, lists, bridge, memory guard, worth, renderer profile and "
+          "game copy ok")
 
 
 if __name__ == "__main__":

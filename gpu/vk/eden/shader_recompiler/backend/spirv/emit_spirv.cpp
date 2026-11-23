@@ -178,6 +178,8 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
         case IR::AbstractSyntaxNode::Type::If: {
             const Id if_label{node.data.if_node.body->Definition<Id>()};
             const Id endif_label{node.data.if_node.merge->Definition<Id>()};
+            // (hookshot: the shared warp's region, said before the merge instruction, which must stand right before its branch)
+            WarpOpenRegion(ctx, node.data.if_node.body, ctx.Def(node.data.if_node.cond));
             ctx.OpSelectionMerge(endif_label, spv::SelectionControlMask::MaskNone);
             ctx.OpBranchConditional(ctx.Def(node.data.if_node.cond), if_label, endif_label);
             break;
@@ -198,6 +200,7 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
             break;
         }
         case IR::AbstractSyntaxNode::Type::EndIf:
+            WarpCloseRegion(ctx);
             if (current_block) {
                 ctx.OpBranch(node.data.end_if.merge->Definition<Id>());
             }
@@ -511,9 +514,11 @@ void SetupCapabilities(const Profile& profile, const Info& info, EmitContext& ct
         ctx.AddExtension("SPV_KHR_shader_draw_parameters");
         ctx.AddCapability(spv::Capability::DrawParameters);
     }
+    // (hookshot: not for a stage on the shared warp, which has no subgroup instruction; its check keeps them)
+    const bool subgroup_free{ctx.warp_shared && !ctx.warp_shared_check};
     if ((info.uses_subgroup_vote || info.uses_subgroup_invocation_id ||
          info.uses_subgroup_shuffles || info.uses_subgroup_mask) &&
-        profile.support_vote && profile.SupportsSubgroupStage(ctx.stage)) {
+        profile.support_vote && profile.SupportsSubgroupStage(ctx.stage) && !subgroup_free) {
         ctx.AddCapability(spv::Capability::GroupNonUniformBallot);
         ctx.AddCapability(spv::Capability::GroupNonUniformShuffle);
         if (info.uses_subgroup_shuffles && profile.support_shuffle_relative) {

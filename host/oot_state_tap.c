@@ -158,6 +158,38 @@ static int state_number(uint64_t mgr, int kind, uint32_t hash, int64_t *v) {
     return 1;
 }
 
+/* (host/hos_main.c's oot_map_refresh, on Link's update, as the rest of this file reads the guest: the Discord status's
+   hearts and rupees) an Int flag of the game data by its hash into *v; 0 when there is none */
+int hos_oot_gamedata_int(uint32_t hash, int64_t *v) {
+    const uint64_t mgr = state_u64(state_u64(STATE_GAMEDATA_SLOT));
+    return mgr && state_number(mgr, KIND_INT, hash, v);
+}
+
+/* (host/oot_heart_containers.c, on Link's update as above: the boss heart containers taken) a Bool64bitKey flag of the
+   game data, the kind named by an actor's 64-bit placement id: 1 set, 0 not, -1 not known. Their container is at
+   GameDataMgr + 0xc58 (the game's f_80e1f1c0 hands that to its loader, f_805ce6b0): the count (u32) at +0, the entries at +8,
+   16 bytes each, the id (u64) at +0 and the value at +12 (a save's taken heart pieces and containers read 1 there, the rest
+   0). *at keeps where id was found, so a read after the first is one entry, not a search (-1: not found yet) */
+#define STATE_BOOL64 0xc58u
+int hos_oot_gamedata_bool64(uint64_t id, int *at) {
+    const uint64_t mgr = state_u64(state_u64(STATE_GAMEDATA_SLOT));
+    const uint32_t count = mgr ? state_u32(mgr + STATE_BOOL64) : 0;
+    const uint64_t entries = mgr ? state_u64(mgr + STATE_BOOL64 + 8) : 0;
+    if (!count || count > (1u << 20) || entries < 0x100000) return -1;
+    const uint8_t *e = hos_guest_range(entries, (uint64_t)count * 16);
+    if (!e) return -1;
+    uint64_t k;
+    if (*at >= 0 && (uint32_t)*at < count && (memcpy(&k, e + (size_t)*at * 16, 8), k == id)) return e[(size_t)*at * 16 + 12] != 0;
+    for (uint32_t i = 0; i < count; i++) {
+        memcpy(&k, e + (size_t)i * 16, 8);
+        if (k == id) {
+            *at = (int)i;
+            return e[(size_t)i * 16 + 12] != 0;
+        }
+    }
+    return -1;
+}
+
 static int state_float(uint64_t mgr, uint32_t hash, float *f) {
     const uint64_t e = state_entry(mgr, KIND_FLOAT, hash);
     return e && state_peek(e + state_kind[KIND_FLOAT].value, f, 4) && isfinite(*f);

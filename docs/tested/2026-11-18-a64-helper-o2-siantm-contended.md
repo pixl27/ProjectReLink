@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-18 | #756 `99f5e48a`, `pr756` pack on `7daafa7a` | Windows 11 build 26300; no game window | GeForce RTX 4060 / NVIDIA 610.88 | Intel Core i7-9700 / 32 GB | Test profile; offscreen Vulkan 1920×1080; auto threaded rendering off; `HOS_FPS_MAX=1000` | siantm `pr756-1`; `kokiri-start`, 300 warm-up frames then 900 measured stick frames | Reached play and quit; median 15.05 FPS across 8 renderer reports (13.2–15.8). Excluded from A/B: the next main control timed out in warm-up, and eight compiler processes were consuming CPU when the timeout was diagnosed. No matched control or PR performance verdict from this run. |

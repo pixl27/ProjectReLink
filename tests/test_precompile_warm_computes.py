@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Which compute programs the start's warm builds (gpu/vk/vk_draw.cpp precompile_warm, RX_VK_LOAD=create): the precompile's plan
-where RX_VK_PRECOMPILE_COMPUTES says which, or its default does (precompile_computes_which: "listed" on Mesa's Intel driver),
+where RX_VK_PRECOMPILE_COMPUTES says which, or its default does ("listed" on Most and on Mesa's Intel driver),
 and every kept compute program where nothing does, as before.
 
 On an Iris Xe with 16 GB (Mesa 26.2.6, #1344) the warm built every kept compute program at a game's first start, 4,059 of
 them, the driver's compiles on 12 threads, while the preparation's own warm had built the listed ones alone; Linux killed the
 game for memory at 1,852. The piece of precompile_warm that picks the programs is cut out of the source and compiled with
 stand-ins for the program cache and the plan:
-- no switch and no default (every GPU but Mesa's Intel driver): every kept program, as on main;
+- an unrestricted plan: every kept program;
 - "listed": the plan's programs this install has, and no others; a key the plan names with no program is not one;
 - a plan of every program ("all", or "listed" with no list): every kept program;
 - "none": none.
@@ -34,23 +34,21 @@ FIXTURE = r'''
 #include <cstdio>
 #include <cstring>
 #include <unordered_set>
+#include <string>
 #include <vector>
 
-struct ComputePlan {
-    std::unordered_set<uint64_t> keys;
-    bool all = false, none = false, learned_only = false;
-    size_t shipped = 0, learned = 0, fresh = 0;
-};
-static const char* which_now = nullptr;
+@MIX@
+@PLAN@
 static ComputePlan plan_now;
-const char* precompile_computes_which() { return which_now; }
-ComputePlan computes_plan(const char* which, bool) {
-    ComputePlan p = plan_now;
-    p.none = p.none && which && !std::strcmp(which, "none");
-    return p;
-}
+const ComputePlan& compute_warm_plan() { return plan_now; }
+static bool preparing = false;
+static uint64_t program_cache_stamp() { return 42; }
+static std::string precompile_built_path() { return "notes.built"; }
+static bool env_on(const char*) { return preparing; }
+@WRITE@
+@READ@
 std::vector<uint64_t> program_cache_compute_keys() { return {11, 22, 33, 44}; }
-bool env_on(const char*) { return false; }
+
 
 std::vector<uint64_t> warm_keys() {
 @CUT@
@@ -69,23 +67,47 @@ static bool is(const std::vector<uint64_t>& got, std::vector<uint64_t> want) {
 }
 
 int main() {
-    which_now = nullptr, plan_now = {};
+    plan_now = {};
+    plan_now.all = true;
     plan_now.keys = {22};
     check(is(warm_keys(), {11, 22, 33, 44}), "no switch and no default: not every kept compute program (as before)");
 
-    which_now = "listed", plan_now = {};
+    plan_now = {};
     plan_now.keys = {22, 44, 99};
     check(is(warm_keys(), {22, 44}),
           "listed (Mesa's Intel driver): not the plan's programs alone (#1344: every kept one, 4,059 on an Iris Xe)");
 
-    which_now = "listed", plan_now = {};
+    plan_now = {};
     plan_now.all = true;   // ("listed" with nothing listed, or "all")
     check(is(warm_keys(), {11, 22, 33, 44}), "a plan of every program: not every kept one");
 
-    which_now = "none", plan_now = {};
+    plan_now = {};
     plan_now.none = true;
     plan_now.keys = {22};
     check(warm_keys().empty(), "none: some compute programs warmed");
+
+    plan_now = {};
+    plan_now.keys = {22, 44};
+    precompile_built_write(3, plan_now.coverage());
+    preparing = true;
+    check(precompile_covers_notes(), "same listed set misses its marker");
+    plan_now.keys.insert(99);
+    check(!precompile_covers_notes(), "new listed compute reused the smaller warm");
+    plan_now.all = true;
+    check(!precompile_covers_notes(), "All reused the Most warm");
+    preparing = false;
+    precompile_built_write(3, plan_now.coverage());
+    preparing = true;
+    plan_now.all = false;
+    check(precompile_covers_notes(), "Most missed the full warm");
+
+    FILE* f = std::fopen(precompile_built_path().c_str(), "wb");
+    const uint64_t legacy[2] = {42, 3};
+    std::fwrite(legacy, sizeof legacy, 1, f);
+    std::fclose(f);
+    check(!precompile_covers_notes(), "Builder trusted legacy compute coverage");
+    preparing = false;
+    check(precompile_covers_notes(), "ordinary start discarded its legacy marker");
 
     std::printf(fails ? "precompile warm computes: FAILED\n" : "precompile warm computes: ok\n");
     return fails ? 1 : 0;
@@ -103,9 +125,14 @@ def main():
     cut = between(warm, "std::vector<uint64_t> computes = program_cache_compute_keys();", "const size_t all_n")
     with tempfile.TemporaryDirectory(prefix="precompile-warm-computes-") as tmp:
         src, exe = Path(tmp) / "warm.cpp", Path(tmp) / "warm"
-        src.write_text(FIXTURE.replace("@CUT@", cut), encoding="utf-8")
+        fixture = (FIXTURE.replace("@CUT@", cut)
+                   .replace("@MIX@", block((ROOT / "gpu/vk/draw_key.h").read_text(), "inline uint64_t mix("))
+                   .replace("@PLAN@", block(draw, "struct ComputePlan {") + ";")
+                   .replace("@WRITE@", block(draw, "void precompile_built_write("))
+                   .replace("@READ@", block(draw, "bool precompile_covers_notes() {")))
+        src.write_text(fixture, encoding="utf-8")
         subprocess.run([args.cxx, "-std=c++20", "-Wall", "-Wextra", "-Werror", str(src), "-o", str(exe)], check=True)
-        subprocess.run([str(exe)], check=True, timeout=60)
+        subprocess.run([str(exe)], cwd=tmp, check=True, timeout=60)
 
 
 if __name__ == "__main__":

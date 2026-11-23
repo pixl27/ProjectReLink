@@ -28,6 +28,9 @@ from pathlib import Path
 RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+from srccut import block
+
 ENV_ON_H = ROOT / "gpu" / "vk" / "compat" / "hookshot_env.h"
 
 FIXTURE = r'''#include <algorithm>
@@ -50,6 +53,9 @@ FIXTURE = r'''#include <algorithm>
 #include <unistd.h>
 #if __has_include("guest_holes.h")
 #include "guest_holes.h"
+#endif
+#if __has_include("cxx_escape.h")
+#include "cxx_escape.h"   /* (the check's helper threads: fork_join) */
 #endif
 /* (the renderer around upload_all_zero, stood in for) */
 typedef uint32_t VkFlags;
@@ -173,9 +179,7 @@ MODES = ("allholes", "holes", "data", "tail", "outside", "nofd", "pipe")
 
 def cut_upload_all_zero():
     src = (ROOT / "gpu/vk/vk_texture.cpp").read_text(encoding="utf-8")
-    start = src.index("bool upload_all_zero(Texture& tex, uint64_t total, const Ranges* dirty, bool widened_format) {")
-    end = src.index("\nbool upload_inner(Texture& tex, const Ranges* dirty) {", start)
-    return src[start:end] + "\n"
+    return block(src, "bool upload_all_zero(Texture&", "gpu/vk/vk_texture.cpp") + "\n"
 
 
 def run_upload_all_zero(cxx, tmp):

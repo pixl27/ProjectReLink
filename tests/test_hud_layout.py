@@ -288,12 +288,17 @@ def check(cond, what):
         raise SystemExit("FAIL: " + what)
 
 
+# (env_value_off, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(ROOT / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
+
 def build_run(cc, src, tag):
     with tempfile.TemporaryDirectory(prefix="hud-layout-") as tmp:
         c = Path(tmp) / (tag + ".c")
         exe = Path(tmp) / tag
         c.write_text(src, encoding="utf-8")
-        built = subprocess.run([cc, "-std=c11", "-O1", "-Wall", "-Wno-unused-function", "-o", str(exe), str(c), "-lm"],
+        built = subprocess.run([cc, "-std=c11", "-O1", "-include", ENV_ON_H, "-Wall", "-Wno-unused-function", "-o", str(exe), str(c),
+                                "-lm"],
                                capture_output=True, text=True)
         check(built.returncode == 0, tag + " did not compile:\n" + built.stdout + built.stderr)
         run = subprocess.run([str(exe)], capture_output=True, text=True)

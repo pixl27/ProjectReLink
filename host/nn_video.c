@@ -425,7 +425,7 @@ static void queue_frame(Dec *d, const AVFrame *f) {
     const int nv12_src = f->format == AV_PIX_FMT_NV12;
     const int yuv420 = f->format == AV_PIX_FMT_YUV420P || f->format == AV_PIX_FMT_YUVA420P;
     const char *rgba_env = getenv("HOS_VIDEO_RGBA");
-    const int force_rgba = rgba_env && atoi(rgba_env) != 0;
+    const int force_rgba = rgba_env && !env_value_off(rgba_env);
     const int lazy_rgba = !force_rgba && (nv12_src || yuv420);
     if (!lazy_rgba && (!d->sws || d->sws_w != w || d->sws_h != h || d->sws_fmt != f->format)) {
         if (d->sws) sws_freeContext(d->sws);

@@ -28,6 +28,9 @@
    a narrower screen fitted to its width, as the menus); HOS_WIDE_UI=0 or 1, when set, stands over the row;
    HOS_WIDE_UI_LOG=<n> logs the first n changes of the plan, each root layout, and the plan's time. */
 #include "hos.h"
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -579,7 +582,7 @@ void hos_wide_ui_tick(void) {
     /* (the HUD's moves: HOS_WIDE_UI when set, else the Insert menu's HUD layout, read at each present so a change shows at
        once: 0 Screen's edges, 1 Middle 16:9, HOS_OPT_HUD_LAYOUT) */
     int rx_option(int id, int otherwise);
-    const int hud = env && *env ? atoi(env) != 0 : rx_option(75, 0) == 0;
+    const int hud = env && *env ? !env_value_off(env) : rx_option(75, 0) == 0;
     float qx = 0.0f, qy = 0.0f, fit = 1.0f, ex = 0.0f, ey = 0.0f;
     if (r > GAME * 1.001f) {   /* (wider: the middle 16:9 at the height's scale, as before) */
         qx = GAME / r, qy = 1.0f;

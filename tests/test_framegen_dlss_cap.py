@@ -14,7 +14,9 @@ build without it);
 multiplier(), swapchain_framegen(), swapchain_dlssg(), create_swapchain's set_too_big and present_image's swapchain key
 take framegen_now(); the row shows the capped value and its arrows step from it, up to the top (past it round to Off, as
 past 8x); the control bridge's value is set as asked. At Auto the row names who makes its frames (FSR 3.1 FG or Built-in
-FG: DLSS FG makes fixed multipliers only).
+FG: DLSS FG makes fixed multipliers only). The real hn_framegen is compiled and run too: its 2x hint names AMD FSR 3.1
+only where FSR 3.1 makes the frame, not while DLSS FG makes it (an RTX 40 with DLSS FG at a fixed multiplier, on a
+temporal Upscaler, runs at 2x).
 
     python -I -B tests/test_framegen_dlss_cap.py [--cxx g++]
 """
@@ -46,6 +48,45 @@ int main() {
     CHECK(framegen_capped(0, 5) == 0 && framegen_capped(1, 5) == 1 && framegen_capped(1, 1) == 1);
     if (failures) return 1;
     std::puts("PASS: DLSS FG's multiplier stops at its runtime's most + 1");
+    return 0;
+}
+"""
+
+# (the Frame generation row's hint, the real hn_framegen: at 2x it names AMD FSR 3.1 only where FSR 3.1 makes the frame.
+# FSR 3.1 is asked with DLSS FG chosen too (fsr3fi::frames_wanted), for the sets DLSS-G does not make: with DLSS-G making
+# them (dlss_fg_most above 0) the 2x hint said "by AMD FSR 3.1" on every RTX 40, whose DLSS FG stops at 2x)
+HINT = r"""
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+static int failures = 0;
+#define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); failures++; } } while (0)
+static uint32_t fsr_wanted = 0;
+static int most = 0;
+namespace fsr3fi { uint32_t frames_wanted() { return fsr_wanted; } }
+int dlss_fg_most() { return most; }
+/* CAPPED */
+/* HINT */
+static bool says_fsr(const char* t) { return t && std::strstr(t, "AMD FSR 3.1"); }
+int main() {
+    fsr_wanted = 1, most = 1;   /* an RTX 40, DLSS FG making the frames (FSR 3.1 asked for the sets it does not make) */
+    CHECK(!says_fsr(hn_framegen(2, -1)) && std::strstr(hn_framegen(2, -1), "One made frame between each two"));
+    CHECK(!says_fsr(hn_framegen(8, -1)));   /* (8x saved: shown and hinted as its 2x) */
+    fsr_wanted = 1, most = 5;   /* an RTX 50 */
+    CHECK(!says_fsr(hn_framegen(2, -1)) && std::strstr(hn_framegen(8, -1), "Five made frames"));
+    fsr_wanted = 1, most = 0;   /* FSR 3.1 makes it: FSR 3.1 FG chosen, or DLSS FG that does not run here */
+    CHECK(says_fsr(hn_framegen(2, -1)));
+    fsr_wanted = 0, most = 0;   /* the built-in one */
+    CHECK(!says_fsr(hn_framegen(2, -1)));
+    /* the texts every value can show (the help box's height, measure_help: its loop stops at nullptr): the FSR line is
+       still one of them at 2x, also while DLSS FG makes the frames */
+    CHECK(says_fsr(hn_framegen(2, 1)) && hn_framegen(3, 1) == nullptr && !says_fsr(hn_framegen(2, 0)));
+    CHECK(hn_framegen(2, 2) == nullptr);
+    fsr_wanted = 1, most = 1;
+    CHECK(says_fsr(hn_framegen(2, 1)) && hn_framegen(2, 2) == nullptr && !says_fsr(hn_framegen(2, 0)));
+    if (failures) return 1;
+    std::puts("PASS: the 2x hint names AMD FSR 3.1 only where FSR 3.1 makes the frame");
     return 0;
 }
 """
@@ -99,14 +140,18 @@ def main():
     dlss = (vk / "vk_dlss.cpp").read_text(encoding="utf-8")
     menu = (vk / "vk_menu.cpp").read_text(encoding="utf-8")
     replay = (vk / "vk_replay.cpp").read_text(encoding="utf-8")
-    fixture = "#include <algorithm>\n" + block(framegen, "int framegen_capped(", where="gpu/vk/vk_framegen.cpp") + MAIN
+    capped = block(framegen, "int framegen_capped(", where="gpu/vk/vk_framegen.cpp")
+    fixture = "#include <algorithm>\n" + capped + MAIN
+    hint = HINT.replace("/* CAPPED */", capped).replace(
+        "/* HINT */", block(menu, "const char* hn_framegen(int v, int variant) {", where="gpu/vk/vk_menu.cpp"))
     check_sources(framegen, main_cpp, dlss, menu, replay)
     with tempfile.TemporaryDirectory(prefix="framegen-dlss-cap-") as tmp:
-        cpp = Path(tmp) / "fixture.cpp"
-        exe = Path(tmp) / "fixture"
-        cpp.write_text(fixture, encoding="utf-8")
-        subprocess.run([a.cxx, "-std=c++20", "-Wall", "-Wextra", "-Werror", str(cpp), "-o", str(exe)], check=True)
-        subprocess.run([str(exe)], check=True)
+        for name, text in (("fixture", fixture), ("hint", hint)):
+            cpp = Path(tmp) / (name + ".cpp")
+            exe = Path(tmp) / name
+            cpp.write_text(text, encoding="utf-8")
+            subprocess.run([a.cxx, "-std=c++20", "-Wall", "-Wextra", "-Werror", str(cpp), "-o", str(exe)], check=True)
+            subprocess.run([str(exe)], check=True)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 /* (hookshot) One rule for the game's on/off switches, in C (host/) and C++ (gpu/vk, its translator):
 
      env_on(name)           unset, empty, 0, false, off or no (any case): off; anything else, 1 or a value: on
+     env_on_or(name, def)   unset: def; set: as env_on reads it (a switch that is on, or decided elsewhere, until it is set)
      env_int(name, def)     the number it is set to; def when it is unset, empty or not a number
 
    Before this a switch read with getenv(name) != NULL was on for any value, 0 included: RX_VK_NO_PROGRAM_CACHE=0 left the
@@ -52,6 +53,10 @@ HOOKSHOT_ENV_INLINE HOOKSHOT_ENV_BOOL env_value_off(const char *v) {
 HOOKSHOT_ENV_INLINE HOOKSHOT_ENV_BOOL env_on(const char *name) {
     const char *v = getenv(name);
     return v && !env_value_off(v);
+}
+HOOKSHOT_ENV_INLINE HOOKSHOT_ENV_BOOL env_on_or(const char *name, int def) {
+    const char *v = getenv(name);
+    return v ? !env_value_off(v) : def != 0;
 }
 HOOKSHOT_ENV_INLINE int env_int(const char *name, int def) {
     const char *v = getenv(name);

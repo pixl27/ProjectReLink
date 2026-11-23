@@ -39,6 +39,9 @@
 // Include through vk_work.h, not by itself: the names below are the wrappers its macros call.
 #pragma once
 
+#ifdef TRACY_ENABLE
+#include "../../host/hos_tracy.h"   // (HOOKSHOT_TRACY: the profiler's zones; nothing in any other build)
+#endif
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -182,7 +185,8 @@ inline bool parallel_configured() {
     return p && atoi(p) >= 2;
 }
 /// (hookshot) The Insert menu's Threaded rendering, the recorder's half of it (threaded_rendering.h; vk_menu.cpp
-/// menu_threaded_rendering, set by vk_replay.cpp before anything runs): true, the recorder thread, as RX_VK_RECORDER=thread.
+/// menu_recorder_thread, set by vk_replay.cpp before anything runs): true, the recorder thread, as RX_VK_RECORDER=thread
+/// (the row On, or its Auto from 6 cores; with 4 or 5 Auto has the render thread alone and this is false).
 /// Asked only with RX_VK_RECORDER unset: the switch, when set, is over the row. Null: no menu (the checks), off
 inline bool (*g_setting_thread)() = nullptr;
 /// RX_VK_RECORDER: sync; defer, thread (serial only: refused, off, with RX_VK_PARALLEL); anything else, off.
@@ -304,14 +308,19 @@ struct Arena {
     }
     ~Arena();
 };
-inline thread_local Arena t_arena;
+// Function-local ownership keeps the nontrivial TLS initializer with its use under COFF ThinLTO.
+// The arena's self-referential tail prevents constant initialization; its destructor still drains and frees it.
+inline Arena& t_arena() {
+    static thread_local Arena arena;
+    return arena;
+}
 
 /// The decoder: runs one packet's call with its copies
 inline void execute(const Packet* p) { p->run(p); }
 
 /// (DEFER) runs every held packet, in order, and empties the arena
 inline void drain() {
-    Arena& a = t_arena;
+    Arena& a = t_arena();
     const Packet* p = a.head;
     a.head = nullptr, a.tail = &a.head;
     while (p) {
@@ -616,6 +625,9 @@ inline void Recorder::loop() {
         if (r == seen && (seen = W.load(std::memory_order_acquire)) == r) {
             if (busy0) busy_ns.fetch_add(now_ns() - busy0, std::memory_order_relaxed), busy0 = 0;
             if (n) packets.fetch_add(n, std::memory_order_relaxed), n = 0;
+#ifdef TRACY_ENABLE
+            HT_WAIT(ht_idle, "recorder idle");   // (HOOKSHOT_TRACY: between these the recorder thread runs its packets)
+#endif
             if (!idle(r, seen, last_log)) return;
             continue;
         }
@@ -786,7 +798,7 @@ template <class F>
 inline void fallback(const F& direct) {
     if (g_mode.load(std::memory_order_relaxed) == THREAD) settle(B_FALLBACK);
     else drain();
-    t_arena.fallbacks++;
+    t_arena().fallbacks++;
     direct();
 }
 
@@ -823,7 +835,7 @@ struct Enc {
             begin_thread();
             return;
         }
-        a = &t_arena;
+        a = &t_arena();
         if (md == DEFER) {
             if (par_active.load(std::memory_order_relaxed)) {
                 drain();

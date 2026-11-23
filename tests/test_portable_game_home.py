@@ -67,6 +67,18 @@ class Association(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     resolve(str(game))
                 self.assertEqual(pointer.read_bytes(), original)
+                release_marker = tools / "red-tunic-release.txt"
+                release_marker.write_text("Red Tunic portable archive")
+                # A marked ZIP must also carry its Builder before direct launch is allowed.
+                with self.assertRaises(ValueError):
+                    resolve(str(game))
+                builder = tools.parent / "HookshotBuilder.exe"
+                builder.write_text("authored fixture; never executable")
+                self.assertIsNone(resolve(str(game)))
+                write(str(game), None)
+                self.assertFalse(pointer.exists())
+                builder.unlink()
+                release_marker.unlink()
                 setup.write_text("authored")
                 moved = root / "moved tree"
                 tree.rename(moved)

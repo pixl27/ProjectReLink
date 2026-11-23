@@ -1,7 +1,9 @@
 // GPU profile (diagnostics): RX_VK_PASS_TIMING=1 times the GPU's work with timestamps: every render
 // pass, compute dispatch, barrier, texture/buffer copy, mirror sync, write-back and uniform write of the recordings' command buffers,
 // and of their upload command buffers, each a pair of timestamps labelled by what it was. Every 600 presents it logs, per frame: the
-// kinds of span with their totals, and the labels that took the most GPU time.
+// kinds of span with their totals, and the labels that took the most GPU time. The mesh fallback's work before each of its draws
+// (vk_draw.cpp fallback_record: its fills, barriers and task and mesh dispatches) is a "fallback" span of its own, and the
+// conversion of an indirect mesh draw's arguments (mesh_indirect_convert) a "meshconv" one: neither is in "dispatch" or "barrier".
 // RX_VK_PASS_TIMING=2: also the runs of consecutive draws of one program inside the passes ("prog" lines: GPU ms by program key).
 // A timestamp waits for the GPU to finish what came before it, so profiled spans add up to more than an unprofiled frame (the
 // passes are ordered by full barriers anyway; the overlap that narrower barriers would allow is not measured here).

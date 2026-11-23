@@ -48,7 +48,7 @@ def read(path):
 
 
 def check_sites(main):
-    init = block(main, "const MkwVkRenderer* mkwvk_init(const MkwVkHost* h)")
+    init = block(main, "static const MkwVkRenderer* init_body(const MkwVkHost* h) {")   # (mkwvk_init's work, behind its catch)
     if "std::set_new_handler(new_refused)" not in init:
         raise SystemExit("FAIL: mkwvk_init installs no new_handler: a C++ allocation refused at the commit limit throws "
                          "std::bad_alloc that nothing catches, and the game ends with exception 0x20474343")

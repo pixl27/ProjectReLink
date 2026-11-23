@@ -151,10 +151,34 @@ static const memory_priority::Tiers& memory_tiers() {
     return t;
 }
 
+// (hookshot, issue 136) VMA gives an emptied block back to the driver with vkFreeMemory on the thread that emptied it, and
+// the image pool's defragmentation empties them on the render thread, one a pass: 5 to 7 ms a block on the bench's RTX
+// 3060 Ti, about 250 ms on a player's RTX 4080 SUPER (83 passes in a row: 5 frames a second at the Market for half a
+// minute). VMA is done with the handle when it calls, so the call goes to the reaper below, which already makes the
+// images' driver calls, in the order given: the images destroyed before it are gone before the block is.
+// RX_VK_FREE_LATER=0: on the caller's thread, as before
+void reap(std::function<void()> fn);
+thread_local bool on_reaper = false;
+VKAPI_ATTR void VKAPI_CALL free_memory_later(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks* cb) {
+    static const bool later = !getenv("RX_VK_FREE_LATER") || atoi(getenv("RX_VK_FREE_LATER")) != 0;
+    const bool queued = later && !on_reaper;
+    const auto free_now = [device, memory, cb, queued] {
+        const auto t0 = std::chrono::steady_clock::now();
+        vkFreeMemory(device, memory, cb);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        static std::atomic<int> logged{0};
+        if ((ms > 20.0 || logged.load() < 4) && logged++ < 24)
+            logf("vk: a memory block given back to the driver in %.2f ms%s", ms, queued ? ", off the thread that emptied it" : "");
+    };
+    if (!queued) return free_now();
+    reap(free_now);
+}
+
 bool vma_init(PFN_vkGetInstanceProcAddr gipa) {
     VmaVulkanFunctions f{};
     f.vkGetInstanceProcAddr = gipa;
     f.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
+    f.vkFreeMemory = free_memory_later;   // (the others are fetched: VMA keeps the pointers it is given)
     VmaAllocatorCreateInfo ci{};
     ci.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT |
                (dev.memory_budget ? VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT : 0);
@@ -421,6 +445,7 @@ bool reap_on() {
         const char* e = getenv("RX_VK_REAP");
         if (e && env_value_off(e)) return false;
         std::thread([] {
+            on_reaper = true;
             std::vector<std::function<void()>> batch;
             for (;;) {
                 {
@@ -510,6 +535,15 @@ uint64_t allocation_size(VmaAllocation allocation) {
     if (allocation) vmaGetAllocationInfo(vma, allocation, &info);
     return info.size;
 }
+// (hookshot) RX_VK_BUFFER_BUDGET=0: a host-visible buffer made where VMA prefers it whatever its heap's budget, as before
+static bool buffer_budget_on() {
+    static const bool on = [] {
+        const bool v = env_on_or("RX_VK_BUFFER_BUDGET", 1);   // (hookshot_env.h: unset is on)
+        if (!v) logf("vk: host-visible buffers made where VMA prefers them whatever their heap's budget, as before (RX_VK_BUFFER_BUDGET=0)");
+        return v;
+    }();
+    return on;
+}
 bool create_buffer(uint64_t size, VkBufferUsageFlags usage, bool host_visible, VkBuffer& buffer,
                    VmaAllocation& allocation, void** mapped, bool dedicated) {
     VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
@@ -523,7 +557,20 @@ bool create_buffer(uint64_t size, VkBufferUsageFlags usage, bool host_visible, V
     // vma_init sets VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT)
     if (dedicated) ai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
     VmaAllocationInfo info{};
-    if (vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, &info) != VK_SUCCESS) return false;
+    // (hookshot) a host-visible buffer first where its heap's budget has room: asked to stay within the budgets, VMA takes
+    // the next memory type the buffer can use when the heap of the one it prefers is full. Not asked, it put a host-visible buffer
+    // the GPU reads (the staging arenas: STORAGE, for the ASTC decoder) in DEVICE_LOCAL | HOST_VISIBLE whatever that heap held. On
+    // a Legion Go (Radeon 780M, 8 GB UMA, no resizable BAR) that heap is the carve-out's 256 MB window, of which AMD's Windows
+    // driver allows 243 MB; a save load's or an area's staging took it to 252-277 MB while VRAM as a whole stood at 1.9 of 7.8 GB,
+    // and the driver refused every submit after (VK_ERROR_OUT_OF_DEVICE_MEMORY): a black screen, the sound going on. Now such an
+    // arena goes to system memory, which the GPU reads as well (the same RAM on an APU). Where no heap has room, made as before
+    VkResult made = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    if (host_visible && dev.memory_budget && buffer_budget_on()) {
+        VmaAllocationCreateInfo within = ai;
+        within.flags |= VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+        made = vmaCreateBuffer(vma, &bi, &within, &buffer, &allocation, &info);
+    }
+    if (made != VK_SUCCESS && vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, &info) != VK_SUCCESS) return false;
     tag_mapped(info, mem_kind_tag);
     note_alloc(allocation, mem_kind_tag);
     if (mapped) *mapped = info.pMappedData;
@@ -545,6 +592,13 @@ bool create_buffer_cached(uint64_t size, VkBufferUsageFlags usage, VkBuffer& buf
     if (vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, &info) != VK_SUCCESS) return false;
     tag_mapped(info, mem_kind_tag);
     note_alloc(allocation, mem_kind_tag);
+    if (mapped && !info.pMappedData) {
+        vmaDestroyBuffer(vma, buffer, allocation);
+        buffer = VK_NULL_HANDLE;
+        allocation = nullptr;
+        *mapped = nullptr;
+        return false;
+    }
     if (mapped) *mapped = info.pMappedData;
     return true;
 }
@@ -726,6 +780,14 @@ std::atomic<uint32_t> budget_frame{0};   // (VMA's frame index: a new one makes 
 bool vram_usage_now(uint64_t* used, uint64_t* budget) {
     vmaSetCurrentFrameIndex(vma, ++budget_frame);
     return vram_usage(used, budget) && dev.memory_budget;
+}
+// (hookshot) whether an allocation sits in a device-local heap (vk_memory.cpp radv_import_headroom leaves those alone)
+bool allocation_in_vram(VmaAllocation allocation) {
+    if (!allocation) return false;
+    VmaAllocationInfo info{};
+    vmaGetAllocationInfo(vma, allocation, &info);
+    return info.memoryType < dev.memory.memoryTypeCount &&
+           (dev.memory.memoryHeaps[dev.memory.memoryTypes[info.memoryType].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT);
 }
 bool system_heap_usage(uint64_t* used, uint64_t* budget) {
     vmaSetCurrentFrameIndex(vma, ++budget_frame);

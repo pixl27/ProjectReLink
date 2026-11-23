@@ -19,7 +19,9 @@ context), the setjmp resumes and the interrupt polls must be equal.
      an entry with code below it (lift_fixes' entry goto), loops, B.cond / TBZ / CBNZ, BL, BLR, a branch into another
      entry (a tail call), and a call of a setjmp owner, whose stub sometimes longjmps back so the caller resumes through
      recomp_sj_setjmp (the host's own assembly setjmp/longjmp, copied from host/hos_setjmp.c) and a64_icall. The same
-     function emitted with A64_LOCAL_REGS or A64_LOCAL_FLAGS must be left whole.
+     function emitted with A64_LOCAL_REGS or A64_LOCAL_FLAGS must be left whole (lift_fixes' entry goto jumps over
+     the locals' loads); emitted with its code starting at its entry, with registers and flags as locals (each alone
+     too), it is cut, its locals carried from piece to piece in f_'s struct, and runs as the whole function does.
   3. nx2/build.py's compile_one with the split flag, as the build calls it (an object cache of its own): it compiles the
      split copy (the object holds the pieces), removes the copy, and the object runs as the whole function does.
 PR #38's real fast-float emitter is not on main, so its regions are covered by the written shape in 1 only.
@@ -32,6 +34,7 @@ it with --strict: RUN_ALL_ARGS below); compiled checks are never skipped silentl
 import argparse
 import os
 import random
+import re
 import shutil
 import struct
 import subprocess
@@ -136,9 +139,9 @@ class _Image:
         return b"".join(struct.pack("<I", self.words[pc + 4 * i]) for i in range(n // 4))
 
 
-def made_up_program(rng, blocks):
-    """(words, texts): MAIN, an entry with code below it (LOW branches back up into it), in blocks of made-up instructions
-    each ending in a branch; CALLEE, OWNER (a setjmp owner) and TAIL, each a lone RET. texts: what the translator would
+def made_up_program(rng, blocks, below=True):
+    """(words, texts): MAIN, an entry with code below it (LOW branches back up into it; below=False: none, MAIN's code
+    runs straight on), in blocks of made-up instructions each ending in a branch; CALLEE, OWNER (a setjmp owner) and TAIL, each a lone RET. texts: what the translator would
     hand emit_function for each made-up instruction word: C in the emitter's own shapes"""
     texts, words = {}, {}
 
@@ -170,9 +173,12 @@ def made_up_program(rng, blocks):
         starts.append(pc)
         pc += 4 * (len(ops) + 2)
     words[MAIN] = body_op()
-    words[MAIN + 4] = 0x14000000 | _rel(MAIN + 4, LOW, 26)
-    words[LOW] = body_op()
-    words[LOW + 4] = 0x14000000 | _rel(LOW + 4, MAIN + 8, 26)
+    if below:
+        words[MAIN + 4] = 0x14000000 | _rel(MAIN + 4, LOW, 26)
+        words[LOW] = body_op()
+        words[LOW + 4] = 0x14000000 | _rel(LOW + 4, MAIN + 8, 26)
+    else:
+        words[MAIN + 4] = body_op()
     for i, ops in enumerate(plan):
         pc = starts[i]
         for w in ops:
@@ -211,15 +217,16 @@ def made_up_program(rng, blocks):
     return words, texts
 
 
-def emit_real(seed, blocks, env=None):
-    """MAIN's C as the lift writes it (the emitter with lift_fixes and poll installed), the names it calls, the lifter"""
+def emit_real(seed, blocks, env=None, below=True):
+    """MAIN's C as the lift writes it (the emitter with lift_fixes and poll installed), the names it calls, the lifter.
+    env: the lift's switches for this emit (A64_LOCAL_REGS, A64_LOCAL_FLAGS); below: MAIN has code below its entry"""
     import kit  # noqa: F401  (a64-kit on the path)
     import a64_lift
     import lift_fixes
     import poll
     lift_fixes.install()
     poll.install()
-    words, texts = made_up_program(random.Random(seed), blocks)
+    words, texts = made_up_program(random.Random(seed), blocks, below)
     L = a64_lift.Lifter(_Image(words, (MAIN, CALLEE, OWNER, TAIL)))
     L.discover()
     L.setjmp_owner = {OWNER: [MAIN + 0x7770]}   # (a setjmp return address inside the owner: its slot's first target)
@@ -238,6 +245,11 @@ def emit_real(seed, blocks, env=None):
     return text, sorted(refs), L
 
 
+# the guest locals the lift writes (nx2/guest_locals.py: 6 registers and the flags by default), and each alone
+LOCALS_ENVS = (({"A64_LOCAL_REGS": "6", "A64_LOCAL_FLAGS": "1"}, "registers and flags"),
+               ({"A64_LOCAL_REGS": "8"}, "A64_LOCAL_REGS=8"), ({"A64_LOCAL_FLAGS": "1"}, "A64_LOCAL_FLAGS"))
+
+
 def real_text_checks():
     text, refs, L = emit_real(7, 40)
     name = "f_%08x" % MAIN
@@ -252,7 +264,32 @@ def real_text_checks():
         notes = []
         o, s = SG.split_text(t2, piece_kb=1, min_kb=0, only={name}, notes=notes)
         check(o == t2 and not s["functions_split"] and any("top-level declaration" in n for n in notes),
-              "%s: the function is left whole (its locals cross labels): %s" % (what, notes))
+              "%s, code below the entry: left whole (lift_fixes' entry goto jumps over the locals' loads): %s" % (what, notes))
+    for env, what in LOCALS_ENVS:
+        t2, _, _ = emit_real(7, 40, env, below=False)
+        lines = t2.splitlines()
+        check(SG.LOCALS[0].match(lines[1]) or SG.LOCALS[1].match(lines[1]), "%s: the locals are the body's first line" % what)
+        o, s = SG.split_text(t2, piece_kb=1, min_kb=0, only={name})
+        check(s["functions_split"] == 1 and s["functions_split_with_locals"] == 1 and s["pieces"] >= 4,
+              "%s: the function is cut, its locals carried: %s" % (what, dict(s)))
+        head = o.split("\nvoid %s(" % name)
+        P = "s_%08x_" % MAIN
+        check(len(head) == 2 and "%sl l = { c->" % P in head[1], "%s: f_ loads the locals' struct from the context" % what)
+        pieces = head[0]
+        check(pieces.count("static __attribute__((noinline)) %sCC uintptr_t %s" % (P, P)) == 2 * s["pieces"]
+              and pieces.count("(%sARGS) {\n    %sLOAD\n" % (P, P)) == s["pieces"],
+              "%s: every piece is written with the function's macros, and loads its locals as it starts" % what)
+        check("#define %sARGS Ctx *__restrict A64_NOESC c, uintptr_t k, %sl *__restrict A64_NOESC l" % (P, P) in pieces
+              and "#define %sLOAD %s" % (P, "uint64_t" if "REGS" in str(env) else "uint8_t") in pieces,
+              "%s: the trampoline's pieces load the locals from the struct" % what)
+        direct = pieces.split(SG.DIRECT_IF + "\n")[1].split("#else")[0] if SG.DIRECT_IF in pieces else ""
+        check("#define %sCC __attribute__((preserve_none))" % P in direct and "__attribute__((musttail)) return F(c, (K)" in direct
+              and "%sl *" % P not in direct, "%s: the direct pieces take the locals as arguments and jump with musttail" % what)
+        o2, _ = SG.split_text(t2, piece_kb=1, min_kb=0, only={name}, direct=False)
+        check(SG.DIRECT_IF not in o2 and "musttail" not in o2.split("\nvoid %s(" % name)[0],
+              "%s: direct=False writes the trampoline alone" % what)
+        check(" = c->" not in "\n".join(ln for ln in pieces.splitlines() if ln.startswith(("    uint", "#define"))),
+              "%s: a piece never loads its locals from the context" % what)
 
 
 # ---- the compile_one integration (3) and the text checks -----------------------------------------------------------
@@ -269,7 +306,9 @@ def text_checks():
           "a tail call leaves from the dispatcher")
     check("TAILCALL" not in out.split("\nvoid f_00001000(")[0], "no tail call left in a piece")
     check("return;" not in out.split("\nvoid f_00001000(")[0], "no bare return left in a piece")
-    check("A64_POLL(c); return " in out or "A64_POLL(c); goto" in out, "polls kept on back edges")
+    check("A64_POLL(c); { s_00001000_HOP(" in out or "A64_POLL(c); goto" in out, "polls kept on back edges")
+    check(SG.DIRECT_IF in out and "#define s_00001000_ARGS Ctx *__restrict A64_NOESC c, uintptr_t k\n" in out,
+          "a function without locals: its pieces take the context and the label id alone, either way")
     check("L_ff_" in fn and out.count(":; }") == fn.count(":; }"), "fast float regions kept whole, their labels inside them")
     whole, st2 = SG.split_text(src, piece_kb=1, min_kb=1024)
     check(whole == src and not st2["functions_split"], "a function below the size asked stays as it is")
@@ -452,6 +491,40 @@ class Programs:
                    "-DA64_POLLING", "-DA64_WRITE_TRACK", "-DA64_HOST_BASE=((uintptr_t)guest_mem)", "-include",
                    os.path.join(d, "pre.h"), "-Wno-everything", "-mllvm", "-rotation-max-header-size=0"]
 
+    def hops(self, tag, text, prefix, direct):
+        """the split file's assembly: direct, a piece reaches another by a jump (musttail), never a call; the trampoline,
+        a piece never names another (the dispatcher calls them)"""
+        src, asm = os.path.join(self.d, "hops.c"), os.path.join(self.d, "hops.s")
+        open(src, "w", newline="\n").write(text)
+        r = subprocess.run([self.cc] + self.fl + ["-S", src, "-o", asm], capture_output=True, text=True)
+        check(r.returncode == 0, "%s: the split file compiles to assembly: %s" % (tag, (r.stdout + r.stderr)[-1500:]))
+        if r.returncode:
+            return
+        funcs, cur = {}, None
+        for ln in open(asm, encoding="utf-8", errors="replace"):
+            m = re.match(r"^([A-Za-z_]\w*):", ln)
+            if m:
+                cur = m.group(1)
+                funcs.setdefault(cur, [])
+            elif cur:
+                funcs[cur].append(ln)
+        piece = re.compile(re.escape(prefix) + r"\d+$")
+        named = re.compile(r"^\s*(call\w*|jmp\w*)\s+(%s\d+)\b" % re.escape(prefix))
+        calls = jumps = 0
+        for name, body in funcs.items():
+            if not piece.match(name):
+                continue
+            for ln in body:
+                m = named.match(ln)
+                if m:
+                    calls += m.group(1).startswith("call")
+                    jumps += m.group(1).startswith("jmp")
+        print("%s: the pieces name each other in %d jumps and %d calls" % (tag, jumps, calls))
+        if direct:
+            check(jumps > 0 and calls == 0, "%s: the pieces jump to each other (%d jumps, %d calls)" % (tag, jumps, calls))
+        else:
+            check(jumps == 0 and calls == 0, "%s: the pieces never name each other (%d jumps, %d calls)" % (tag, jumps, calls))
+
     def run(self, tag, sources, fn_a, fn_b, stubs, objects=(), want_resumes=False):
         """sources: {file name: text}; FN_A whole and FN_B split; stubs: C for the functions they call"""
         for n, t in sources.items():
@@ -464,12 +537,19 @@ class Programs:
         check(r.returncode == 0, "%s compiles: %s" % (tag, (r.stdout + r.stderr)[-2000:]))
         if r.returncode:
             return
-        r = subprocess.run([exe], capture_output=True, text=True, timeout=120)
-        last = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "exit %d" % r.returncode
+        try:
+            r = subprocess.run([exe], capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired:   # (a split function that never ends: a loop's count lost at a cut)
+            check(False, "%s: ran past 120 s (the whole function ends in every state)" % tag)
+            return
+        last =r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "exit %d" % r.returncode
         print("%s: %s" % (tag, last))
         check(r.returncode == 0, "%s: the split function runs as the whole one (%s)" % (tag, last))
         if want_resumes:
             check(" 0 setjmp resumes" not in last, "%s: some states resumed through setjmp" % tag)
+
+
+MODES = ((True, "direct"), (False, "trampoline"))
 
 
 def compiled_checks(cc):
@@ -477,27 +557,44 @@ def compiled_checks(cc):
     head = '#include "a64.h"\nvoid f_callee(Ctx *A64_NOESC);\nvoid f_tail(Ctx *A64_NOESC);\n'
     with tempfile.TemporaryDirectory() as d:
         P = Programs(cc, d)
-        # 1. written shapes
+        # 1. written shapes (each program in both modes: the pieces jumping to each other, and the trampoline)
         for k in range(4):
             fn = gen_function("f_00000001", random.Random(100 + k), blocks=50 + 20 * k)
-            out, st = SG.split_text(head + fn + "\n", piece_kb=1, min_kb=0)
-            check(st["functions_split"] == 1, "program %d split" % k)
-            P.run("written %d (%d pieces)" % (k, st["pieces"]),
-                  {"orig.c": head + fn + "\n", "split.c": out.replace("f_00000001", "f_00000002").replace("s_00000001_", "s_00000002_")},
-                  "f_00000001", "f_00000002", stubs_written)
+            for direct, mode in MODES:
+                out, st = SG.split_text(head + fn + "\n", piece_kb=1, min_kb=0, direct=direct)
+                check(st["functions_split"] == 1, "program %d split" % k)
+                P.run("written %d, %s (%d pieces)" % (k, mode, st["pieces"]),
+                      {"orig.c": head + fn + "\n", "split.c": out.replace("f_00000001", "f_00000002").replace("s_00000001_", "s_00000002_")},
+                      "f_00000001", "f_00000002", stubs_written)
         # 2. emitted by the real lifter
         main_name, other = "f_%08x" % MAIN, "f_%08x" % (MAIN + 0x0F000000)
         for k, (seed, blocks) in enumerate(((11, 40), (12, 70), (13, 100))):
             text, refs, _ = emit_real(seed, blocks)
             decl = '#include "a64.h"\n__attribute__((returns_twice)) int recomp_sj_setjmp(void **slot);\n' + \
                    "".join("void %s(Ctx *A64_NOESC);\n" % r for r in refs)
-            out, st = SG.split_text(decl + text, piece_kb=1, min_kb=0, only={main_name})
-            check(st["functions_split"] == 1, "emitted program %d split" % k)
             stubs = "".join("void %s(Ctx *A64_NOESC c) { %s }\n" % (r, "owner(c);" if r == "f_%08x" % OWNER else "ev(c, %d);" % (20 + j))
                             for j, r in enumerate(refs))
-            P.run("emitted %d (%d pieces)" % (k, st["pieces"]),
-                  {"orig.c": decl + text, "split.c": out.replace(main_name, other).replace("s_%08x_" % MAIN, "s_%08x_" % (MAIN + 0x0F000000))},
-                  main_name, other, stubs, want_resumes=True)
+            for direct, mode in MODES:
+                out, st = SG.split_text(decl + text, piece_kb=1, min_kb=0, only={main_name}, direct=direct)
+                check(st["functions_split"] == 1, "emitted program %d split" % k)
+                P.run("emitted %d, %s (%d pieces)" % (k, mode, st["pieces"]),
+                      {"orig.c": decl + text, "split.c": out.replace(main_name, other).replace("s_%08x_" % MAIN, "s_%08x_" % (MAIN + 0x0F000000))},
+                      main_name, other, stubs, want_resumes=True)
+        # 2b. emitted with guest locals (code starting at the entry, as guest_locals.keep_entered_below leaves them)
+        for k, ((env, what), (seed, blocks)) in enumerate(zip(LOCALS_ENVS * 2, ((21, 40), (22, 70), (23, 100), (24, 60), (25, 90), (26, 120)))):
+            text, refs, _ = emit_real(seed, blocks, env, below=False)
+            decl = '#include "a64.h"\n__attribute__((returns_twice)) int recomp_sj_setjmp(void **slot);\n' + \
+                   "".join("void %s(Ctx *A64_NOESC);\n" % r for r in refs)
+            stubs = "".join("void %s(Ctx *A64_NOESC c) { %s }\n" % (r, "owner(c);" if r == "f_%08x" % OWNER else "ev(c, %d);" % (20 + j))
+                            for j, r in enumerate(refs))
+            for direct, mode in MODES:
+                out, st = SG.split_text(decl + text, piece_kb=1, min_kb=0, only={main_name}, direct=direct)
+                check(st["functions_split_with_locals"] == 1, "emitted program with locals %d (%s) split" % (k, what))
+                split = out.replace(main_name, other).replace("s_%08x_" % MAIN, "s_%08x_" % (MAIN + 0x0F000000))
+                P.run("emitted with locals %d, %s, %s (%d pieces)" % (k, what, mode, st["pieces"]),   # (the tag names the exe: no colon)
+                      {"orig.c": decl + text, "split.c": split}, main_name, other, stubs)
+                if k == 0:
+                    P.hops(mode, split, "s_%08x_" % (MAIN + 0x0F000000), direct)
         # 3. build.py's compile_one with the split flag
         import build
         big = big_source("f_00002000")

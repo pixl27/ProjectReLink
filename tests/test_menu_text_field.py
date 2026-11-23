@@ -643,21 +643,24 @@ def main():
         return re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", text, flags=re.S))
     decls = [d.strip() for d in code(between(api, "typedef struct MkwVkHost {", "} MkwVkHost;")).split("{", 1)[1].split(";")]
     fields = [re.search(r"\(\*(\w+)\)", d).group(1) if "(*" in d else d.split()[-1] for d in decls if d]
-    table = [v.strip() for v in code(between(backend, "static const MkwVkHost vk_host = {", "};")).split("{", 1)[1].split(",")]
-    table = [v for v in table if v]
-    check_host_table(fields, table)
-    check_host_table(fields + ["later_callback"], table + ["host_later_callback"])
+    body = code(between(backend, "static const MkwVkHost vk_host = {", "};")).split("{", 1)[1]
     before = fields.index("take_text")
-    check_host_table(fields[:before] + ["main_callback"] + fields[before:],
-                     table[:before] + ["host_main_callback"] + table[before:])
-    wrong = table.copy()
-    wrong[before] = "host_screen_size"
-    try:
-        check_host_table(fields, wrong)
-    except SystemExit:
-        pass
-    else:
-        raise SystemExit("FAIL: test_api_append: misplaced host_take_text was accepted")
+    for windows in (True, False):
+        initializer = re.sub(r"#ifdef _WIN32\s*([^#]*)#else\s*([^#]*)#endif",
+                             lambda match: match.group(1 if windows else 2), body)
+        table = [value.strip() for value in initializer.split(",") if value.strip()]
+        check_host_table(fields, table)
+        check_host_table(fields + ["later_callback"], table + ["host_later_callback"])
+        check_host_table(fields[:before] + ["main_callback"] + fields[before:],
+                         table[:before] + ["host_main_callback"] + table[before:])
+        wrong = table.copy()
+        wrong[before] = "host_screen_size"
+        try:
+            check_host_table(fields, wrong)
+        except SystemExit:
+            pass
+        else:
+            raise SystemExit("FAIL: test_api_append: misplaced host_take_text was accepted")
     comment_version = re.search(r"/\* \(hookshot, version (\d+)\) typed text", api)
     if not comment_version or int(comment_version.group(1)) != 23:   # (23 in Hookshot: 22 is the host's wide_cover)
         raise SystemExit("FAIL: text API comment must name its introduction at version 23")

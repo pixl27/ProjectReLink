@@ -64,7 +64,7 @@ int sleep_call(int,uint64_t chain,const VkLatencySleepInfoNV*){if(!chain)invalid
 struct Reflex {
     bool ready=true,latency=true,latency_next=true,frame_marked=true;
     uint64_t swapchain=42,swapchain_generation=0,wake=100,wake_value=0,id=1;
-    int mode=1;TestMutex mu;PresentId pid;uint64_t pid_value=0,presenting=0,last_present_id=0;
+    int mode=1;uint32_t interval_us=0;TestMutex mu;PresentId pid;uint64_t pid_value=0,presenting=0,last_present_id=0;
     void (*marker)(int,uint64_t,const VkSetLatencyMarkerInfoNV*)=marker_call;
     int (*sleep)(int,uint64_t,const VkLatencySleepInfoNV*)=sleep_call;
 } state;
@@ -72,7 +72,8 @@ struct {int device=1;}dev;
 Reflex& rx(){return state;}
 bool framegen_on(){return fg;}
 int wanted_mode(){return wanted;}
-void apply_mode(){if(!state.swapchain)invalid=true;++modes;}
+void apply_mode(uint32_t){if(!state.swapchain)invalid=true;++modes;}
+uint32_t fifo_min_interval_us(){return 0;}
 void log_timings(){}
 template<class... T> void logf(const char*,T...){}
 int vkWaitSemaphores(int,const VkSemaphoreWaitInfo*,uint64_t);

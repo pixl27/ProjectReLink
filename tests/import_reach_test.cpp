@@ -18,6 +18,7 @@
 #if HAVE_REACH
 #include "gpu/vk/import_reach.h"
 #endif
+#include "gpu/vk/import_hold.h"   // (pool_lookup's held-retry line names ImportHolds::kGapMs)
 
 namespace mkwvk {
 static unsigned checks;
@@ -46,8 +47,9 @@ static int64_t import_now_ms() { return 1000; }
 struct Allocation { uint64_t lo, hi; VkDeviceMemory memory; bool live; };
 static std::vector<Allocation> allocations;
 static unsigned overlapping_imports;   // (imports made while a live one already held some of the same bytes)
-static uint64_t next_handle = 1;
+static uint64_t next_handle = 1, reject_lo, reject_hi;
 static bool import_pool(uint64_t lo, uint64_t hi, Pool& p) {
+    if (lo == reject_lo && hi == reject_hi) return false;
     for (const Allocation& a : allocations)
         if (a.live && a.lo < hi && lo < a.hi) ++overlapping_imports;
     p.lo = lo, p.hi = hi;
@@ -66,7 +68,8 @@ static std::vector<std::array<uint64_t, 3>> table_sets;   // (guest_pages_set ca
 static void guest_pages_set(uint64_t lo, uint64_t hi, uint64_t address) { table_sets.push_back({lo, hi, address}); }
 static void shadow_free(Pool&) {}
 static uint64_t import_chunk() { return chunk_bytes; }
-static uint64_t import_span() { return 0; }   // (RX_VK_IMPORT_SPAN_MB=0: the planned range is the chunks of the binding alone)
+static uint64_t span_bytes;
+static uint64_t import_span() { return span_bytes; }   // (RX_VK_IMPORT_SPAN_MB=0: the planned range is the chunks of the binding alone)
 static unsigned bg_starts;
 static void bg_start() { ++bg_starts; }
 static void rb_hazard_locked(uint64_t, uint64_t) {}
@@ -80,12 +83,18 @@ static std::atomic<uint64_t> pools_gen{1};
 static std::mutex pools_mu, bg_mu;
 static std::condition_variable bg_cv, bg_done_cv;
 static std::deque<std::pair<uint64_t, uint64_t>> bg_queue;
-static std::vector<uint64_t> bg_inflight;
+static std::map<uint64_t, uint64_t> bg_inflight;
+struct DeadImport { uint64_t lo, bytes; };
+static std::deque<DeadImport> dead_imports;
+static void memory_gpu_writes_note(uint64_t, uint64_t) {}
+[[maybe_unused]] static int ec_kind;
+static void early_in_place_write(uint64_t, uint64_t, uint64_t) {}
 static std::vector<std::pair<uint64_t, Pool>> bg_ready;
 static int64_t st_bg_waits, st_prefetch_sent, st_prefetch_used, st_prefetch_dropped, st_async_sent, st_async_copies;
 static std::vector<Pool*> mirror_wanted, sparse_wanted;
 static uint64_t mem_rec_value = 7, mirror_epoch = 10;
 static int failures;
+[[maybe_unused]] static std::atomic<int64_t> st_imports_made{0}, st_imports_refused{0}, st_imports_held{0};   // (pool_lookup's attempts)
 static thread_local bool import_cooling;
 static thread_local VkResult import_result = VK_SUCCESS;
 static Pool* pool_lookup(uint64_t, uint64_t);
@@ -97,6 +106,7 @@ static void reset() {
     imported.clear(), retired_pools.clear(), evicted_pools.clear(), bg_ready.clear(), bg_queue.clear(), bg_inflight.clear();
     allocations.clear(), table_sets.clear();
     overlapping_imports = bg_starts = 0;
+    span_bytes = 0;
     last_pool = nullptr;
     std::fill(std::begin(pool_cache), std::end(pool_cache), nullptr);
     guest_pools = {{base, base + 8 * GiB}};
@@ -145,6 +155,30 @@ static void put(uint64_t lo, uint64_t hi) {
 
 static void run(const char* only) {
     const auto want = [only](const char* name) { return !only || !std::strcmp(only, name); };
+    if (want("span")) {
+        reset();
+        const uint64_t edge = base + 3 * chunk_bytes;
+        guest_pools = {{edge - chunk_bytes, edge + chunk_bytes}};
+        put(base, edge);
+        span_bytes = 64 * MiB;
+        Pool* next = pool_lookup(edge + 4096, 128);
+        check(next && next->lo == edge && next->hi == edge + chunk_bytes,
+              "a speculative span reimported a live neighbour for a 128-byte binding");
+        check(imported.size() == 2 && overlapping_imports == 0, "the neighbouring import must stay live");
+        Pool* both = pool_lookup(edge - 128, 256);
+        check(both && both->lo == base && both->hi == edge + chunk_bytes && imported.size() == 1,
+              "a binding that actually crosses the edge must still merge both imports");
+        reset();
+        guest_pools = {{edge - chunk_bytes, edge + chunk_bytes}};
+        put(base, edge);
+        span_bytes = 64 * MiB;
+        reject_lo = edge; reject_hi = edge + chunk_bytes;
+        Pool* fallback = pool_lookup(edge + 4096, 128);
+        check(fallback && fallback->lo == base && fallback->hi == reject_hi,
+              "driver rejection of the narrow import must retry the distinct wider range");
+        reject_lo = reject_hi = 0;
+        reach_counts_the_table();
+    }
     if (want("lookup")) {   // A lookup in A's range 2 GiB past C: the scan must not stop at C and import the same bytes again. (pool_lookup itself:
         // pool_of's caches hold A from the binding that made it and would answer before the table is looked at)
         Pool* a = large_over_small();

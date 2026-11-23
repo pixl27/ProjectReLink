@@ -33,6 +33,9 @@
    the GPU memory and of the CPU buffers) are refused by the heap they name, as a full heap would, so the retry runs (with
    HOS_GPU_ALLOC_RETRY=0: the game's crash, as shipped). */
 #include "hos.h"
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,7 +44,7 @@ enum { HEAP_NAME = 0x20, HEAP_START = 0x28, HEAP_SIZE = 0x30, HEAP_PARENT = 0x38
 
 static int retry_on(void) {
     static int on = -1;
-    if (on < 0) on = !getenv("HOS_GPU_ALLOC_RETRY") || atoi(getenv("HOS_GPU_ALLOC_RETRY")) != 0;
+    if (on < 0) on = env_on_or("HOS_GPU_ALLOC_RETRY", 1);
     return on;
 }
 /* HOS_GPU_ALLOC_TEST_FAIL: 1 while this kind's first n allocations are refused (kind 0 the GPU memory, 1 the CPU buffer) */

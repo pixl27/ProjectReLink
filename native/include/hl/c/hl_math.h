@@ -68,6 +68,20 @@ typedef struct {
 int hl_math_motion_step(const void *motion, const void *a, const void *b, const void *data, const void *global,
                         hl_math_motion_plan *plan);
 
+/* 0x817472e0, the support point of a small vertex set: set = the vertex array's header (relative offset, count), dir = the
+   direction (4 floats), t = the guest's constants (read by the OS layer), out = 16 bytes: the vertex and its index word.
+   Returns 0, writing nothing, when the inputs are not ones it is exact on. */
+typedef struct {
+    uint8_t jump[4];
+    float pad;
+    uint32_t index[4];
+    uint32_t step[4];
+    int8_t select[8];
+} hl_math_support_tables;
+int hl_math_support_point(const void *set, const void *dir, const hl_math_support_tables *t, void *out);
+/* 0x817036a0: the placement of b (x2) relative to a (x1), both precise transforms (76 bytes); out = 80 bytes */
+int hl_math_relative_transform(const void *a, const void *b, void *out);
+
 /* The calling thread's reason the last declining kernel gave up (hl::math::Why: 0 none; see hl/math/Exact.h), cleared
    by the call; values gets the operation's operands and result (bits). */
 int hl_math_last_why(uint64_t values[3]);

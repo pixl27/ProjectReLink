@@ -33,7 +33,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#define HL_STREAM_DEFAULT 0   /* (off by default here: HL_STREAM=1 on) */ /* the fork: (validated in the three scenes, check at 0 mismatches and shots right: stream-boundary.md section 8) */
+#define HL_STREAM_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ /* the fork: (validated in the three scenes, check at 0 mismatches and shots right: stream-boundary.md section 8) */
 #define HL_DECODE_FILE 0x80108da0ULL    /* the resource decompressor's decode of a file (vtable 0x84c377e8, slot 2) */
 #define HL_DECODE_CHUNK 0x80115bf0ULL   /* its parallel descriptor's step: one chunk decoded (vtable 0x84c377c0, slot 2) */
 

@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-12 | Hookshot documentation a17856e0, with historical Hookshot labels and original-source links | Arch Linux (kernel 7.2.15-1-omarchy), no window | No GPU used | Core i9-13900K, 94 GiB | Fresh HOME; table compared with the line-numbered historical log evidence | Documentation check after-1, 18:14:25 local | PASS: 12 contiguous historical rows represent all 30 retained runs; medians, ranges, window counts, fingerprints, dates and six contemporaneous controls match; historical receipt only, describing the table at the named 2026-11-12 commit, not this fragment conversion. Tester mooki000; run ID documentation-after-1 |

@@ -11,6 +11,9 @@
 #include <vector>
 
 #include "vk_jobs.h"
+#ifdef TRACY_ENABLE
+#include "../../host/hos_tracy.h"   // (HOOKSHOT_TRACY: the profiler's zones; nothing in any other build)
+#endif
 #include "hookshot_env.h"
 #include "vk_internal.h"
 #include "vk_draw.h"   // (ub_thread_off)
@@ -62,6 +65,9 @@ std::function<void()> with_failure(std::function<void()> fn, std::function<void(
 void worker() {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     SetThreadDescription(GetCurrentThread(), L"mkw_vk worker");
+#ifdef TRACY_ENABLE
+    HT_THREAD_NAME("mkw_vk worker");
+#endif
     ub_thread_off();
     for (;;) {
         std::function<void()> fn;
@@ -80,6 +86,9 @@ void worker() {
                 queue.pop_front();
             }
         }
+#ifdef TRACY_ENABLE
+        HT_SCOPE("worker job");   // (shader translation, a pipeline's build)
+#endif
         run_guarded(fn);
         if (background) {
             std::lock_guard lk(mu);
@@ -129,6 +138,9 @@ void jobs_push_serial(std::function<void()> fn, std::function<void()> on_failure
         std::thread([] {
             SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
             SetThreadDescription(GetCurrentThread(), L"mkw_vk serial builds");
+#ifdef TRACY_ENABLE
+            HT_THREAD_NAME("mkw_vk serial builds");
+#endif
             ub_thread_off();
             for (;;) {
                 std::function<void()> fn;
@@ -139,6 +151,9 @@ void jobs_push_serial(std::function<void()> fn, std::function<void()> on_failure
                     fn = std::move(q.front());
                     q.pop_front();
                 }
+#ifdef TRACY_ENABLE
+                HT_SCOPE("serial build");
+#endif
                 run_guarded(fn);
                 jobs_notify();
                 std::function<void()> between = pipeline_cache_between_builds;

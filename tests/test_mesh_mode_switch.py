@@ -7,6 +7,9 @@ RX_VK_FORCE_MESH_FALLBACK=1 is Compute over it as before. An old mesh_shaders= l
 it is named in the log, and the menu's save drops it rather than keeping it. The rule is compiled and run alone; the
 source checks read vk_main.cpp, vk_menu.cpp and vk_menu.h. No game or GPU is needed.
 
+The log says the driver's answer apart from this run's choice: a Steam Deck's RADV offers mesh shaders, but Automatic runs it
+on the compute path (issue 2245), and "mesh shaders no" there was read as a driver without them.
+
     python -I -B tests/test_mesh_mode_switch.py
 """
 import argparse
@@ -47,6 +50,23 @@ int main() {
     CHECK(!mesh_rule::old_ini_choice("mesh_shaders=0\n", &v));
     CHECK(!mesh_rule::old_ini_choice("mesh_shaders=7\n", &v));
     CHECK(!mesh_rule::old_ini_choice("vram_budget=2\n", &v));
+    // (the device line: what the driver offers and what this run does, apart. Its readers take the text before
+    // "; mesh shaders", so the note has no ';' of its own)
+    using mesh_rule::device_note;
+    CHECK(!strcmp(device_note(true, true, 0, false), "used"));
+    CHECK(!strcmp(device_note(true, true, 1, false), "used"));
+    CHECK(!strcmp(device_note(false, false, 0, false), "not offered by the driver"));
+    CHECK(!strcmp(device_note(false, false, 2, false), "not offered by the driver"));
+    const char* deck = device_note(true, false, 0, true);   // (a Steam Deck, Automatic)
+    CHECK(!strncmp(deck, "offered by the driver but not used", 34));
+    CHECK(strstr(deck, "RADV") && strstr(deck, "RX_VK_MESH_SHADERS=native"));
+    const char* chosen = device_note(true, false, 2, false);   // (RX_VK_MESH_SHADERS=compute, RX_VK_FORCE_MESH_FALLBACK)
+    CHECK(!strncmp(chosen, "offered by the driver but not used", 34) && strstr(chosen, "Compute") && !strstr(chosen, "RADV"));
+    for (int mode = 0; mode < 3; mode++)
+        for (int bits = 0; bits < 8; bits++) {
+            const char* note = device_note(bits & 1, (bits & 1) && (bits & 2), mode, bits & 4);
+            CHECK(note && *note && !strchr(note, ';') && strcmp(note, "yes") && strcmp(note, "no"));
+        }
     puts("mesh mode: RX_VK_MESH_SHADERS chooses, RX_VK_FORCE_MESH_FALLBACK over it, the old ini line chooses nothing");
     return 0;
 }
@@ -82,6 +102,17 @@ def check_source():
         raise SystemExit("FAIL: Automatic no longer picks Compute with RADV")
     if not device.index("p2.pNext = &fadd_driver;") < device.index(rule):
         raise SystemExit("FAIL: Automatic's rule for RADV is decided before the driver is asked who it is")
+    # (the log tells the driver's answer, dev.mesh_capable, apart from this run's, dev.mesh_shader: on a Steam Deck the
+    # driver offers mesh shaders that Automatic leaves unused, and "no mesh shaders" read as the driver lacking them)
+    if '"vk: no mesh shaders: task and mesh programs' in main_cpp:
+        raise SystemExit("FAIL: the compute path's line says there are no mesh shaders where the driver offers them")
+    if "mesh_rule::device_note(dev.mesh_capable, dev.mesh_shader, mesh_mode, " not in device:
+        raise SystemExit("FAIL: create_device does not note what the driver offers apart from what this run uses")
+    init = block(main_cpp, "static const MkwVkRenderer* init_body(const MkwVkHost* h) {")   # (mkwvk_init's work, behind its catch)
+    line = init[init.index('logf("vk: %s, Vulkan %u.%u, driver %#x; mesh shaders %s'):]
+    line = line[:line.index(";\n")]
+    if 'dev.mesh_shader ? "yes" : "no"' in line or "mesh_note" not in line:
+        raise SystemExit("FAIL: the device line says only this run's mesh path, not what the driver offers")
 
     menu = (vk / "vk_menu.cpp").read_text(encoding="utf-8")
     table = menu[menu.index("Row rows[] = {"):]

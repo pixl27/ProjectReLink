@@ -380,6 +380,7 @@ Id EmitStorageAtomicAddF32(EmitContext& ctx, const IR::Value& binding, const IR:
     }
     const Id ssbo{ctx.ssbos[binding.U32()].U32};
     const Id base_index{StorageIndex(ctx, offset, sizeof(u32))};
+    // Reducing operands first can overflow even when adding each to the stored value would not.
     return ctx.OpFunctionCall(ctx.F32[1], ctx.f32_add_cas, base_index, value, ssbo);
 }
 

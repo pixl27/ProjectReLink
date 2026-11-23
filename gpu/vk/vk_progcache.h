@@ -78,6 +78,9 @@ bool program_cache_has(uint64_t key);
 std::unordered_set<uint64_t> program_cache_kept_keys();
 /// The keys of the kept compute programs still in the file's list (the first start's warm: vk_draw.cpp precompile_warm)
 std::vector<uint64_t> program_cache_compute_keys();
+/// The steps precompile_at_create would count now: its programs and their mesh fallback compute pipelines (the first start's bar:
+/// vk_draw.cpp precompile_run, start_steps.h)
+size_t program_cache_fallback_steps();
 /// The records of key not read in yet, as the index has them (none: no such key, or all read in)
 std::vector<DiskRecord> program_cache_records(uint64_t key);
 /// A record's variant (the hash of its answers) from its head alone, read by position. False: the head does not read

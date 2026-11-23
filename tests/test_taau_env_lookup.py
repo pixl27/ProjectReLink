@@ -43,6 +43,7 @@ static const char* fixture_getenv(const char* name) {
 // (env_on, the switches' rule (hookshot_env.h, included first), over the fixture's environment)
 static bool fixture_env_on(const char* name) { const char* v = fixture_getenv(name); return v && !env_value_off(v); }
 #define env_on fixture_env_on
+static bool float16_shaders() { return !env_on("RX_VK_NO_F16"); }   // (vk_shader.cpp: off under RX_VK_NO_F16 or without shaderFloat16)
 namespace Shader { namespace Backend { namespace SPIRV { static bool mma_software = true; } } }
 using VkCommandBuffer = int;
 using VkImageView = int;

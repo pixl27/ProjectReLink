@@ -39,7 +39,8 @@ def main():
             "SDL_AUDIODRIVER=pulseaudio\nHOS_T_UP=..\nHOS_SAMPLE_FILE=hookshot_vk.dll\nRX_VK_FRAME_LOG=x.txt\n"
             "RX_VK_DUMP_DIR=dumps\nHOS_PRESENT_TRACE=t.txt\nRX_VK_DLSS_DIR=\\\\server\\share\n"
             "HOS_AUDIO_DUMP=image.bin\nRX_VK_HANG_DUMP=hookshot_options.ini\nRX_VK_SHOTS=user\n"
-            "HOS_INPUT_SCRIPT=1:A,2:A\nRX_VK_MENU_SCRIPT=1:INS\nHOS_CONTROL_PEER_SID=S-1-5-21-1-2-3-1001\n", encoding="utf-8")
+            "HOS_INPUT_SCRIPT=1:A,2:A\nRX_VK_MENU_SCRIPT=1:INS\nHOS_CONTROL_PEER_SID=S-1-5-21-1-2-3-1001\n"
+            "HOS_T_NOTE=0  # mute\nHOS_T_TAB=off\t# a tab before it\nHOS_T_HASH=a#b\nHOS_T_ONLY= # nothing but a note\n", encoding="utf-8")
         (tmp / "test_env.txt").write_text("# a test run's own switches\nHOS_T_OTHER=1\nHOS_T_SHARED=other\n"
                                           "VK_T_LAYER=/y\n", encoding="utf-8")
         (tmp / "precedence.txt").write_text("HOS_T_LAUNCH=file\nHOS_T_TWICE=first\nHOS_T_FRESH=1\nHOS_T_TWICE=second\n",
@@ -69,7 +70,7 @@ static int is(const char *name, const char *want) {
     const char *v = getenv(name);
     return want ? v && !strcmp(v, want) : !v;
 }
-static void clear(void) { unsetenv("HL_T_NATIVE"); unsetenv("HOS_T_BESIDE"); unsetenv("HOS_T_OTHER"); unsetenv("HOS_T_SHARED"); unsetenv("VK_T_LAYER"); }
+static void clear(void) { unsetenv("HL_T_NATIVE"); unsetenv("HOS_T_NOTE"); unsetenv("HOS_T_TAB"); unsetenv("HOS_T_HASH"); unsetenv("HOS_T_ONLY"); unsetenv("HOS_T_BESIDE"); unsetenv("HOS_T_OTHER"); unsetenv("HOS_T_SHARED"); unsetenv("VK_T_LAYER"); }
 int main(int argc, char **argv) {
     (void)argc;
     unsetenv("HOS_ENV_FILE");                      /* out of the box: the file beside the game */
@@ -87,6 +88,11 @@ int main(int argc, char **argv) {
     CHECK(is("RX_VK_DUMP_DIR", NULL) && is("HOS_PRESENT_TRACE", NULL));
     CHECK(getenv("LD_PRELOAD") == NULL || strcmp(getenv("LD_PRELOAD"), "/x.so"));
     CHECK(getenv("PATH") == NULL || strcmp(getenv("PATH"), "C:\\x"));
+    /* a note after a value is not part of it; a '#' inside a value is */
+    CHECK(is("HOS_T_NOTE", "0") && is("HOS_T_TAB", "off") && is("HOS_T_HASH", "a#b"));
+#ifndef _WIN32   /* (an empty value: Windows' _putenv removes the variable instead) */
+    CHECK(is("HOS_T_ONLY", ""));
+#endif
 
     clear();
     setenv("HOS_ENV_FILE", "", 1);                 /* empty: as if unset */
@@ -119,7 +125,7 @@ int main(int argc, char **argv) {
     setenv("HOS_CONTROL_PEER_SID", "S-1-5-21-7-8-9-1002", 1);
     load_hookshot_env();
     CHECK(is("HOS_CONTROL_PEER_SID", "S-1-5-21-7-8-9-1002") && is("HOS_T_BESIDE", "1"));
-    printf("PASS: HOS_ENV_FILE replaces hookshot_env.txt; unset or empty reads it as before; the player's file sets only the game's switches, never HOS_CONTROL_PEER_SID; the environment goes over the file\n");
+    printf("PASS: HOS_ENV_FILE replaces hookshot_env.txt; unset or empty reads it as before; the player's file sets only the game's switches, never HOS_CONTROL_PEER_SID, and a note after a value is not part of it; the environment goes over the file\n");
     return 0;
 }
 '''

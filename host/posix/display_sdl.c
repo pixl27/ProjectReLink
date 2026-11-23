@@ -52,6 +52,9 @@ int hos_mouse_take(int32_t *dx, int32_t *dy) {
 int hos_mouse_test_on(void) { return 0; }   /* (hookshot: a test's own mouse, HOS_MOUSE_TEST, is display.c's on Windows) */
 int hos_key_down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }   /* (hookshot: this window's own table of keys, win32_posix.c) */
 
+/* (nn_hid.c) the game's menus do not take the mouse here: its capture, and with it its buttons, stay the game's */
+int hos_mouse_in_game_menu(void) { return 0; }
+
 /* (mouse_native.c) motion taken and not used, put back for the next taker (the player camera's) */
 void hos_mouse_give_back(int32_t dx, int32_t dy) {
     InterlockedExchangeAdd(&mouse_dx, dx);
@@ -152,6 +155,7 @@ static void text_key(const HosSdlEvent *e) {
 
 /* ---- the window ---- */
 static volatile int renderer;   /* the renderer presents into the window */
+int rx_start_failure_claim(void);   /* rx_backend.c: coordinate with every close path */
 static HANDLE renderer_up;   /* (set once rx_start has returned, ready or not: hos_renderer_wait) */
 static int fullscreen;
 static MkwVkMonitor window_monitors[HOS_MONITOR_MAX];
@@ -213,7 +217,15 @@ static void set_fullscreen(int on) {
 static DWORD WINAPI renderer_main(void *p) {
     (void)p;
     const int ok = rx_start(&vk_window);
-    if (!ok) hos_log("display: the renderer did not start: the window stays black");
+    if (!ok) {   /* (hookshot) the game ends at once: behind a black window it played on with its sound until the player closed
+                    it, and only then did the window after it (host/hos_crash_dialog.c) say why. That window reads this line */
+        if (!rx_start_failure_claim()) return 0;
+        hos_log("display: the renderer did not start: the game ends, and the window after it says why");
+        hos_log_flush();
+        void hos_crash_clean_end(void);
+        hos_crash_clean_end();
+        ExitProcess(1);
+    }
     renderer = ok;
     if (ok) {   /* (a size change while it started) */
         int w = 0, h = 0;
@@ -227,7 +239,7 @@ static DWORD WINAPI renderer_main(void *p) {
 /* (hookshot) host/display.c's: the game's first work for the GPU waits for the renderer (nvn_native.c), so nothing it submits while
    the shaders are prepared is lost. Without a window the renderer starts on the game's own thread, before this is asked */
 void hos_renderer_wait(void) {
-    { const char *e = getenv("HOS_NO_RENDERER_WAIT"); if (e && atoi(e) != 0) return; }
+    if (env_on("HOS_NO_RENDERER_WAIT")) return;
     if (renderer_up) WaitForSingleObject(renderer_up, INFINITE);
 }
 
@@ -400,7 +412,7 @@ void hos_display_loop(void) {
                 switch (e.type) {
                 case HOS_SDL_EV_QUIT:
                 case HOS_SDL_EV_CLOSE:
-                    rx_close_asked();   /* (a start still preparing the shaders keeps what it made) */
+                    rx_close_asked();
                     hos_window_closed_exit();
                 case HOS_SDL_EV_RESIZED:
                     pointer_update(0, 0);   /* publish pixels before waking the renderer's size consumer */

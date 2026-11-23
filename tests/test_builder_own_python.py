@@ -34,5 +34,13 @@ class WindowsBuilderTests(unittest.TestCase):
         self.assertIn("Finished?.Invoke(tools.OwnPythonMissing ? Tools.OwnPythonMissingText :", start)
         self.assertEqual(RUNNER.count("restore it"), 1)
 
+    def test_the_build_runs_at_normal_priority(self):
+        # (below normal, a hybrid Intel CPU kept the read and the lift on its efficiency cores for an hour and more; the old
+        # priority only when HOOKSHOT_LOW_PRIORITY=1 asks)
+        start = RUNNER[RUNNER.index("public void Start()"):]
+        below = start.index("ProcessPriorityClass.BelowNormal")
+        self.assertEqual(RUNNER.count("ProcessPriorityClass.BelowNormal"), 1)
+        self.assertIn('if (Environment.GetEnvironmentVariable("HOOKSHOT_LOW_PRIORITY") == "1")', start[max(0, below - 200):below])
+
 if __name__ == "__main__":
     unittest.main()

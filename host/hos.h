@@ -132,6 +132,13 @@ extern uint64_t hos_space_end;   /* web: the guest window ends where the host's 
 static inline void *hos_guest_range(uint64_t a, uint64_t n) {
     return a < (uint64_t)HOS_SPACE_END && n <= (uint64_t)HOS_SPACE_END - a ? GP(a) : (void *)0;
 }
+/* Host bytes copied into guest memory, marked written (HOS_WRITTEN) as a guest store would be, so what reads guest memory
+   by its marks sees the new bytes. The caller has checked the range (hos_guest_range). */
+static inline void hos_guest_copy(uint64_t a, const void *src, uint64_t n) {
+    void *const p = GP(a);
+    memcpy(p, src, (size_t)n);
+    HOS_WRITTEN(p, (size_t)n);
+}
 #define HOS_TICK_HZ 31250000ULL   /* (mkw-recomp: the Switch 2 counter; the SDK checks it at init) */
 
 /* ---- logging: HOS_TRACE=1 logs every HLE call that uses HOS_TRACE_CALL. hos_log is info; hos_log_at gives a line another level,
@@ -148,6 +155,23 @@ int hos_slow_frames_every_ms(void);
 void hos_slow_frame_present(void);
 void hos_slow_sample(int64_t sweep_ns, const char *text);
 void hos_slow_sweep_done(void);
+/* (hookshot) an A/B within one run (host/hos_ab.c, HOS_AB=<switch>=<value>[,<seconds>[,<warm-up seconds>]]): the side now,
+   -1 when no A/B runs or in its warm-up, else 0 (the switch's normal value) or 1 (the A/B's value): one relaxed load, cheap
+   enough for a per-call path. A switch's reader takes the A/B as v = hos_ab_value(<its name, a literal>, v_normal): v_normal
+   unless the A/B names that switch and side 1 runs. Both sides pay the same for the call (a load, then a look at a small
+   table of the names seen, by address), so the measured difference is the switch's. hos_ab_frame: the side of a frame from
+   from_ns to to_ns (hos_now_ns), + 2 in a transition (a flip in the frame, or less than 0.3 s before its end), -1 outside */
+extern int hos_ab_side_now;
+static inline int hos_ab_side(void) { return __atomic_load_n(&hos_ab_side_now, __ATOMIC_RELAXED); }
+int hos_ab_value_at(const char *name, int normal, int side);
+static inline int hos_ab_value(const char *name, int normal) {
+    const int side = hos_ab_side();
+    return side < 0 ? normal : hos_ab_value_at(name, normal, side);
+}
+int hos_ab_frame(int64_t from_ns, int64_t to_ns);
+void hos_ab_start(void);     /* (hos_main.c, before the game's threads) */
+void hos_ab_present(void);   /* (rx_nvn_present: the host's per-side sums) */
+void hos_ab_end(void);       /* (hos_close_finish: their line in the log) */
 /* (hookshot) the profiling mode (host/profiling.c, HOS_PROFILE=1): its folder (NULL: off), its switches set (after
    hookshot_env.txt), its threads started (hos_prof_start), a timed event into its events.txt, and a sampler's line written
    (packed with HOS_SAMPLE_PACKED) */

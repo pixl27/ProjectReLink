@@ -57,18 +57,18 @@ def init_block(source):
 
 
 def saved_now_block(source):
-    start_marker = "bool pcache_saved_now() {"
-    end_marker = "\nbool warm_libraries("
-    if source.count(start_marker) != 1 or source.count(end_marker) != 1:
-        raise SystemExit("FAIL: pcache_saved_now in gpu/vk/vk_draw.cpp was not found")
-    return source[source.index(start_marker):source.index(end_marker)]
+    """vk_draw.cpp's pcache_saved_now, the function alone"""
+    return function(source, "bool pcache_saved_now() {", "pcache_saved_now")
 
 
 def save_function(source):
     """vk_draw.cpp's pipeline_cache_save, the ordinary save that calls play_cache_save (the no-save-periodic case)"""
-    marker = "void pipeline_cache_save(bool force) {"
+    return function(source, "void pipeline_cache_save(bool force) {", "pipeline_cache_save")
+
+
+def function(source, marker, name):
     if source.count(marker) != 1:
-        raise SystemExit("FAIL: pipeline_cache_save of gpu/vk/vk_draw.cpp was not found")
+        raise SystemExit("FAIL: %s of gpu/vk/vk_draw.cpp was not found" % name)
     start = source.index(marker)
     end, depth = source.index("{", start) + 1, 1
     while depth:

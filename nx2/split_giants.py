@@ -14,10 +14,25 @@ and memory is live, and the body can be cut there:
     into another piece, with its interrupt poll kept), or a tail-call id (a guest branch into another function);
   - f_<addr> keeps its name and ABI: a loop calls the piece that owns k; a tail-call id leaves through TAILCALL(f_y),
     exactly as before (musttail: the guest call depth is unchanged).
+  - direct (the default, HOOKSHOT_SPLIT_DIRECT=0 turns it off; macros()): where the compiler has preserve_none and
+    musttail, a goto into another piece is a jump straight to it, `musttail return s_<addr>_<m>(c, id, locals...)`,
+    and only 0 and tail-call ids come back to f_'s loop. A hop then costs a jump and the label switch at the piece's
+    head, where the loop costs a return, a switch, a call and the locals stored and loaded.
 Interrupt polls go with their gotos (every cycle through the loop holds one of the function's own back edges); page-mark
 groups end at labels (a64_lift.mark_groups), so no mark moves across a cut; a setjmp-wrapped call is one statement.
-A function is left whole when any of this is not shown on its text: a top-level declaration (A64_LOCAL_REGS/FLAGS), a
-label inside a block, a goto to a label it lacks, a return or computed goto of another shape, string or char literals.
+
+Guest locals (nx2/guest_locals.py, A64_LOCAL_REGS/FLAGS): the kit writes a function's register and flag locals as the
+body's first lines (`uint64_t x8_ = c->x[8], ...;` then `uint8_t fn_ = c->n, ...;`), and they live across its labels:
+a local is written back to the context only at the kit's marks (calls, returns, tail calls), so at a label it may be
+newer than the context. Such a function is cut all the same: f_<addr> keeps the locals in a struct of its own
+(s_<addr>_l, loaded from the context as the whole function loads them), each piece takes a pointer to it, loads the
+locals from it when it starts and stores them back to it before a goto into another piece; a guest return or tail call
+stores nothing more (the kit's mark before it wrote the context, as in the whole function). The context is written
+exactly where the whole function writes it.
+
+A function is left whole when any of this is not shown on its text: a top-level declaration other than those first
+lines (a locals line after lift_fixes' entry goto too), a label inside a block, a goto to a label it lacks, a return
+or computed goto of another shape, string or char literals.
 
 Pieces are cut at labels after ~piece_bytes of C, preferring a cut that splits no short loop (a back edge spanning less
 than 4 pieces: one hop per turn there would cost most); a long loop costs one hop per piece per turn, small against the
@@ -39,7 +54,11 @@ TOP_LABEL = re.compile(r"L_[0-9a-f]+")
 DECL = re.compile(r"^\s*(?:const\s+|static\s+|volatile\s+|unsigned\s+|signed\s+|register\s+)*"
                   r"(?:u?int(?:8|16|32|64)_t|u?intptr_t|int|unsigned|long|short|char|float|double|_Bool|bool|size_t|"
                   r"void\s*\*|Ctx|GuestContext)\b(?!\s*\))")
-PIECE_KB = 8       # (measured: see the stream report; 4-32 KB pieces all take a fraction of the whole function's time)
+# (the kit's localize_regs: `uint64_t x8_ = c->x[8], x19_ = c->x[19];` and `uint8_t fn_ = c->n, ... fv_ = c->v;`)
+LOCALS = (re.compile(r"^    uint64_t ((?:x\d+_ = c->x\[\d+\], )*x\d+_ = c->x\[\d+\]);$"),
+          re.compile(r"^    uint8_t ((?:f[nzcv]_ = c->[nzcv], )*f[nzcv]_ = c->[nzcv]);$"))
+LOCAL = re.compile(r"(x(\d+)_|f([nzcv])_) = c->(?:x\[(\d+)\]|([nzcv]))")
+PIECE_KB = 8      # (measured: see the stream report; 4-32 KB pieces all take a fraction of the whole function's time)
 MIN_KB = 256       # (functions below this compile near-linearly: nothing to gain, a hop to pay)
 
 
@@ -172,8 +191,66 @@ def plan(items, piece, loop_max):
     return starts
 
 
-def split_function(name, body_lines, piece, loop_max, stats):
-    """The text of f_<addr>'s pieces and dispatcher (raises Refuse when the function must stay whole)"""
+def locals_of(body_lines):
+    """(locals, the rest of the body): the guest locals the body's first lines declare, as [(C type, name, what loads
+    it)] in their order (registers, then flags), and the body after those lines"""
+    found, i = [], 0
+    for kind, rx in zip(("uint64_t", "uint8_t"), LOCALS):
+        m = rx.match(body_lines[i]) if i < len(body_lines) else None
+        if m:
+            for d in LOCAL.finditer(m.group(1)):
+                reg, flag = d.group(2), d.group(3)
+                if (reg or flag) != (d.group(4) or d.group(5)):
+                    raise Refuse("a local loaded from another register")
+                found.append((kind, d.group(1), "c->x[%s]" % reg if reg else "c->" + flag))
+            i += 1
+    names = [n for _, n, _ in found]
+    if len(set(names)) != len(names):
+        raise Refuse("a local declared twice")
+    return found, body_lines[i:]
+
+
+REG_T, FLAG_T = "uint64_t", "uint8_t"
+DIRECT_IF = "#if __has_attribute(preserve_none) && __has_attribute(musttail)"
+DIRECT_ARGS = 12   # (preserve_none's argument registers on x86-64, Windows and Linux alike; more go on the stack)
+
+
+def macros(P, regs, flags, direct):
+    """The five macros a function's pieces and dispatcher are written with (P: s_<addr>_):
+    CC the pieces' calling convention, ARGS their parameters, LOAD a piece's locals as it starts, HOP(K, F) a goto
+    into piece F at label id K, CALL(F) f_<addr> calling piece F at k.
+    The trampoline: a piece takes f_'s locals' struct (l), loads them from it and stores them back to it before
+    returning K to f_'s loop, which calls the piece that owns K.
+    Direct (when the compiler has preserve_none and musttail, and the locals fit in its argument registers): the pieces
+    jump to each other (musttail) with the locals as arguments in registers, the four flags in one (fl_, a byte each);
+    preserve_none keeps no register across the jump, so a hop stores and loads nothing"""
+    head = "Ctx *__restrict A64_NOESC c, uintptr_t k"
+    loc = bool(regs or flags)
+    tramp = ["#define %sCC" % P,
+             "#define %sARGS %s%s" % (P, head, ", %sl *__restrict A64_NOESC l" % P if loc else ""),
+             "#define %sLOAD %s" % (P, " ".join("%s %s;" % (t, ", ".join("%s = l->%s" % (n, n) for n in ns))
+                                                for t, ns in ((REG_T, regs), (FLAG_T, flags)) if ns)),
+             "#define %sHOP(K, F) do { %sreturn (K); } while (0)" % (P, "".join("l->%s = %s; " % (n, n) for n in regs + flags)),
+             "#define %sCALL(F) F(c, k%s)" % (P, ", &l" if loc else "")]
+    if not direct or 2 + len(regs) + bool(flags) > DIRECT_ARGS:
+        return "\n".join(tramp)
+
+    def pack(pre):
+        return " | ".join("(uint32_t)%s%s << %d" % (pre, n, 8 * i) for i, n in enumerate(flags))
+    unpack = "uint8_t %s;" % ", ".join("%s = (uint8_t)(fl_ >> %d)" % (n, 8 * i) for i, n in enumerate(flags)) if flags else ""
+    direct_ = ["#define %sCC __attribute__((preserve_none))" % P,
+               "#define %sARGS %s%s%s" % (P, head, "".join(", uint64_t %s" % n for n in regs), ", uint32_t fl_" if flags else ""),
+               "#define %sLOAD %s" % (P, unpack),
+               "#define %sHOP(K, F) __attribute__((musttail)) return F(c, (K)%s%s)" % (P, "".join(", " + n for n in regs),
+                                                                                       ", " + pack("") if flags else ""),
+               "#define %sCALL(F) F(c, k%s%s)" % (P, "".join(", l." + n for n in regs), ", " + pack("l.") if flags else "")]
+    return "\n".join([DIRECT_IF] + direct_ + ["#else"] + tramp + ["#endif"])
+
+
+def split_function(name, body_lines, piece, loop_max, stats, direct=True):
+    """The text of f_<addr>'s pieces and dispatcher (raises Refuse when the function must stay whole). direct: the pieces
+    jump to each other where the compiler can (macros())"""
+    locs, body_lines = locals_of(body_lines)
     items = items_of(body_lines)
     starts = plan(items, piece, loop_max)
     if len(starts) < 2:
@@ -189,10 +266,22 @@ def split_function(name, body_lines, piece, loop_max, stats):
             if lab:
                 owner[lab] = p
     pieces, ranges = [], []
+    P = "s_%s_" % addr   # (this function's pieces s_<addr>_<n>, its locals' struct s_<addr>_l and its macros)
+    regs = [n for kind, n, _ in locs if kind == "uint64_t"]
+    flags = [n for kind, n, _ in locs if kind == "uint8_t"]
+    if locs:
+        pieces.append("typedef struct { %s } %sl;" % (" ".join("%s %s;" % (k, ", ".join(ns)) for k, ns in
+                                                                ((REG_T, regs), (FLAG_T, flags)) if ns), P))
+        stats["functions_split_with_locals"] += 1
+    pieces.append(macros(P, regs, flags, direct))
+    for p in range(len(starts)):
+        pieces.append("static __attribute__((noinline)) %sCC uintptr_t %s%d(%sARGS);" % (P, P, p, P))
     for p in range(len(starts)):
         mine = items[bounds[p]:bounds[p + 1]]
         mylabs = [lab for lab, _ in mine if lab]
-        out = ["static __attribute__((noinline)) uintptr_t s_%s_%d(Ctx *__restrict A64_NOESC c, uintptr_t k) {" % (addr, p)]
+        out = ["static __attribute__((noinline)) %sCC uintptr_t %s%d(%sARGS) {" % (P, P, p, P)]
+        if locs:
+            out.append("    %sLOAD" % P)
         if mylabs:
             out.append("    switch (k) { %s default: break; }" % " ".join("case %d: goto %s;" % (lid[l], l) for l in mylabs))
 
@@ -201,7 +290,7 @@ def split_function(name, body_lines, piece, loop_max, stats):
             if owner[t] == p:
                 return m.group(0)
             stats["cross_gotos"] += 1
-            return "return %d;" % lid[t]
+            return "{ %sHOP(%d, %s%d); }" % (P, lid[t], P, owner[t])
 
         def tail(m):
             stats["tail_calls"] += 1
@@ -220,29 +309,36 @@ def split_function(name, body_lines, piece, loop_max, stats):
                 if RETURN_OK.search(t):
                     raise Refuse("a return of another shape")
             out.append(t)
-        out.append("return %d;" % lid[items[bounds[p + 1]][0]] if p + 1 < len(starts) else "return 0;")
+        out.append("%sHOP(%d, %s%d);" % (P, lid[items[bounds[p + 1]][0]], P, p + 1) if p + 1 < len(starts) else "return 0;")
         out.append("}")
         pieces.append("\n".join(out))
         if mylabs:
             ranges.append((lid[mylabs[0]], lid[mylabs[-1]], p))
-    d = ["void %s(Ctx *__restrict A64_NOESC c) {" % name,
-         "    uintptr_t k = s_%s_0(c, 0);" % addr,
-         "    for (;;) {",
-         "        switch (k) {",
-         "        case 0: return;"]
+    d = ["void %s(Ctx *__restrict A64_NOESC c) {" % name]
+    if locs:
+        d.append("    %sl l = { %s };" % (P, ", ".join(load for _, _, load in locs)))
+    # (direct: the pieces go from one to the next themselves, so a piece returns only 0 or a tail call's id here and the
+    # label ids' cases are never taken; the trampoline: every goto into another piece comes back through them)
+    d += ["    uintptr_t k = 0;",
+          "    k = %sCALL(%s0);" % (P, P),
+          "    for (;;) {",
+          "        switch (k) {",
+          "        case 0: return;"]
     for a, b, p in ranges:
-        d.append("        case %d%s: k = s_%s_%d(c, k); continue;" % (a, "" if a == b else " ... %d" % b, addr, p))
+        d.append("        case %d%s: k = %sCALL(%s%d); continue;" % (a, "" if a == b else " ... %d" % b, P, P, p))
     for f, i in sorted(tails.items(), key=lambda x: x[1]):
         d.append("        case %d: TAILCALL(%s);" % (i, f))
     d += ["        }", "        return;   /* (never: every id is a case) */", "    }", "}"]
+    d.append("#undef %sCC\n#undef %sARGS\n#undef %sLOAD\n#undef %sHOP\n#undef %sCALL" % (P, P, P, P, P))
     stats["pieces"] += len(starts)
     stats["functions_split"] += 1
     return "\n".join(pieces) + "\n" + "\n".join(d)
 
 
-def split_text(src, piece_kb=PIECE_KB, min_kb=MIN_KB, only=None, notes=None):
+def split_text(src, piece_kb=PIECE_KB, min_kb=MIN_KB, only=None, notes=None, direct=True):
     """A lifted C file with each function of at least min_kb KB of C (or the ones named in `only`) split: (text, stats).
-    notes: a list that gets a line per function left whole and why"""
+    notes: a list that gets a line per function left whole and why; direct: the pieces jump to each other where the
+    compiler can (False: always through f_'s loop)"""
     stats = collections.Counter()
     piece, min_bytes = piece_kb * 1024, min_kb * 1024
     out, pos = [], 0
@@ -261,7 +357,7 @@ def split_text(src, piece_kb=PIECE_KB, min_kb=MIN_KB, only=None, notes=None):
         if not ((only is None and size >= min_bytes) or (only is not None and name in only)):
             continue
         try:
-            done = split_function(name, src[start:end].split("\n") if end >= start else [], piece, 4 * piece, stats)
+            done = split_function(name, src[start:end].split("\n") if end >= start else [], piece, 4 * piece, stats, direct)
         except Refuse as e:
             stats["functions_left_whole"] += 1
             if notes is not None:
@@ -280,23 +376,28 @@ def split_text(src, piece_kb=PIECE_KB, min_kb=MIN_KB, only=None, notes=None):
 FLAG = "-DHOOKSHOT_SPLIT_GIANTS="
 
 
-def flag(piece_kb=PIECE_KB):
-    """nx2/build.py: the flag on the lifted chunks' compiles: the piece size and this file's hash (a change of either builds the
-    chunks again: the flags are in their object keys)"""
+TRAMPOLINE = "_t"   # (the flag's end when the pieces go through f_'s loop only: HOOKSHOT_SPLIT_DIRECT=0)
+
+
+def flag(piece_kb=PIECE_KB, direct=True):
+    """nx2/build.py: the flag on the lifted chunks' compiles: the piece size, this file's hash and the trampoline's mark when
+    direct is off (a change of any builds the chunks again: the flags are in their object keys)"""
     import hashlib
     with open(__file__, "rb") as f:
-        return FLAG + "%d_%s" % (piece_kb, hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:10])
+        return FLAG + "%d_%s%s" % (piece_kb, hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:10],
+                                   "" if direct else TRAMPOLINE)
 
 
 def compile_copy(src, obj, fl):
     """nx2/build.py compile_one: what to compile for a job whose flags carry FLAG: a copy of src beside the object with its
     giants split (obj's name + .split.c; compile_one removes it), or src itself when it has none"""
-    kb = next((int(f[len(FLAG):].split("_")[0]) for f in fl if f.startswith(FLAG)), 0)
+    val = next((f[len(FLAG):] for f in fl if f.startswith(FLAG)), "")
+    kb = int(val.split("_")[0]) if val else 0
     if not kb:
         return src
     with open(src, encoding="utf-8", newline="") as f:
         text = f.read()
-    out, st = split_text(text, kb)
+    out, st = split_text(text, kb, direct=not val.endswith(TRAMPOLINE))
     if not st["functions_split"]:
         return src
     copy = obj[:-2] + ".split.c"

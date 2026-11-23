@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 34
+#define MKWVK_API_VERSION 36   /* (36: the Windows Vulkan loader resolver, vulkan_loader_proc) */
 enum { HOS_MONITOR_CURRENT = 1, HOS_MONITOR_PRIMARY = 2 };
 typedef struct MkwVkMonitor {
     char id[512];             /* opaque persistent preference; never a runtime handle or list index */
@@ -90,11 +90,22 @@ enum { HOS_OPT_GFX_UNCAPPED = 71 };   /* Debug's Uncap detail sliders (vk_menu.c
    as the right stick) read it by its number, as they read 8. The existing option callback: no new member. 59 is the
    transition autosave's and 60 is Shadow resolution's (the item wheel's is 72).) */
 enum { HOS_OPT_MOUSE_INVERT_X = 61 };
+/* (hookshot) Vibration: 0 Auto, 1 Basic, 2 Off (host/vibration.h). Auto plays the best each controller can do (a
+   DualSense on a cable its voice coils through RenHDrum, a Switch controller its own HD rumble, the others their motors),
+   Basic every controller's motors, Off nothing. The strength is option 9, every backend's. 63 and 64: 58 is the render
+   thread's, 59 transition autosave, 60 Shadow resolution, 61 mouse invert X, 65-71 the detail sliders, 72-75 the item
+   wheel, cycling, the Travel pictures and the HUD layout, 76 native zstd's default; 62 is free */
+enum { HOS_OPT_VIBRATION = 63 };
+/* (hookshot) What plays the controller used last, written back by the host each poll (host/pad_sdl.c): its kind times 16
+   plus what it says (host/vibration.h's VIB_PAD_*, VIB_SAY_*); Test vibration's cell and help read it. */
+enum { HOS_OPT_VIBRATION_STATUS = 64 };
 /* (HOS_OPT_HUD_LAYOUT, 75: Graphics' HUD layout, host/hos_wide_ui.c reads it at each present by its number: on a screen
    that is not 16:9, 0 the HUD's corners at the screen's edges, 1 the HUD in the middle 16:9 as before (on a narrower
    screen fitted to its width, as the menus). HOS_WIDE_UI, when set, stands over it. The existing option callback: no new
    member. 71 is Uncap detail sliders', 72 and 73 the item wheel's, 74 the Travel page's pictures.) */
 enum { HOS_OPT_HUD_LAYOUT = 75 };
+/* (HOS_OPT_NATIVE_ZSTD, 76: an unset HOS_NATIVE_ZSTD on this GPU, host/hos_zstd.c: 1 or 2; 0 until the device is made) */
+enum { HOS_OPT_NATIVE_ZSTD = 76 };
 
 /* (hookshot) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of hookshot_options.ini):
    the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position (the bottom face button first:
@@ -316,6 +327,15 @@ typedef struct MkwVkHost {
        seconds, 4 the tag is not a figure's, 5 no such controller over USB, 6 it could not be read or written */
     int (*nfc_scan)(int start);
     const char *(*nfc_scan_name)(void);
+    /* (version 35, hookshot: at the end) the A/B within one run (host/hos_ab.c, HOS_AB), for the frame trace's ab_side column: the side
+       of the frame from from_ns to to_ns (the host's clock, now_ns; from_ns 0 when not known): -1 outside the A/B (none set,
+       its warm-up), 0 the switch's normal value, 1 the A/B's, 2 or 3 those sides in a transition (a flip inside the frame,
+       or less than 0.3 s before its end), which scripts/ab_summary.py leaves out */
+    int (*ab_frame)(int64_t from_ns, int64_t to_ns);
+    /* (version 36, at the end) vkGetInstanceProcAddr as the executable resolves it on Windows (host/rx_backend.c), so a Vulkan
+       shim that hooks the game's loader imports (Streamline, OptiScaler) sees the renderer's calls too; 0: the renderer loads
+       its own */
+    uintptr_t (*vulkan_loader_proc)(void);
 } MkwVkHost;
 /* (version 26) a cheat's kind: a heading (no opcodes), a data cheat (switched), a master cheat (always on), not supported (note) */
 enum { MKWVK_CHEAT_HEADING, MKWVK_CHEAT_DATA, MKWVK_CHEAT_MASTER, MKWVK_CHEAT_UNSUPPORTED };

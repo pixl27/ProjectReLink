@@ -99,7 +99,7 @@ def check_source():
     if "p.workgroup[0] * p.workgroup[1] * p.workgroup[2]" not in block(draw, "compute_pin::Uses compute_program_uses("):
         raise SystemExit("compute_program_uses no longer counts the workgroup's invocations")
     pin = block(draw, "void pin_compute(VkPipelineShaderStageCreateInfo& st, const Program& p) {")
-    if "if (compute_pin_needed(p)) pin_subgroup(st, p.workgroup[0]);" not in pin:
+    if "if (compute_pin_needed(p)) pin_subgroup(st, p.workgroup[0], uint64_t(p.workgroup[0]) * p.workgroup[1] * p.workgroup[2]);" not in pin:
         raise SystemExit("pin_compute no longer pins through compute_pin_needed")
     info = block(draw, "VkComputePipelineCreateInfo compute_pipeline_info(const Program& q, bool noopt) {")
     if "pin_compute(ci.stage, q);" not in info or "pin_subgroup(" in info:

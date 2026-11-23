@@ -25,6 +25,13 @@
 #include "vk_menu.h"
 #include "oot_wheel_state.h"
 #include "video_core/textures/astc.h"
+#ifndef _WIN32
+#include "vk_wheel_text.h"   // (third_party/imgui's stb_truetype: the labels' letters off Windows)
+
+// (nx2/ui_fonts.py: the bundled fonts)
+extern const unsigned hookshot_font_strong_size;
+extern const unsigned char hookshot_font_strong[];
+#endif
 
 namespace mkwvk {
 namespace {
@@ -349,47 +356,30 @@ const char* word(int which) {   // 0 Move, 1 Confirm, 2 Cancel
     return en[which];
 }
 
-// ---- text: GDI's letters, white on black, as coverage ----
+// ---- text: the letters as coverage: GDI's on Windows, white on black; stb_truetype's elsewhere (vk_wheel_text.h) ----
 struct TextMask {
     int w = 0, h = 0;
     std::vector<uint8_t> cov;
 };
+#ifdef _WIN32
 HFONT text_font(int px) {
     return CreateFontA(-px, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
                        DEFAULT_PITCH, "Segoe UI");
 }
-#ifdef _WIN32
 std::wstring wide(const char* s) {
     const int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
     std::wstring w(n > 0 ? n - 1 : 0, L'\0');
     if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s, -1, w.data(), n);
     return w;
 }
-#else
-std::string latin1(const char* s) {   // (the POSIX GDI stand-in draws a byte a letter: Latin-1, '?' past it)
-    std::string o;
-    for (const unsigned char* p = (const unsigned char*)s; *p;) {
-        unsigned cp = *p, n = cp < 0x80 ? 1 : (cp >> 5) == 6 ? 2 : (cp >> 4) == 14 ? 3 : 4;
-        if (n == 2 && p[1]) cp = (cp & 31) << 6 | (p[1] & 63);
-        for (unsigned k = 0; k < n && *p; k++) p++;
-        o += cp < 256 && (n <= 2) ? (char)cp : '?';
-    }
-    return o;
-}
-#endif
 // the size of text at px pixels
 void text_size(const char* s, int px, int* w, int* h) {
     HDC dc = CreateCompatibleDC(nullptr);
     HFONT f = text_font(px);
     HGDIOBJ old = SelectObject(dc, f);
     SIZE sz{};
-#ifdef _WIN32
     const std::wstring t = wide(s);
     GetTextExtentPoint32W(dc, t.c_str(), (int)t.size(), &sz);
-#else
-    const std::string t = latin1(s);
-    GetTextExtentPoint32A(dc, t.c_str(), (int)t.size(), &sz);
-#endif
     SelectObject(dc, old);
     DeleteObject(f);
     DeleteDC(dc);
@@ -422,13 +412,8 @@ TextMask text_mask(const char* s, int px, int pad) {
     HGDIOBJ old = SelectObject(dc, f);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(255, 255, 255));
-#ifdef _WIN32
     const std::wstring t = wide(s);
     TextOutW(dc, pad + 1, pad + 1, t.c_str(), (int)t.size());
-#else
-    const std::string t = latin1(s);
-    TextOutA(dc, pad + 1, pad + 1, t.c_str(), (int)t.size());
-#endif
     GdiFlush();
     m.cov.resize((size_t)m.w * m.h);
     const uint32_t* p = (const uint32_t*)bits;
@@ -443,6 +428,28 @@ TextMask text_mask(const char* s, int px, int pad) {
     DeleteDC(dc);
     return m;
 }
+#else
+// (Linux: the bundled Libertinus Sans Bold, nx2/ui_fonts.py's, drawn by stb_truetype. GDI and its stand-in are gone there:
+// host/posix/gdi_posix.c went with the old menu in 70391859)
+const wheel_text::Face& text_face() {
+    static const wheel_text::Face f = wheel_text::face(hookshot_font_strong, hookshot_font_strong_size);
+    return f;
+}
+// the size of text at px pixels
+void text_size(const char* s, int px, int* w, int* h) {
+    wheel_text::measure(text_face(), s, px, w, h);
+}
+TextMask text_mask(const char* s, int px, int pad) {
+    TextMask m;
+    if (!text_face().ok) return m;   // (0 by 0: no letters, as when GDI fails)
+    int tw = 0, th = 0;
+    text_size(s, px, &tw, &th);
+    m.w = tw + 2 * pad + 2, m.h = th + 2 * pad + 2;
+    m.cov.assign((size_t)m.w * m.h, 0);
+    wheel_text::draw(text_face(), s, px, pad + 1, pad + 1, m.cov.data(), m.w, m.h);
+    return m;
+}
+#endif
 // text with a dark outline o pixels wide, centred on (cx, cy)
 void text(Canvas& c, const char* s, int px, float cx, float cy, const Rgba& col, int o) {
     if (!*s) return;

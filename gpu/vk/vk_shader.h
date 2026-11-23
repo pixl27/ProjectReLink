@@ -38,6 +38,8 @@ struct Stage {
     // again (program_cache_complete_graphics). Here and not in Program, whose size is part of the translator's stamp
     int64_t record_at = 0;
     uint64_t record_size = 0;
+    // (hookshot) whether its SPIR-V has nothing that depends on the subgroup it runs in (fallback_lanes.h), noted with the phis
+    mutable bool lane_free = false;
 };
 
 
@@ -47,7 +49,8 @@ struct Stage {
 uint32_t stage_handle(const NvnState& s, const Stage& st, uint32_t program, uint32_t element = 0);
 /// The handles of elements 0 .. count-1 of such a table (one shadow map per light, say), into out: stage_handle for each,
 /// with the constant words and storage buffer addresses the program reads read once
-void stage_handles(const NvnState& s, const Stage& st, uint32_t program, uint32_t count, uint32_t* out);
+/// (key: the program's, for the log line that names which programs a table's count cuts)
+void stage_handles(const NvnState& s, const Stage& st, uint32_t program, uint32_t count, uint32_t* out, uint64_t key = 0);
 void handle_memo_next();   // (hookshot) a new draw or dispatch on this thread: the handles kept for the last one go
 
 /// A translated program variant: its stages, in descriptor order. The pipeline layout and pipelines made for it live
@@ -181,6 +184,15 @@ bool program_cache_complete_graphics(const Program& p);
 /// (hookshot) Lets go of the VkShaderModules of ready programs whose pipelines are built and whose stages can be remade from
 /// hookshot_programs.bin (or are compute stages that need no another pipeline); returns how many modules were destroyed
 size_t program_cache_drop_modules();
+/// (hookshot) A graphics program the load at create just read (vk_programs.cpp load_work), every noted pipeline of its variant built
+/// from the caches: its vertex and fragment modules let go now, as program_cache_drop_modules lets a precompiled one's go, where
+/// every stage can be remade from hookshot_programs.bin (program_cache_complete_graphics, on the worker that builds a new state
+/// variant in play). Not a fallback program's, not one already let go under another program. Returns the modules destroyed
+size_t program_cache_drop_loaded(Program& p);
+/// (hookshot) Whether the load at create lets its programs' modules go (RX_VK_DROP_LOADED_MODULES: 1 on, 0 off; on by default)
+bool drop_loaded_modules_on();
+/// (hookshot) Modules made again for programs whose modules were let go (program_cache_complete_graphics), for the log
+int64_t program_cache_remade();
 /// (hookshot) precompile_run built p's noted graphics pipelines before the title: program_cache_drop_modules may let its graphics
 /// modules go (an un-noted program or variant keeps them for its first draw in play)
 void program_cache_note_built(const Program& p);

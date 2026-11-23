@@ -1,6 +1,8 @@
 /* (hookshot) Discord Rich Presence: "Playing Hookshot" with the time played in the player's Discord status, through the local
-   IPC of a Discord client running on this PC. Nothing leaves the machine but the activity itself, and nothing is sent while the
-   Insert menu's "Discord status" row is off (on by default; it does nothing without a Discord client running).
+   IPC of a Discord client running on this PC, and the place Link is while he is in a map ("Kakariko Village"; the title
+   and the start say "Hookshot" and the release instead). What it says is the player's to change in hookshot_options.ini
+   (host/discord_activity.c). Nothing leaves the machine but the activity itself, and nothing is sent while the Insert
+   menu's "Discord status" row is off (on by default; it does nothing without a Discord client running).
 
    Discord shows the *application's* name above the status ("Playing <name>") and its art: the status needs a Discord application
    of its own (discord.com/developers/applications, named Hookshot, its art uploaded under Rich Presence > Art Assets with the key
@@ -8,7 +10,8 @@
    HOS_DISCORD_APP_ID override it. With no id the thread stays idle and says so once in the log.
 
    One host thread owns the connection. It connects to the first of Discord's discord-ipc-0..9 that completes a handshake and
-   writes the activity again every 60 s: that write is the keep-alive, and one that fails closes the connection and tries again
+   writes the activity again every 60 s, or within 15 s of a change of what it says (Discord takes a few a minute): that
+   write is the keep-alive, and one that fails closes the connection and tries again
    15 s later. Discord clears the status itself when the process ends and the pipe closes. Every answer is read and dropped:
    unread, they would fill the pipe and block the client.
 
@@ -17,6 +20,9 @@
    SET_ACTIVITY frame by a frame; a Ping is echoed as a Pong. */
 #include "hos_paths.h"   /* (first: windows.h on Windows) */
 #include "options_path.h"
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,13 +41,20 @@
 #endif
 
 #include "../gpu/vk/vk_api.h"
+#include "discord_activity.h"
+#include "oot_area_names.h"
+#include "oot_heart_containers.h"
 
 #define HOOKSHOT_DISCORD_APP_ID_DEFAULT "1569529153349357731"   /* (the Hookshot application's id, digits) */
-#define HOOKSHOT_DISCORD_IMAGE_DEFAULT "hookshot"     /* (its large-image art asset key) */
 
 void hos_log(const char *fmt, ...);
 int rx_option(int id, int otherwise);
 const char *hos_version(void);   /* hos_main.c */
+int hos_oot_current_map(char *out, size_t cap);   /* (hos_main.c: the map Link was last seen in) */
+int hos_oot_state(int *event, int *loading, int *child);
+int hos_oot_stats(int *life, int *max_life, int *rupees, int *tokens, int *pieces);   /* (hos_main.c: -1 each when not known) */
+int64_t hos_oot_player_seen_ns(void);   /* (hos_main.c: when Link's update last ran, 0 never) */
+int64_t hos_now_ns(void);
 
 enum { OP_HANDSHAKE = 0, OP_FRAME = 1, OP_CLOSE = 2, OP_PING = 3, OP_PONG = 4 };
 #define ANSWER_CAP 8192
@@ -136,17 +149,23 @@ static int valid_app_id(const char *s) {
         if (*s < '0' || *s > '9') return 0;
     return 1;
 }
-/* the application id: HOS_DISCORD_APP_ID, then hookshot_options.ini's discord_app_id=, then the default */
+/* the application id: HOS_DISCORD_APP_ID, then hookshot_options.ini's discord_app_id=, then the default; and the status's
+   texts, its discord_*= lines (host/discord_activity.c) */
+static DiscordSettings settings;
 static void read_app_id(char *out, size_t cap) {
     snprintf(out, cap, "%s", HOOKSHOT_DISCORD_APP_ID_DEFAULT);
+    discord_settings_default(&settings);
     FILE *f = fopen(hos_options_file(), "r");   /* (host/options_path.c) */
     if (f) {
-        char line[128];
-        while (fgets(line, sizeof line, f))
+        char line[600];
+        while (fgets(line, sizeof line, f)) {
             if (!strncmp(line, "discord_app_id=", 15)) {
                 line[strcspn(line, "\r\n")] = 0;
                 if (valid_app_id(line + 15)) snprintf(out, cap, "%s", line + 15);
+            } else {
+                discord_settings_line(&settings, line);
             }
+        }
         fclose(f);
     }
     const char *e = getenv("HOS_DISCORD_APP_ID");
@@ -212,18 +231,46 @@ static Ipc connect_client(const char *app_id) {
     }
     return IPC_NONE;
 }
-/* the activity: the release in the details, the start of play for the elapsed time, the application's art */
+/* the activity (host/discord_activity.c): in a map the place Link is, elsewhere "Hookshot" and the release; the start of
+   play for the elapsed time; the application's art. json is the activity with nonce 0, for telling a change */
+static void activity_now(unsigned nonce, long long started, char *json, size_t cap) {
+    char version[64], build[64], commit[64], release[64], map[96] = "", area[128] = "";
+    discord_version_parts(hos_version(), version, build, commit, release, sizeof version);
+    const int known = hos_oot_current_map(map, sizeof map);
+    int event = 0, loading = 0, child = 1;
+    const int have_age = hos_oot_state(&event, &loading, &child);
+    if (known) hos_oot_area_name(map, area, sizeof area);
+    /* (not in a map, the title: no location, age or map, so the template's {location|...} part is left out) */
+    const int in_map = discord_in_map(known, hos_oot_player_seen_ns(), hos_now_ns());
+    int life = -1, max_life = -1, rupees = -1, tokens = -1, pieces = -1;
+    char hearts[16] = "", max_hearts[16] = "", rupee_text[16] = "", token_text[16] = "", piece_text[16] = "";
+    if (in_map && hos_oot_stats(&life, &max_life, &rupees, &tokens, &pieces)) {
+        if (life >= 0 && max_life > 0) discord_hearts_text(life, hearts, sizeof hearts), discord_hearts_text(max_life, max_hearts, sizeof max_hearts);
+        if (rupees >= 0) snprintf(rupee_text, sizeof rupee_text, "%d", rupees);
+        if (tokens >= 0) snprintf(token_text, sizeof token_text, "%d", tokens);
+        if (pieces >= 0) snprintf(piece_text, sizeof piece_text, "%d", pieces);
+    }
+    const DiscordFields f = {in_map ? area : "", in_map ? map : "", in_map && have_age ? (child ? "Child" : "Adult") : "",
+                             version, build, commit, release, hearts, max_hearts, rupee_text, token_text, piece_text};
+    if (!discord_activity_json(&settings, &f, nonce, process_id(), started, json, cap)) {   /* (cannot happen: the texts are cut) */
+        DiscordSettings plain;
+        discord_settings_default(&plain);
+        discord_activity_json(&plain, &f, nonce, process_id(), started, json, cap);
+    }
+}
 static int send_activity(Ipc p, long long started) {
     static unsigned nonce;
-    char version[48], json[640], answer[ANSWER_CAP];
-    snprintf(version, sizeof version, "%s", hos_version());
-    version[strcspn(version, " +")] = 0;   /* ("v2.0.12 (source ...)": the release alone) */
-    snprintf(json, sizeof json,
-             "{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%u\",\"args\":{\"pid\":%lu,\"activity\":{\"details\":\"Hookshot\","
-             "\"state\":\"Hookshot %s\",\"timestamps\":{\"start\":%lld},\"assets\":{\"large_image\":\"%s\",\"large_text\":"
-             "\"Hookshot %s\"}}}}",
-             ++nonce, process_id(), version, started, HOOKSHOT_DISCORD_IMAGE_DEFAULT, version);
+    char json[1600], answer[ANSWER_CAP];
+    activity_now(++nonce, started, json, sizeof json);
     if (!write_frame(p, OP_FRAME, json)) return 0;
+    {   /* (each new text once in the log: what the status says) */
+        static char said_text[400];
+        const char *d = strstr(json, "\"details\":\""), *st = strstr(json, "\"state\":\"");
+        char text[400];
+        snprintf(text, sizeof text, "%.*s / %.*s", d ? (int)strcspn(d + 11, "\"") : 1, d ? d + 11 : "-",
+                 st ? (int)strcspn(st + 9, "\"") : 1, st ? st + 9 : "-");
+        if (strcmp(text, said_text)) snprintf(said_text, sizeof said_text, "%s", text), hos_log("discord: the status: %s", text);
+    }
     uint32_t op = 0;
     const int r = read_frame(p, &op, answer, sizeof answer, 2000);
     static int said;
@@ -241,7 +288,8 @@ static void presence_main(void) {
     read_app_id(app_id, sizeof app_id);
     const long long started = (long long)time(NULL);
     Ipc ipc = IPC_NONE;
-    uint64_t retry_at = 0, send_at = 0, reread_at = now_ms() + 15000;
+    uint64_t retry_at = 0, send_at = 0, sent_at = 0, look_at = 0, reread_at = now_ms() + 15000;
+    char sent[1600] = "";   /* (the activity last sent, with nonce 0) */
     int said_no_client = 0, said_no_app = 0;
     for (;;) {
         sleep_ms(500);
@@ -277,8 +325,17 @@ static void presence_main(void) {
                 send_at = 0, said_no_client = 0;
             }
         }
+        if (ipc != IPC_NONE && now_ms() >= look_at) {   /* (what it says now: a change goes out within 15 s) */
+            look_at = now_ms() + 2000;
+            hos_oot_heart_containers_load();   /* (once, here and not on the game's thread: a few map files read) */
+            char now_json[1600];
+            activity_now(0, started, now_json, sizeof now_json);
+            if (strcmp(now_json, sent) && now_ms() >= sent_at + 15000) send_at = 0;
+        }
         if (ipc != IPC_NONE && now_ms() >= send_at) {
             if (send_activity(ipc, started)) {
+                activity_now(0, started, sent, sizeof sent);
+                sent_at = now_ms();
                 send_at = now_ms() + 60000;
             } else {
                 hos_log("discord: the connection broke; connecting again");
@@ -305,8 +362,7 @@ static void *presence_thread(void *arg) {
 
 /* hos_main.c, once the game starts (not for --prepare-shaders). HOS_DISCORD=0: no thread at all */
 void hos_discord_start(void) {
-    const char *e = getenv("HOS_DISCORD");
-    if (e && !atoi(e)) return;
+    if (!env_on_or("HOS_DISCORD", 1)) return;
 #ifdef _WIN32
     HANDLE t = CreateThread(NULL, 256u << 10, presence_thread, NULL, 0, NULL);
     if (t) CloseHandle(t);

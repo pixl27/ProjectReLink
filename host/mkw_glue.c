@@ -310,6 +310,52 @@ static LONG CALLBACK commit_on_touch(EXCEPTION_POINTERS *info) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+#ifdef _WIN32
+/* A thread's stack is only reserved (the guest's 64 MB, hos_thread.c): Windows commits each page below it as the stack grows,
+   through the guard page. At the commit limit it can't commit the next guard page and raises a stack overflow with the stack
+   nearly unused. That one waits for commit as a guest page does, and the thread goes on. A stack that really ran out (under
+   128 KB of its reservation left) goes on to the crash report, and so does one whose commit never came back, after the
+   out-of-memory notice.
+   The handler runs on what is left of the page Windows did commit (under 4 KB, less the exception's own frames), with only
+   reserved pages below it: until the 64 KB below the stack is committed, nothing here may take more stack than a system call
+   (hos_log takes over 4 KB, and running off the page there killed the process with no line and no report). So the wait is its
+   own loop, as commit_wait's but saying nothing, and the 64 KB is committed as guard pages, which Windows then hands to the
+   stack one at a time as it grows, as its own. Commit that never came back: stack_spare, 1 MB committed at the start, is given
+   back for that 64 KB, so the line, the notice and the crash report have a stack to run on */
+enum { STACK_ROOM = 0x10000, STACK_SPARE = 1 << 20 };
+static void *volatile stack_spare;
+static LONG CALLBACK stack_on_touch(EXCEPTION_POINTERS *info) {
+    if (info->ExceptionRecord->ExceptionCode != EXCEPTION_STACK_OVERFLOW) return EXCEPTION_CONTINUE_SEARCH;
+    char *const limit = (char *)((NT_TIB *)NtCurrentTeb())->StackLimit;
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery(limit - 1, &mbi, sizeof mbi) || mbi.State != MEM_RESERVE) return EXCEPTION_CONTINUE_SEARCH;
+    const size_t left = (size_t)(limit - (char *)mbi.AllocationBase);
+    if (left < 2 * STACK_ROOM) return EXCEPTION_CONTINUE_SEARCH;   /* (it really ran out) */
+    char *const room = limit - STACK_ROOM;
+    int ms = 0;
+    while (!VirtualAlloc(room, STACK_ROOM, MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD)) {
+        if (GetLastError() != ERROR_COMMITMENT_LIMIT) return EXCEPTION_CONTINUE_SEARCH;   /* (not the limit: as before) */
+        if (ms == 5000) {   /* (100 x 50 ms, as commit_wait) */
+            void *spare = InterlockedExchangePointer((void *volatile *)&stack_spare, NULL);
+            if (!spare || !VirtualFree(spare, 0, MEM_RELEASE) ||
+                !VirtualAlloc(room, STACK_ROOM, MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD))
+                return EXCEPTION_CONTINUE_SEARCH;   /* (no stack to say it on: the crash report, as before) */
+            hos_log("mem: a thread's stack still could not grow after 5 s at the commit limit, with %llu KB of it unused",
+                    (unsigned long long)(left >> 10));
+            hos_out_of_memory(1);
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        Sleep(50);
+        ms += 50;
+    }
+    static volatile LONG grown;
+    const LONG n = InterlockedIncrement(&grown);
+    if (n <= 8 || (n & 255) == 0)
+        hos_log("mem: a thread's stack grew at the commit limit after waiting %d ms for commit (%ld so far)", ms, (long)n);
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+#endif
+
 /* A crash nothing handles: what, where (mkw.exe+offset: nx2/dllmap.py reads mkw.map the same way), and the guest
    state of the thread, as of its last call out of lifted code, with its frame chain from x29. */
 static uint64_t peek_guest(uint64_t a) {
@@ -584,6 +630,10 @@ static LONG CALLBACK report_fatal(EXCEPTION_POINTERS *info) {
 
 void hos_commit_init(void) {
     AddVectoredExceptionHandler(1, commit_on_touch);
+#ifdef _WIN32
+    stack_spare = VirtualAlloc(NULL, STACK_SPARE, MEM_COMMIT, PAGE_READWRITE);
+    AddVectoredExceptionHandler(1, stack_on_touch);
+#endif
     AddVectoredExceptionHandler(0, report_fatal);
     SetUnhandledExceptionFilter(report_crash);
     const char *after = getenv("HOS_STATS_AFTER");
@@ -1127,8 +1177,8 @@ uint64_t a64_cntpct_host(void) {
     return (uint64_t)(((unsigned __int128)(uint64_t)(now.QuadPart - base.QuadPart) * mult) >> 32);
 }
 
-/* ---- what the renderer (gpu/render, TOTKPort's) asks of TOTKPort's hos_prof.c and totk_ultrawide.c ---- */
-int hos_ab(void) { return 0; }                    /* (hos_prof.c: A/B measurement phases) */
+/* ---- what the renderer (gpu/render, TOTKPort's) asks of TOTKPort's hos_prof.c and totk_ultrawide.c ----
+   (hookshot: hos_ab, the A/B measurement phases, is host/hos_ab.c's now) */
 /* (with the renderer's mem: lines) HOS_MEM_MAP=1: how much of the guest window is committed, and its resident part */
 void hos_memory_map_log(void) {
     static int on = -1;

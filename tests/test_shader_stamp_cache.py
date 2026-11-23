@@ -133,6 +133,7 @@ class ShaderStampCacheTests(unittest.TestCase):
             "NGX_SDK": ngx,   # ("": no NVIDIA NGX SDK, vk_dlss.cpp built without DLSS, as by default)
             "NGX_MSVC_RT": "vk_ngx_msvc_rt.cpp",
             "FSR": fsr,   # (HOOKSHOT_FSR=1: vk_fsr4.cpp built with AMD FSR 4)
+            "TRACY": False, "TRACY_FLAGS": [],   # (HOOKSHOT_TRACY: a developer's build with the Tracy profiler; off, as by default)
             "translator_files": self.translator_files,
         }
         environ = dict({"RX_RELEASE": "1"} if release else {}, **({"RX_VK_PGO": pgo} if pgo else {}))   # (pgo: gen, or a profile)

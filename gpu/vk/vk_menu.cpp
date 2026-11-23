@@ -170,6 +170,19 @@ const char* tx_compact_menu_key(int v) {
     return names[std::clamp(v, 0, 1)];
 }
 const char* tx_hdr(int v) { return v == 1 ? "Expanded" : v == 2 ? "Native (the game's)" : "Off"; }
+/// HDR: on, when the swapchain stayed SDR, why (dev.hdr_sdr_why, vk_main.cpp create_swapchain). Variants: each reason
+const char* hn_hdr(int v, int variant) {
+    static const char* const t[] = {
+        "The picture stays SDR: the graphics driver offers no HDR output (no VK_EXT_swapchain_colorspace).",
+        "The picture stays SDR: HDR is off for this display in Windows' display settings.",
+        ("The picture stays SDR: Windows has HDR on, but the graphics driver offers the game no HDR output. Reinstall the "
+         "driver with a clean install, then restart the PC."),
+        "The picture stays SDR: the display offers no HDR output. Is HDR on in the display settings?"};
+    const int reasons = hdr_sdr_count - 1;   // (every HdrSdrWhy but hdr_sdr_none)
+    static_assert(sizeof t / sizeof *t == hdr_sdr_count - 1, "hn_hdr: a line for each HdrSdrWhy but hdr_sdr_none");
+    if (variant >= 0) return variant < reasons ? t[variant] : nullptr;
+    return v && dev.hdr_sdr_why != hdr_sdr_none ? t[std::clamp((int)dev.hdr_sdr_why, 1, reasons) - 1] : nullptr;
+}
 const char* tx_tonemap(int v) { return v == 1 ? "PsychoV35" : "Vanilla"; }
 const char* tx_nits(int v) {
     static char b[24];
@@ -362,6 +375,27 @@ const char* hn_dlss_model(int v, int variant) {
     if (variant == 2) return env;
     if (variant == 0 && ur::cnn_for_vram(v, device_vram_bytes())) return cnn;
     return variant == 0 ? t[std::clamp(v, 0, ur::kModels - 1)] : nullptr;
+}
+/// (hookshot) The DLAA before the bloom row (opts.dlss_pre_bloom; vk_temporal.cpp pre_bloom_wanted): RX_VK_DLSS_PRE_BLOOM set
+/// for this run wins over it
+bool pre_bloom_env() {
+    static const char* const e = getenv("RX_VK_DLSS_PRE_BLOOM");
+    return e && *e;
+}
+/// Its line: the value chosen; variant 1: DLSS at a Render resolution below Native (the row waits for DLAA); variant 2: set
+/// for this run by RX_VK_DLSS_PRE_BLOOM
+const char* hn_dlss_pre_bloom(int v, int variant) {
+    static const char* const t[] = {
+        "Off: DLAA smooths the finished picture, after the game's bloom and tone map.",
+        "On: DLAA smooths the 3D before the game's bloom and tone map, so the glow is made from a smooth picture.",
+    };
+    static const char* const not_dlaa = "DLAA only: set the Upscaler to NVIDIA DLAA. DLSS draws the 3D smaller than the "
+                                        "picture, which this cannot go back into.";
+    static const char* const env = "Set for this run by RX_VK_DLSS_PRE_BLOOM.";
+    if (variant < 0) variant = pre_bloom_env() ? 2 : upscaler() != ur::DLAA ? 1 : 0;
+    if (variant == 1) return not_dlaa;
+    if (variant == 2) return env;
+    return variant == 0 ? t[std::clamp(v, 0, 1)] : nullptr;
 }
 /// The Game language row (opts.game_lang): language.txt's language, written once the row is left (game_lang_tick); the game
 /// reads it at its start
@@ -779,8 +813,10 @@ bool row_fixed(const int* value) {
     return (value == &opts.dlss && ur::upscaler_fixed(upscalers_available())) ||
            (value == &opts.resolution && ur::render_fixed(upscaler())) || (value == &opts.upscale && !filter_needed()) ||
            (value == &opts.dlss_model && ur::model_fixed(upscaler(), dlss_preset_env() != nullptr)) ||
+           (value == &opts.dlss_pre_bloom && ur::pre_bloom_fixed(upscaler(), pre_bloom_env())) ||
            (value == &opts.framegen_by && framegen_by_fixed()) ||   // (its line says why)
            (value == &opts.astc_rgba8 && getenv("RX_VK_ASTC_RGBA8")) ||   // (set for the run: vk_texture.cpp reads it first)
+           (value == &opts.present_queue && getenv("RX_VK_PRESENT_QUEUE") && *getenv("RX_VK_PRESENT_QUEUE")) ||   // (create_device's, first)
            (value == &opts.hud_layout && getenv("HOS_WIDE_UI") && *getenv("HOS_WIDE_UI")) ||   // (host/hos_wide_ui.c's, first)
            (value == &opts.intel_compiles && getenv("RX_VK_NO_INTEL_SERIAL"));
 }
@@ -858,7 +894,8 @@ MENU_HINTS(hn_shadow_res, 0,
            "more.",
            "1600 pixels a side, the console's. About 31 MB of video memory.",
            "2200 pixels a side. About 58 MB of video memory.",
-           "3072 pixels a side, the game's own highest. About 113 MB of video memory.")
+           "3072 pixels a side, the game's own highest, and the shadows near you shimmer less while the camera moves. About "
+           "113 MB of video memory.")
 // detail caps: past them foliage flickers (GPU instance budget), grass thins, shadows step (fixed shadow map res)
 constexpr int kCapFoliage = 150, kCapObjects = 250, kCapGrass = 200, kCapShadows = 200;
 #define GFX_HINT(fn, cap) \
@@ -1029,7 +1066,43 @@ const char* hn_mic(int v, int variant) {
     if (variant > 1) return nullptr;
     return missing ? "Not plugged in: Default stands in until it is back." : "This microphone, by its name. A change applies at once.";
 }
-const char* tx_rumble(int v) { return v ? tx_percent(v) : "Off"; }
+// (hookshot) Vibration (host/vibration.h): what plays each controller, and how strongly. Auto plays the best a controller
+// can do, Basic its motors, Off nothing; the strength is one percent of what the game asks for, every backend's. The host
+// writes back what plays the controller used last (HOS_OPT_VIBRATION_STATUS: its kind times 16, plus what it says), which
+// Test vibration's cell and help show.
+const char* tx_vibration(int v) {
+    static const char* t[] = {"Auto", "Basic", "Off"};
+    return (unsigned)v < 3 ? t[v] : t[0];
+}
+std::atomic<int> vibration_status_cache{0};   // (no controller until the host reports)
+int vibration_says() { return vibration_status_cache.load(std::memory_order_relaxed) % 16; }
+const char* vibration_cell() {
+    static const char* t[] = {"No controller", "Off", "Motors", "HD rumble", "Fine haptics (cable)",
+                              "Fine haptics (Bluetooth)", "Four motors", "HD rumble (RenHDrum)", "Motors: no sound card",
+                              "Motors: no RenHDrum", "Motors (Bluetooth)"};
+    const int s = vibration_says();
+    return (unsigned)s < sizeof t / sizeof t[0] ? t[s] : t[2];
+}
+const char* vibration_why(int s) {
+    static const char* t[] = {
+        "No controller is connected.", "Vibration is Off.", "Its two motors play the game's vibration.",
+        "Its own HD rumble plays the game's vibration as it is.",
+        "Its voice coils play the game's fine vibration, through its USB cable.",
+        "Its voice coils play the game's fine vibration over Bluetooth. Still being tested.",
+        "All four of its motors play, the triggers' too. Still being tested.",
+        "RenHDrum makes its HD rumble. Still being tested.",
+        "Its fine haptics play through the sound card it has on a USB cable, which was not found: its motors play "
+        "meanwhile.",
+        "Its fine haptics need RenHDrum beside the game (renhdrum.dll, or renhdrum.so on Linux), which is not there: its "
+        "motors play.",
+        "Over Bluetooth its motors play; on a USB cable, its voice coils play the game's fine vibration."};
+    return (unsigned)s < sizeof t / sizeof t[0] ? t[s] : nullptr;
+}
+// (under Test vibration's help: what plays the controller now; every one, for the help's height)
+const char* hn_vibration_test(int v, int variant) {
+    (void)v;
+    return vibration_why(variant < 0 ? vibration_says() : variant);
+}
 // (hookshot) Menu size: how large the overlays are drawn (vk_ui.h unit), Medium unless the player chooses Small or Large. It
 // was Auto by default, Large in fullscreen at 1080 lines and up while a controller opened the menu: the menu changed size with
 // the input that opened it, and the version in its banner no longer fitted. An options file's menu_size=0 (that Auto): Medium
@@ -1151,9 +1224,12 @@ MENU_HINTS(hn_preset, 0, "Each row as you set it. Changing most rows yourself co
 MENU_HINTS(hn_gpu, 0, "The best dedicated GPU.")
 /// Frame generation: how many frames are made for each of the game's
 const char* hn_framegen(int v, int variant) {
-    if (variant < 0) v = framegen_capped(v, dlss_fg_most());   // (the value shown: DLSS FG's top for a saved one past it)
-    // (2x: by AMD FSR 3.1 where it runs, from the scene's depth and motion: vk_framegen.cpp. Variant 1 is that text)
-    if (v == 2 && (variant < 0 ? fsr3fi::frames_wanted() != 0 : variant == 1))
+    const int dlss_most = variant < 0 ? dlss_fg_most() : 0;
+    if (variant < 0) v = framegen_capped(v, dlss_most);   // (the value shown: DLSS FG's top for a saved one past it)
+    // (2x: by AMD FSR 3.1 where it makes the frame, from the scene's depth and motion: vk_framegen.cpp. Not while NVIDIA
+    // DLSS FG makes it (dlss_fg_most: chosen, on a temporal Upscaler, its runtime's answer a yes, not given up): FSR 3.1 is
+    // asked then too (fsr3fi::frames_wanted), but only for the sets DLSS-G does not make. Variant 1 is that text)
+    if (v == 2 && (variant < 0 ? dlss_most == 0 && fsr3fi::frames_wanted() != 0 : variant == 1))
         return "One made frame between each two of the game's, by AMD FSR 3.1 from the scene's depth and motion.";
     if (variant > 0) return nullptr;
     if (v <= 0) return "Only the game's own frames: no added delay.";
@@ -1311,11 +1387,13 @@ const char* threaded_env() {
     if (getenv("RX_VK_RECORDER")) return "RX_VK_RECORDER";
     return nullptr;
 }
-/// (Auto's line says what Auto is: the CPU's rule with threaded::kAutoEnabled on, Off everywhere were it off)
+/// (Auto's line says what Auto is: the CPU's rule with threaded::kAutoEnabled on, Off everywhere were it off. Its tiers are
+/// threaded::kAutoRenderCores and kAutoRecorderCores, 4 and 6 cores: tests/test_threaded_rendering.py holds the text to them)
 const char* hn_threaded(int v, int variant) {
     static const char* const t[] = {
         threaded::kAutoEnabled
-            ? "On where the processor has 8 or more threads for the game, and nothing rules it out; otherwise Off."
+            ? "On with 6 or more processor cores for the game, the render thread alone with 4 or 5, Off with fewer or where "
+              "ruled out."
             : "The same as Off, on every PC.",
         "The picture is drawn on threads of its own while the game goes on to its next frame. Still being tested: it "
         "can show flashes.",
@@ -1406,13 +1484,20 @@ MENU_HINTS(hn_texture_detail, 0, "Full detail, but on a card with 4.5 GB or less
            "Every texture at the game's own size (the very largest still trimmed to fit).",
            "The big textures' largest level left out above 1024 texels: about a quarter of their memory.",
            "The big textures down to 512 texels: the least memory, the softest picture.")
+/// (the Present queue row's line while RX_VK_PRESENT_QUEUE holds it, as RX_VK_ASTC_RGBA8 the ASTC row)
+const char* hn_present_queue(int, int variant) {
+    const char* e = getenv("RX_VK_PRESENT_QUEUE");
+    return variant <= 0 && e && *e ? "Set by RX_VK_PRESENT_QUEUE (hookshot_env.txt or the environment): remove that line to choose here."
+                                   : nullptr;
+}
 const char* tx_intel_compiles(int v) { return v == 1 ? "Side by side" : v == 2 ? "One at a time" : "Auto"; }
 /// (the Intel shader compiles row's line: RX_VK_NO_INTEL_SERIAL holds it, as RX_VK_ASTC_RGBA8 the ASTC row)
 const char* hn_intel_compiles(int v, int variant) {
     if (variant <= 0 && getenv("RX_VK_NO_INTEL_SERIAL"))
         return "Set by RX_VK_NO_INTEL_SERIAL (hookshot_env.txt or the environment): remove that line to choose here.";
     static const char* const t[] = {"Side by side on the Arc B-series (driver 101.9154 or newer), where it was measured; one at "
-                                    "a time on other Intel graphics.",
+                                    "a time on other Intel graphics, but for the shader preparation's graphics pipelines from "
+                                    "driver 101.9175.",
                                     "Shaders are built faster on a CPU with many cores, but Intel's driver can crash the game "
                                     "while it builds them.",
                                     "The safe choice, and the best on a CPU with 4 cores or fewer: a shader Intel's compiler "
@@ -1459,8 +1544,8 @@ MENU_HINTS(hn_pad_layout, 0, "The Switch's order: A on the right, B at the botto
            "D-pad too, whatever was bound before), and the Switch's button icons.",
            "Bindings of your own, from the Controls page.")
 MENU_HINTS(hn_prompts, 0,
-           "Those of the first controller, from its name (SDL's). With none, the keyboard's (the Switch's with XInput "
-           "alone).",
+           "Those of the first controller, from its type and name (SDL's). With none, the keyboard's (the Switch's "
+           "with XInput alone).",
            "The Switch's buttons.", "An Xbox controller's.", "A PlayStation 4 controller's.", "A PlayStation 5 controller's.",
            "A Steam Deck's.", "The keys and mouse buttons your controls put each action on.")
 
@@ -1613,6 +1698,9 @@ Row rows[] = {
      hn_upscaler},
     {TAB_GRAPHICS, "DLSS model", &opts.dlss_model, 0, ur::kModels - 1, 1, tx_dlss_model,
      "Which of NVIDIA's DLSS networks draws the picture.", hn_dlss_model, false, true},
+    {TAB_GRAPHICS, "DLAA before the bloom", &opts.dlss_pre_bloom, 0, 1, 1, tx_onoff,
+     "Where NVIDIA DLAA smooths the picture: after the game's bloom and tone map, or before them. Changes at once.",
+     hn_dlss_pre_bloom, false, true},
     {TAB_GRAPHICS, "Render resolution", &opts.resolution, 0, ur::kValues - 1, 1, tx_resolution,
      "The share of the output the 3D is drawn at; the Upscaler fills in the rest.", hn_resolution},
     {TAB_GRAPHICS, "Sharpness", &opts.sharpness, 0, 100, 10, tx_percent,
@@ -1663,7 +1751,7 @@ Row rows[] = {
     {TAB_GRAPHICS, "HDR", &opts.hdr, 0, 2, 1, tx_hdr,
      "HDR10 out on an HDR display (Windows: Use HDR on in the display settings). Expanded: the game's SDR picture, its white at "
      "the paper white and its highlights up to the peak. Native: the game's own HDR, told the display's peak and paper white.",
-     nullptr, false, true},
+     hn_hdr, false, true},
     {TAB_GRAPHICS, "HDR paper white", &opts.hdr_white, 80, 400, 10, tx_nits,
      "How bright the picture's white is with HDR on. Around 200 for a normal room; higher in a bright one.", nullptr, false, true},
     {TAB_GRAPHICS, "HDR peak brightness", &opts.hdr_peak, 400, 4000, 100, tx_nits,
@@ -1687,7 +1775,8 @@ Row rows[] = {
      "little GPU time. Game's is the console's own (1x or 2x).", nullptr, false, true},
     {TAB_GRAPHICS, "Shadow resolution", &opts.shadow_res, 0, 3, 1, tx_shadow_res,
      "The size of the sun's shadow maps: higher keeps the shadows of thin things near you, such as chains, fences and "
-     "leaves, smooth instead of stair-stepped, for more video memory and a little GPU time. Applies at once.",
+     "leaves, smooth instead of stair-stepped, for more video memory and a little GPU time. Highest also makes them shimmer "
+     "less while the camera moves. Applies at once.",
      hn_shadow_res},
     {TAB_GRAPHICS, "Foliage distance", &opts.gfx_foliage, 25, 400, 25, tx_fov,
      "How far away small trees, bushes and flowers are drawn. Higher costs CPU and GPU time. Changes apply at once.",
@@ -1800,8 +1889,15 @@ Row rows[] = {
      "How far a stick moves from center in any direction before the game sees it. "
      "Lower for a precise stick, higher for one that drifts. "
      "The game's own dead zone still follows.", nullptr, false, true},
-    {TAB_CONTROLS, "Rumble strength", &opts.rumble, 0, 150, 25, tx_rumble,
-     "How strongly the controller rumbles, in percent of the game's rumble. Off turns it off.", nullptr, false, true},
+    {TAB_CONTROLS, "Vibration", &opts.vibration, 0, 2, 1, tx_vibration,
+     "How the controller vibrates. Auto plays the best it can: a DualSense on a USB cable its voice coils, a Switch "
+     "controller its own HD rumble, every other controller its motors. Basic plays the motors on every controller. Off "
+     "stops it.", nullptr, false, true},
+    {TAB_CONTROLS, "Vibration strength", &opts.rumble, 25, 200, 25, tx_percent,
+     "How strongly the controller vibrates, in percent of what the game asks for. A change gives a short buzz at the new "
+     "strength.", nullptr, false, true},
+    {TAB_CONTROLS, "Test vibration", nullptr, 0, 0, 0, nullptr,
+     "A short buzz on the controller used last. The value says what plays its vibration now.", hn_vibration_test},
     {TAB_CONTROLS, "Motion", nullptr, 0, 0, 0, nullptr,   // (hookshot: opens the Motion page, the TAB_MOTION rows)
      "Motion controls: aiming with the controller's gyroscope, its sensitivity and its inverts."},
     {TAB_CONTROLS, "Camera", nullptr, 0, 0, 0, nullptr, nullptr, nullptr, false, true, -1, true},
@@ -1935,8 +2031,9 @@ Row rows[] = {
      "Attach the zip there and paste the report. Nothing is uploaded for you."},
     // (hookshot) for testing, not a player's choice: when each made frame is shown (vk_framegen.cpp)
     {TAB_DEBUG, "Frame pacing", &opts.pace, 0, 1, 1, tx_onoff, "When each frame is shown.", hn_pace},
-    // (hookshot, threaded_rendering.h: the render thread and the recorder thread together, one row. Auto, On, Off as V-Sync's,
-    // so its text is tx_vsync's. Read once, at the start: menu_threaded_rendering)
+    // (hookshot, threaded_rendering.h: the render thread and the recorder thread, one row: On both, Auto by the cores (both,
+    // the render thread alone or neither). Auto, On, Off as V-Sync's, so its text is tx_vsync's. Read once, at the start:
+    // threaded_choice)
     {TAB_DEBUG, "Threaded rendering", &opts.threaded_rendering, 0, 2, 1, tx_vsync,
      "Draws the picture on threads of its own, beside the game's, on a processor with threads to spare. Applies after a "
      "restart.", hn_threaded, true, true},
@@ -1952,6 +2049,11 @@ Row rows[] = {
     {TAB_DEBUG, "Uncap detail sliders", &opts.gfx_uncapped, 0, 1, 1, tx_onoff,
      "Lets Foliage distance, Object detail, Grass density and Shadow distance go past their safe maximum. Past it, far "
      "foliage can flicker, grass can thin out and shadows move in steps.", nullptr, false, true},
+    // (hookshot) the presents' own queue (vk_main.cpp create_device; RX_VK_PRESENT_QUEUE over it): off by default,
+    // here so a player can try it without editing a file and say which way the game runs. Read once, at the start
+    {TAB_DEBUG, "Present queue", &opts.present_queue, 0, 1, 1, tx_onoff,
+     "The presents on a GPU queue of their own, beside the game's: frame generation's frames more even with V-Sync Off on some "
+     "cards, the GPU lost with frame generation on others (an RTX 5080). Applies after a restart.", hn_present_queue, true, true},
     {TAB_DEBUG, "ASTC as RGBA8", &opts.astc_rgba8, 0, 1, 1, tx_onoff,
      "Big ASTC textures kept as decoded RGBA8 instead of re-encoded to BC3: a workaround for texture artifacts seen on some AMD "
      "cards (issues 57 and 1006). Takes far more video memory. Applies after restart.", hn_astc_rgba8, true, true},
@@ -2323,6 +2425,7 @@ bool row_shown(int i) {
            (!is_laptop_row(rows[i]) || laptop_row()) &&
            (v != &opts.dlss || ur::upscaler_shown(upscalers_available())) &&
            (v != &opts.dlss_model || ur::model_shown(dlss_why() == DLSS_OK)) &&
+           (v != &opts.dlss_pre_bloom || ur::pre_bloom_shown(dlss_why() == DLSS_OK, upscaler())) &&
            ((v != &opts.hdr_white && v != &opts.hdr_peak && v != &opts.hdr_contrast) || opts.hdr != 0) &&
            (v != &opts.hdr_tonemap || opts.hdr == 2) &&
            // (hookshot) who makes the frames only with Frame generation on; the CRT raster only with a CRT filter
@@ -2618,9 +2721,10 @@ int drag_row = -1;
 bool mouse_read = false;   // (the menu has read the mouse since it opened)
 bool is_slider(const Row& r) { return !strcmp(r.name, "Microphone gain") || r.value == &opts.sharpness || r.value == &opts.mouse_sens || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y || r.value == &opts.volume || r.value == &opts.camera_speed || r.value == &opts.fov || r.value == &opts.gfx_foliage || r.value == &opts.gfx_objects || r.value == &opts.gfx_grass || r.value == &opts.gfx_shadows; }
 /// (a scale: the arrows and a click stop at its ends; Rumble strength would go from Off to its strongest)
-bool stops_at_ends(const Row& r) { return !strcmp(r.name, "Microphone gain") || r.value == &opts.ultrawide || r.value == &opts.mouse_sens || r.value == &opts.rumble || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y || r.value == &opts.volume || r.value == &opts.camera_speed || r.value == &opts.fov || r.value == &opts.gfx_foliage || r.value == &opts.gfx_objects || r.value == &opts.gfx_grass || r.value == &opts.gfx_shadows; }
-/// (the ini's Rumble strength on the menu's steps: 0 to 150, the nearest 25)
-int rumble_step(int v) { return (std::min(std::max(v, 0), 150) + 12) / 25 * 25; }
+bool stops_at_ends(const Row& r) { return !strcmp(r.name, "Microphone gain") || r.value == &opts.ultrawide || r.value == &opts.mouse_sens || r.value == &opts.rumble || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y || r.value == &opts.volume || r.value == &opts.camera_speed || r.value == &opts.fov; }
+/// (the ini's Vibration strength, rumble_strength=, on the menu's steps: 25 to 200, the nearest 25. 0 was Off before the
+/// Vibration row, which menu_init turns into Vibration Off)
+int rumble_step(int v) { return (std::min(std::max(v, 25), 200) + 12) / 25 * 25; }
 // (hookshot) A run's environment over a saved row (RX_VK_PACE=1, HOS_OUTPUT_RES=...): for that run only. save() writes the
 // player's own value while the row still holds the environment's; once the player changes the row, theirs is kept. (These
 // were copied into the row and the next save wrote them into hookshot_options.ini, so a test run's switch stayed for good)
@@ -2674,8 +2778,12 @@ const char* ini_key(const Row& r) {
     if (r.value == &opts.fps_cap) return "frame_rate_cap";   // (host/nn_vi.c reads it at the start, then HOS_OPT_FPS_CAP)
     if (r.value == &opts.upscale) return "upscaling";
     if (r.value == &opts.dlss) return "dlss";   // (as opts.dlss and RX_VK_DLSS)
+    if (r.value == &opts.dlss_pre_bloom) return "dlss_pre_bloom";   // (as RX_VK_DLSS_PRE_BLOOM)
     if (r.value == &opts.handheld) return "handheld_profile";   // (the Profile row; host/nn_applet.c reads it at the start)
     if (r.value == &opts.ultrawide) return "ultrawide";   // (the Aspect ratio row; host/hos_main.c reads it at the start)
+    // (hookshot) Vibration (host/vibration.h), and its strength under the key it had as Rumble strength
+    if (r.value == &opts.vibration) return "vibration";
+    if (r.value == &opts.rumble) return "rumble_strength";
     static char k[48];
     size_t n = 0;
     for (const char* p = r.name; *p && n + 1 < sizeof k; p++) k[n++] = *p == ' ' ? '_' : (char)tolower(*p);
@@ -3108,6 +3216,8 @@ void weak_laptop_apply() {
     logf("menu: Set up for a weak laptop: Render resolution %d%%, the game's own upscaler, plain scale, handheld profile (after a "
          "restart), Minimum's mip trimming", ur::percent(opts.resolution));
 }
+/// (hookshot) the Test vibration row: an action, not a page (the host's rumble_test, as a strength change gives)
+bool is_vibration_test_row(const Row& r) { return !r.value && r.tab == TAB_CONTROLS && !strcmp(r.name, "Test vibration"); }
 std::string game_folder() {
     char exe[MAX_PATH];
     const DWORD n = game_module_path(exe, MAX_PATH);
@@ -4317,7 +4427,8 @@ void draw_debug_rows(ui::Ctx& c, float cx0, float cx1, float top, float bottom, 
 bool report_default_depends_on_pc(const Row& r) {
     // (Shadow resolution too: a preset puts it back to Auto, the size for this PC's memory, menu_shadow_res)
     if (r.value == &opts.sharpness || r.value == &opts.pace || r.value == &opts.realtime ||
-        r.value == &opts.handheld || r.value == &opts.shadow_res)
+        r.value == &opts.handheld || r.value == &opts.shadow_res ||
+        r.value == &opts.gfx_grass || r.value == &opts.gfx_shadows)
         return opts.preset != 0 || auto_for != 0;
     return r.value == &opts.output_res || r.value == &opts.resolution || r.value == &opts.dlss ||
            r.value == &opts.preset || r.value == &opts.upscale ||
@@ -4432,6 +4543,7 @@ void row_value_cell(ui::Ctx& c, const Row& r, ImVec2 va, ImVec2 vb, bool selecte
         else if (pending == &r) choice_cell(c, va, vb, "Press again to confirm", selected, false, false);
         else if (is_share_row(r)) choice_cell(c, va, vb, share_value.empty() ? "Save" : share_value, selected, false, false);   // (an action, not a page)
         else if (&r == &rows[kBugReportRow]) choice_cell(c, va, vb, bug_report_cell(), selected, false, false);   // (how the last report went)
+        else if (is_vibration_test_row(r)) choice_cell(c, va, vb, vibration_cell(), selected, false, false);   // (hookshot: what plays it)
         else {
             choice_cell(c, va, vb, "", selected, false, false);
             ui::triangle(c, ImVec2(vb.x - 15 * s, mid), 10 * s, 1, selected ? ui::kGoldInk : ui::kInk);
@@ -4628,16 +4740,42 @@ void draw_options(ui::Ctx& c) {
         hits.add(x, 0, x + tw[i], hh, menu_hit::kTab, i);
         x += tw[i];
     }
-    {   // (which build, at the banner's left, so a report can say it without opening the log: as players see it, version_text,
-        // "Hookshot v3.0.0-rc.1" or "Hookshot Nightly 46 · 434712bb"; the log and the bug report keep the whole name)
-        std::string ver = std::string("Red Tunic ") + version_text(HOOKSHOT_VERSION);
-        const float room = (c.w - total) * 0.5f - 60 * s - c.safe, px = 15 * s;
+    {   // (the banner's left: the Hookshot logo and its name, a little larger than the tabs' ink; at Small and Medium smaller
+        // until it fits, at Large at its size or not at all, as the version)
+        const float room = (c.w - total) * 0.5f - 60 * s - c.safe, px = 24 * s;
+        float aspect = 1;
+        ImTextureData* logo = ui::logo(&aspect);
+        const auto width = [&](float p) {
+            return (logo ? p * 1.25f * aspect + 10 * s : 0) + ui::size_of(c.f.heading, p, "Red Tunic").x;
+        };
+        const float fit = ui::fit_px(px, opts.menu_size == 3 ? px : 14 * s, 0.5f * s, room, width);
+        if (fit > 0) {
+            float lx = c.safe;
+            if (logo) {
+                const float lh = fit * 1.25f;
+                c.d->AddImage(logo->GetTexRef(), ImVec2(lx, ty - lh * 0.5f), ImVec2(lx + lh * aspect, ty + lh * 0.5f));
+                lx += lh * aspect + 10 * s;
+            }
+            ui::text_mid(c, c.f.heading, fit, lx, ty, ui::kBannerInk, "Red Tunic");
+        }
+    }
+    {   // (which build, at the banner's right, so a report can say it without opening the log: as players see it, version_text,
+        // "v3.0.0-rc.1" or "Nightly 46 · 434712bb"; the log and the bug report keep the whole name. Under it, a development
+        // run's own name for what it tests, HOOKSHOT_BUILD_NAME (scripts/run-vk.ps1 -BuildName), when the run sets one)
+        const std::string ver = version_text(HOOKSHOT_VERSION);
+        const char* named = getenv("HOOKSHOT_BUILD_NAME");
+        const std::string name = named ? named : "";
+        const float room = (c.w - total) * 0.5f - 60 * s - c.safe, px = 15 * s, right = c.w - c.safe;
         const auto width = [&](float p) { return ui::size_of(c.f.body, p, ver.c_str()).x; };
         // (still too long, as a source build's "v2.0.11-821-g7b81752-dirty" since the Audio tab: at Small and Medium smaller
         // until it fits, on half-point steps, 10 points at the least; at Large, the size for a TV across the room, at its size
         // or not at all, as before)
         const float fit = ui::fit_px(px, opts.menu_size == 3 ? px : kVersionMinPt * s, 0.5f * s, room, width);
-        if (fit > 0) ui::text_mid(c, c.f.body, fit, c.safe, ty, ui::kBannerInk, ver.c_str());
+        const auto name_width = [&](float p) { return ui::size_of(c.f.body, p, name.c_str()).x; };
+        const float name_fit = name.empty() ? 0 : ui::fit_px(13 * s, opts.menu_size == 3 ? 13 * s : kVersionMinPt * s, 0.5f * s, room, name_width);
+        const float vy = name_fit > 0 ? ty - 8 * s : ty;
+        if (fit > 0) ui::text_mid_right(c, c.f.body, fit, right, vy, ui::kBannerInk, ver.c_str());
+        if (name_fit > 0) ui::text_mid_right(c, c.f.body, name_fit, right, ty + 9 * s, ui::alpha(ui::kBannerInk, 0.8f), name.c_str());
     }
     // the rows, in the column; the help beside it
     float cx0, cx1, hx0, hx1;
@@ -4657,6 +4795,7 @@ void draw_options(ui::Ctx& c) {
     if (is_nfc_scan(selr)) hint = nfc_scan_says(-1);
     if (is_share_row(selr) && !share_said.empty()) hint = share_said.c_str();   // (what the last save did)
     if (&selr == &rows[kBugReportRow]) hint = bug_report_hint();   // (the Bug report: where it was saved, or why not)
+    if (is_vibration_test_row(selr) && selr.hint) hint = selr.hint(0, -1);   // (hookshot: what plays the controller now)
     const std::string pending_line = (cur_tab == TAB_GRAPHICS || cur_tab == TAB_DEBUG) && restart_pending() ? restart_line(c, 16 * s, hx1 - hx0 - 66 * s) : "";
     static float help_tall = 0, help_tall_w = 0;
     static std::string help_said;   // (Save my pipeline list's line as measured: measured again when it changes)
@@ -4688,7 +4827,7 @@ void draw_options(ui::Ctx& c) {
             if (const char* says = cheat_confirm(selr.cheat)) prompt_list[prompts_n++] = {ui::kConfirm, says};
             prompt_list[prompts_n++] = {ui::kCompact, "Compact", compact_key_name};
         } else {
-            prompt_list[prompts_n++] = {ui::kConfirm, is_nfc_tap(selr) ? "Tap" : is_nfc_remove(selr) ? "Remove" : is_nfc_scan(selr) ? "Scan" : confirms ? (pending == &selr ? "Confirm" : selr.name) : &selr == &rows[kBugReportRow] || is_share_row(selr) ? "Save" : "Open"};
+            prompt_list[prompts_n++] = {ui::kConfirm, is_nfc_tap(selr) ? "Tap" : is_nfc_remove(selr) ? "Remove" : is_nfc_scan(selr) ? "Scan" : confirms ? (pending == &selr ? "Confirm" : selr.name) : &selr == &rows[kBugReportRow] || is_share_row(selr) ? "Save" : is_vibration_test_row(selr) ? "Test" : "Open"};
         }
         if (cur_tab == TAB_MOTION || cur_tab == TAB_FPS_DEV) prompt_list[prompts_n++] = {ui::kBack, "Back"};   // (Esc: to Controls, or Gameplay)
         else {
@@ -4813,7 +4952,7 @@ void draw_tune_bar(ui::Ctx& c) {
     if (r.cheat >= 0 && cheat_confirm(r.cheat)) {
         tune_prompts[1] = {ui::kConfirm, cheat_confirm(r.cheat)};
     } else if (!r.value && r.cheat < 0) {
-        tune_prompts[1] = {ui::kConfirm, confirms ? (pending == &r ? "Confirm" : r.name) : &r == &rows[kBugReportRow] || is_share_row(r) ? "Save" : "Open"};
+        tune_prompts[1] = {ui::kConfirm, confirms ? (pending == &r ? "Confirm" : r.name) : &r == &rows[kBugReportRow] || is_share_row(r) ? "Save" : is_vibration_test_row(r) ? "Test" : "Open"};
     }
     const float pw = ui::prompts(c, ImVec2(0, 0), tune_prompts, 4, false);
     const float px0 = bx0 + (bw - pw) * 0.5f;
@@ -6106,6 +6245,8 @@ static void probe_upscalers_soon() {
     });
 }
 
+void upscalers_probe_start() { probe_upscalers_soon(); }
+
 void startup_screen(const StartupView* view) {
     if (!view) {
         startup_on.store(false, std::memory_order_release);
@@ -6140,6 +6281,7 @@ void menu_init() {
     if (FILE* f = fopen(ini_path().c_str(), "r")) {
         char line[4096]; // Endpoint IDs are opaque and must not be cut into multiple settings.
         bool has_resolution = false;
+        bool has_vibration = false;   // (hookshot: an options file from before the Vibration row has no vibration= line)
         bool v2 = false;
         int version = 0;
         int old_dynres = -1;   // (the row before Resolution: 0, the full scale, is its 100%; 1 is Auto)
@@ -6168,6 +6310,7 @@ void menu_init() {
                         opts.hold_toggle = atoi(eq + 1) == 1 ? opts.hold_toggle | bit : opts.hold_toggle & ~bit;
                     }
             has_resolution |= !strcmp(line, "resolution");
+            has_vibration |= !strcmp(line, "vibration");   // (hookshot)
             has_output |= !strcmp(line, "output_res");
             v2 |= !strcmp(line, "options_version");
             if (!strcmp(line, "options_version")) version = atoi(eq + 1);
@@ -6204,6 +6347,9 @@ void menu_init() {
         }
         if (!has_resolution && old_dynres >= 0) opts.resolution = old_dynres ? 0 : 1;
         if (menu_auto) opts.menu_size = 2;
+        // (hookshot) Rumble strength's Off, from before the Vibration row: Vibration Off, at the strength it had by default
+        if (!has_vibration && opts.rumble <= 0) opts.vibration = 2, opts.rumble = 100;
+        opts.vibration = std::min(std::max(opts.vibration, 0), 2);
         opts.rumble = rumble_step(opts.rumble);   // (a hand-edited 60: 50, on the arrows' steps)
         // (Game speed is Real time by default now: Per frame played at half speed at 30 fps, the "slow motion" players
         // reported. An options file from before kept the old default whether chosen or not: Real time for it too)
@@ -6229,7 +6375,7 @@ void menu_init() {
     first_start = !has_options;
     sync_transition_autosave();
     const char* handheld_env = getenv("HOS_HANDHELD");   // (host/nn_applet.c handheld(): the environment over the file's)
-    if (!has_output && !(handheld_env ? atoi(handheld_env) != 0 : opts.handheld != 0)) {
+    if (!has_output && !(handheld_env ? !env_value_off(handheld_env) : opts.handheld != 0)) {
         // (none chosen, a new install: the size host/nn_applet.c took at boot, the game's 2560x1440 or the main screen's where
         // it has fewer pixels (a Steam Deck's 1280x800), hos_output_default. Saved from now on, so the two never part.
         // HOS_OUTPUT_RES, below, is over it, as over a chosen one)
@@ -6254,6 +6400,7 @@ void menu_init() {
     // (the environment over the saved rows, for this run only: env_override, save)
     if (const char* e = getenv("RX_VK_FRAMEGEN_MULT")) env_override(&opts.framegen, std::min(std::max(atoi(e), 2), 8));
     if (const char* e = getenv("RX_VK_PACE")) env_override(&opts.pace, !env_value_off(e));
+    if (const char* e = getenv("RX_VK_DLSS_PRE_BLOOM"); e && *e) env_override(&opts.dlss_pre_bloom, !env_value_off(e));
     if (const char* e = getenv("RX_VK_UPSCALE"))
         for (Row& r : rows)
             if (r.value == &opts.upscale) env_override(r.value, std::min(std::max(atoi(e), r.lo), r.hi));
@@ -6262,6 +6409,8 @@ void menu_init() {
     if (const char* e = getenv("HOS_SKIP_OPENING")) env_override(&opts.skip_opening, !env_value_off(e));
     // (vk_texture.cpp reads RX_VK_ASTC_RGBA8 over the row: the row shows it, fixed (row_fixed), and the ini keeps the player's)
     if (const char* e = getenv("RX_VK_ASTC_RGBA8")) env_override(&opts.astc_rgba8, !env_value_off(e));
+    // (vk_main.cpp create_device reads RX_VK_PRESENT_QUEUE over the Present queue row, an empty value not: the same here)
+    if (const char* e = getenv("RX_VK_PRESENT_QUEUE"); e && *e) env_override(&opts.present_queue, !env_value_off(e));
     if (const char* e = getenv("RX_VK_NO_INTEL_SERIAL")) env_override(&opts.intel_compiles, env_value_off(e) ? 2 : 1);
     if (const char* e = getenv("RX_VK_COMPUTE_QUICK_FIRST")) env_override(&opts.intel_quick, !env_value_off(e));
     if (const char* e = getenv("HOS_OUTPUT_RES")) {
@@ -6331,48 +6480,44 @@ void menu_auto_for_gpu(const VkPhysicalDeviceProperties& props, ::auto_settings:
 // (the switches read once, at the first present: they are for the whole run, and each present asked twice)
 int menu_vsync() { static const int run = env_on("RX_VK_FIFO") ? 1 : env_on("RX_VK_IMMEDIATE") ? 2 : 0; return run ? run : opts.vsync; }
 /// (hookshot) The Threaded rendering row, resolved once for the run (threaded_rendering.h): the row as the options file had it
-/// at the start (menu_init, asked here too: a reader can come before the device is picked), the logical processors the process
-/// may run on (usable_cpus: its affinity mask) and, for Auto, whether the mode is safe on this run. Known at the start and
+/// at the start (menu_init, asked here too: a reader can come before the device is picked), the physical cores among the
+/// logical processors the process may run on (usable_cores: its affinity mask, a core's SMT siblings counted once; the
+/// logical count where the cores cannot be read) and, for Auto, whether the mode is safe on this run. Known at the start and
 /// read here: the capture off (RX_VK_CAPTURE=0: a replay behind the game is right only from the capture),
 /// RX_VK_LOW_SPEC, a frame dump (RX_VK_DUMP), a benchmark replay (RX_VK_BENCH), and buffer pools with no mirrors at all
-/// (pools_mirrored: RX_VK_MIRROR=0, an integrated GPU, GCN), asked last and only when Auto would otherwise say yes, since it
-/// reads the device. Not known at the start, so not here: one pool refused its mirror or over the mirrors' budget while the
-/// game runs (that needs the run-time fallback, which is not written). On is the player's word: nothing is checked for it
-bool menu_threaded_rendering() {
-    static const bool on = [] {
+/// (pools_mirrored: RX_VK_MIRROR=0, an integrated GPU, GCN), asked last and only when Auto would otherwise pick a thread, in
+/// either of its tiers, since it reads the device. Not known at the start, so not here: one pool refused its mirror or over the
+/// mirrors' budget while the game runs (that needs the run-time fallback, which is not written). On is the player's word:
+/// nothing is checked for it. Each reader takes its half: menu_render_thread, menu_recorder_thread
+static const threaded::Choice& threaded_choice() {
+    static const threaded::Choice choice = [] {
         menu_init();
-        const unsigned cpus = usable_cpus();
+        const unsigned cpus = usable_cpus(), cores = usable_cores();
         const char* capture = getenv("RX_VK_CAPTURE");
         // (vk_memory.cpp capture_on's reading: 0 none, anything else the capture)
         const char* unsafe = capture && atoi(capture) == 0 ? "RX_VK_CAPTURE" :
                              env_on("RX_VK_LOW_SPEC") ? "RX_VK_LOW_SPEC" : getenv("RX_VK_DUMP") ? "RX_VK_DUMP" :
                              getenv("RX_VK_BENCH") ? "RX_VK_BENCH" : nullptr;
-        threaded::Choice c = threaded::choose(opts.threaded_rendering, cpus, unsafe != nullptr);
-        if (c.why == threaded::Why::AutoCpus && !pools_mirrored()) {
-            c = threaded::Choice{false, threaded::Why::AutoUnsafe};
+        threaded::Choice c = threaded::choose(opts.threaded_rendering, cores, unsafe != nullptr);
+        if (threaded::auto_picked(c) && !pools_mirrored()) {
+            c = threaded::Choice{false, false, threaded::Why::AutoUnsafe};
             unsafe = "the buffer pools have no mirrors";
         }
-        switch (c.why) {
-        case threaded::Why::On: logf("vk: Threaded rendering: On (the render thread and the recorder thread)"); break;
-        case threaded::Why::Off: logf("vk: Threaded rendering: Off"); break;
-        case threaded::Why::AutoGate:
-            logf("vk: Threaded rendering: Auto: off (Auto is turned off in this build; %u logical processors, its rule is on "
-                 "from %u)", cpus, threaded::kAutoCpus);
-            break;
-        case threaded::Why::AutoUnsafe: logf("vk: Threaded rendering: Auto: off (not safe on this run: %s)", unsafe); break;
-        case threaded::Why::AutoFewCpus:
-            logf("vk: Threaded rendering: Auto: off (%u logical processors, on from %u)", cpus, threaded::kAutoCpus);
-            break;
-        case threaded::Why::AutoCpus:
-            logf("vk: Threaded rendering: Auto: on, the render thread and the recorder thread (%u logical processors)", cpus);
-            break;
-        }
-        return c.on;
+        char line[256];
+        threaded::describe(line, sizeof line, c, cores, cpus, unsafe);
+        logf("vk: Threaded rendering: %s", line);
+        return c;
     }();
-    return on;
+    return choice;
 }
+bool menu_render_thread() { return threaded_choice().render_thread; }
+bool menu_recorder_thread() { return threaded_choice().recorder_thread; }
 bool intel_compiles_side_by_side() {   // (RX_VK_NO_INTEL_SERIAL in the row: menu_init. Asked once the device is made)
     return intel_side_by_side_chosen(opts.intel_compiles, dev.props.deviceID, dev.props.driverVersion);
+}
+// (the shader preparation's graphics builds: Auto is side by side there from driver 101.9175 too, intel_compiles.h)
+bool intel_prepare_side_by_side() {
+    return intel_prepare_side_by_side_chosen(opts.intel_compiles, dev.props.deviceID, dev.props.driverVersion);
 }
 // (Intel's Windows driver only, where the row shows: Mesa's ANV ignores DISABLE_OPTIMIZATION, same instructions, spills and
 // compile time on an Iris Xe, its slow part register allocation at SIMD32)
@@ -6479,6 +6624,8 @@ void menu_store_screenshot(std::vector<uint8_t>&& rgba, uint32_t w, uint32_t h) 
     }).detach();
 }
 int menu_take_cheat_action() { return cheat_action.exchange(0, std::memory_order_relaxed); }
+// (hookshot) what plays the controller used last, as the host wrote it back (menu_option_set)
+int menu_vibration_status_option() { return vibration_status_cache.load(std::memory_order_relaxed); }
 
 void menu_note_present_sizes(uint32_t picture_w, uint32_t picture_h, uint32_t window_w, uint32_t window_h) {
     const auto c = [](uint32_t v) { return (uint64_t)std::min(v, 0xffffu); };
@@ -6622,6 +6769,10 @@ void menu_option_set(int id, int value) {
             int expected = value ? 0 : 1;
             player_flight.compare_exchange_strong(expected, value != 0, std::memory_order_relaxed);
         }
+        return;
+    }
+    if (id == HOS_OPT_VIBRATION_STATUS) {   // (hookshot: what plays the controller used last, host/pad_sdl.c)
+        vibration_status_cache.store(value, std::memory_order_relaxed);
         return;
     }
     if (id != 7) return;
@@ -7599,6 +7750,10 @@ void menu_tick() {
             else if (press[7] && is_laptop_row(r)) weak_laptop_apply(), press[7] = false, changed = true;
             else if (press[7] && &r == &rows[kBugReportRow]) bug_report_save(), press[7] = false, changed = true;
             else if (const FieldRow* f = press[7] ? field_row(r) : nullptr) edit_start(*f->field, f->apply), changed = true;   // (hookshot)
+            else if (press[7] && is_vibration_test_row(r)) {   // (hookshot: Test vibration, before the page branch below)
+                if (host && host->version >= 33 && host->rumble_test) host->rumble_test();
+                press[7] = false, changed = true;
+            }
             else if (press[7] && !r.value && can_bind()) page = 1, csel = 0, ccol = menu_hit::kCtlPrimary, changed = true;
             {   // (a scan ends by itself: its line drawn again, and the tag it saved in the row's list)
                 static int scan_was = 0;
@@ -7660,8 +7815,8 @@ void menu_tick() {
     }
 }
 
-/// (hookshot) Once a present: the Rumble strength row changed with the menu open, and the new strength is felt at once, a
-/// short rumble, which also shows that the controller rumbles (Off is silent). Whatever changed it: the keys, the mouse
+/// (hookshot) Once a present: the Vibration strength row changed with the menu open, and the new strength is felt at once,
+/// a short buzz, which also shows that the controller vibrates. Whatever changed it: the keys, the mouse
 void menu_rumble_tick() {
     static int was = -1;
     if (was >= 0 && opts.rumble != was && menu_is_open() && host && host->version >= 33 && host->rumble_test) host->rumble_test();

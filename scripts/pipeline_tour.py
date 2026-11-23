@@ -40,7 +40,8 @@ reads that file every 30 ms). Each step has a limit: a step that does not happen
 --ini run it under other settings (RX_VK_FORCE_MESH_FALLBACK=1, dlss=0, hdr=1, HOS_HANDHELD=1); the options file is restored.
 --window shows it in a window instead.
 
-tour: the parts one after another, one game at a time, in a reflinked copy of the game folder, in games of --chunk stops (a
+tour: the parts one after another, one game at a time, in a copy of the game folder (reflinked, else romfs/ hard-linked and the
+rest copied), in games of --chunk stops (a
 fresh game each), at nice 19 on --cpus, each under the memory guard (MEM: it waits for memory before a game, and ends a game that
 holds too much or leaves the machine too little, the next game going on from there; on Linux the game runs in a systemd scope
 with a MemoryMax); merged (--compare-to <list>: what the merged list lacks of an older one); --publish writes the repository's
@@ -1438,8 +1439,78 @@ def run_child(cmd, grace=120, popen=subprocess.Popen):
         raise
 
 
+COPY_SPARE = 2 << 30   # (free space kept beside a linked copy's real files: the runs' caches grow in it)
+
+
+def tree_bytes(top, skip=()):
+    """The bytes of the files under top, the entries named in skip left out (links not followed)"""
+    total = 0
+    for name in os.listdir(top):
+        if name in skip:
+            continue
+        p = os.path.join(top, name)
+        if os.path.isdir(p) and not os.path.islink(p):
+            for d, _, fs in os.walk(p):
+                total += sum(os.lstat(os.path.join(d, f)).st_size for f in fs)
+        else:
+            total += os.lstat(p).st_size
+    return total
+
+
+def romfs_stamp(romfs):
+    """Each file under romfs/: its size, change of content time and inode, to tell after a tour that none was written"""
+    out = {}
+    for d, _, fs in os.walk(romfs):
+        for f in fs:
+            s = os.lstat(os.path.join(d, f))
+            out[os.path.relpath(os.path.join(d, f), romfs)] = (s.st_size, s.st_mtime_ns, s.st_ino)
+    return out
+
+
+def copy_game(game, copy):
+    """The tour's copy of the game folder. Reflinked where the drive can (btrfs, XFS): None. Elsewhere (ext4) romfs/ is
+    hard-linked, as scripts/dev_packs.py's runtimes have it (the game mounts it read-only, host/nn_fs.c), and the rest is
+    copied: cache/ is written in place (the program cache appends, vk_progcache.cpp), the options file is rewritten, and bin/
+    is where the game finds its folder (/proc/self/exe), so never a link out of the copy. Returns romfs/'s stamp then, which
+    romfs_changed checks after the tour. Refused when romfs/ is not a folder on the copy's drive, or the drive lacks room."""
+    if not subprocess.run(["cp", "-a", "--reflink=always", game, copy], stderr=subprocess.DEVNULL).returncode:
+        return None
+    shutil.rmtree(copy, ignore_errors=True)
+    romfs, parent = os.path.join(game, "romfs"), os.path.dirname(copy)
+    if os.path.islink(romfs) or not os.path.isdir(romfs) or os.stat(romfs).st_dev != os.stat(parent).st_dev:
+        raise SystemExit("pipeline_tour: %s cannot be reflinked here, and its romfs/ is not a folder on the drive of %s to "
+                         "hard-link: put the game folder on one drive, or on btrfs or XFS" % (game, parent))
+    need, free = tree_bytes(game, skip=("romfs",)), shutil.disk_usage(parent).free
+    if need + COPY_SPARE > free:
+        raise SystemExit("pipeline_tour: copying %s besides its romfs/ needs %.1f GB and %.1f GB more for the runs; %.1f GB "
+                         "free" % (game, need / 2 ** 30, COPY_SPARE / 2 ** 30, free / 2 ** 30))
+    print("tour: no reflinks on this drive: %s gets romfs/ hard-linked and %.1f GB copied" % (copy, need / 2 ** 30), flush=True)
+    os.mkdir(copy)
+    rc = subprocess.run(["cp", "-al", romfs, copy]).returncode
+    for name in sorted(os.listdir(game)):
+        if name != "romfs" and not rc:
+            rc = subprocess.run(["cp", "-a", "--reflink=auto", os.path.join(game, name), copy]).returncode
+    if rc:
+        shutil.rmtree(copy, ignore_errors=True)
+        raise SystemExit("pipeline_tour: the copy of %s failed" % game)
+    shutil.copystat(game, copy)
+    return romfs_stamp(os.path.join(copy, "romfs"))
+
+
+def romfs_changed(copy, seal):
+    """Whether a hard-linked romfs/ was written during the tour (it is the game folder's own as well): the files that differ"""
+    if seal is None or not os.path.isdir(os.path.join(copy, "romfs")):
+        return []
+    now = romfs_stamp(os.path.join(copy, "romfs"))
+    changed = sorted(k for k in set(seal) | set(now) if seal.get(k) != now.get(k))
+    if changed:
+        print("tour: romfs/ changed during the tour, in the game folder too (it is hard-linked): %s" % ", ".join(changed[:20]),
+              flush=True)
+    return changed
+
+
 def tour(args):
-    """The parts one after another (one game at a time: one game can hold 14 GB), each in a reflinked copy of the game folder
+    """The parts one after another (one game at a time: one game can hold 14 GB), each in a copy of the game folder (copy_game)
     and in games of --chunk stops, under the memory guard; then merged"""
     a = actions()
     parts = args.parts.split(",")
@@ -1461,10 +1532,7 @@ def tour(args):
     if os.path.exists(copy):   # (an earlier tour's, kept or cut short: maybe of another build, maybe with its files still aside)
         raise SystemExit("pipeline_tour: %s exists (an earlier tour's copy): remove it, and the tour copies the game folder again"
                          % copy)
-    if subprocess.run(["cp", "-a", "--reflink=always", os.path.abspath(args.game), copy]).returncode:
-        shutil.rmtree(copy, ignore_errors=True)
-        raise SystemExit("pipeline_tour: the game folder could not be copied with --reflink=always (a copy-on-write copy, on btrfs "
-                         "or XFS): put it on such a drive, as a full copy of the game per tour is not made")
+    seal = copy_game(os.path.abspath(args.game), copy)
     results = []
 
     def start_for(part):
@@ -1489,9 +1557,10 @@ def tour(args):
             if runs and runs[-1][1] == 3:
                 break   # (no memory: the tour ends here, with what it has merged)
     finally:
+        changed = romfs_changed(copy, seal)
         if not args.keep:
             shutil.rmtree(copy, ignore_errors=True)
-    rc = 0 if all(code in (0, 4) for _, _, code in results) else 1
+    rc = 0 if all(code in (0, 4) for _, _, code in results) and not changed else 1
     order = sorted(results, key=lambda r: (parts.index(r[0]), r[1]))
     have = [os.path.join(d, "states.bin") for _, d, _ in order if os.path.exists(os.path.join(d, "states.bin"))]
     merged = os.path.join(out, "%s.bin" % args.name)

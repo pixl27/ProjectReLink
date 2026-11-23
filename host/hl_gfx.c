@@ -56,9 +56,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#define HL_GFX_DEFAULT HL_GFX_OFF   /* (off by default here: HL_GFX=1 on; the fork had HL_GFX_SHELL) */   /* (validated in the three scenes, check and shots clean: gfx-record-job.md section 7) */
+#define HL_GFX_DEFAULT HL_GFX_SHELL   /* (on by default, as in the fork; =0 off) */   /* (validated in the three scenes, check and shots clean: gfx-record-job.md section 7) */
 #define HL_RECORD_PASS 0x806602e0ULL   /* (hl::bridge::kRecordPass: hl_gfx_on checks the two agree) */
-#define HL_GFX_STATE_DEFAULT 0   /* (off by default here: =1 on) */ /* the fork: (validated 2026-11-13 on both PCs: the exact check at 0 mismatches over 4.2 M NVN calls in three scenes, native runs clean) */
+#define HL_GFX_STATE_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ /* the fork: (validated 2026-11-13 on both PCs: the exact check at 0 mismatches over 4.2 M NVN calls in three scenes, native runs clean) */
 #define HL_STATE_FN 0x80077d60ULL      /* (hl::bridge::kApplyRenderState: state_init checks the two agree) */
 
 #define HL_VAR_PREPARE_RETURN 0x8008d8ecULL   /* the key-0xa0 function's call of the preparation (hl_gfx_var_prepare_return) */
@@ -562,7 +562,7 @@ __attribute__((constructor)) static void hl_gfx_state_gate(void) { hl_gate_on_80
 
 /* ---- the sub-mesh submission ---- */
 
-#define HL_GFX_DRAW_DEFAULT 0   /* (off by default here: =1 on) */ /* the fork: (the check and the validation clean in the three scenes on both PCs: gfx-record-job.md section 9) */
+#define HL_GFX_DRAW_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ /* the fork: (the check and the validation clean in the three scenes on both PCs: gfx-record-job.md section 9) */
 #define HL_DRAW_FN 0x80078fc0ULL      /* (hl_gfx_draw_address: draw_init checks the two agree) */
 #define HL_DRAW_PREPARE 0x8008fc00ULL
 
@@ -661,8 +661,8 @@ __attribute__((constructor)) static void hl_gfx_draw_gate(void) { hl_gate_on_800
 
 /* ---- the shared preparation ---- */
 
-#define HL_GFX_PREP_DEFAULT 0   /* (off by default here: =1 on) */ /* the fork: (the check at 0 mismatches in Castle Town on the main PC and in seven zones of the save library on the PC 3050, shots right: gfx-record-job.md section 10) */
-#define HL_GFX_PREP_STATE_DEFAULT 0   /* (off by default here: =1 on) */ /* the fork: (the state step: the check at 0 mismatches in seven zones on the PC 3050, shots right; not run on the main PC) */
+#define HL_GFX_PREP_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ /* the fork: (the check at 0 mismatches in Castle Town on the main PC and in seven zones of the save library on the PC 3050, shots right: gfx-record-job.md section 10) */
+#define HL_GFX_PREP_STATE_DEFAULT 1   /* (on by default, as in the fork; =0 off) */ /* the fork: (the state step: the check at 0 mismatches in seven zones on the PC 3050, shots right; not run on the main PC) */
 
 static int prep_check;
 static volatile LONG prep_ready;          /* as state_ready */
