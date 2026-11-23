@@ -56,7 +56,7 @@ def check_source():
           # (and what the other rules ask on their own is kept from before the hold's lines, the 97% rule's with it, for the
           # pass's third tier: a texture unused for the eviction's own time goes for that part)
           "uint64_t rule_budget = budget;", "rule_budget = std::min(rule_budget, total_bytes > over ? total_bytes - over : 0);",
-          "const uint64_t size_budget = budget;",
+          "uint64_t size_budget = budget;",
           "const uint64_t rule_to = vram_compact::rule_target(total_bytes, size_budget, rule_budget);",
           "if (to == UINT64_MAX || vram_compact::hold_met(total_bytes, hold_live, hold_dead, to)) continue;",
           # (the reserve: a lower line that sets the budget too, the hold's own line kept for the textures not long unused;

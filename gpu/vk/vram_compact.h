@@ -17,6 +17,19 @@ namespace vram_compact {
 /// Global minimum graphics memory requirement for the game (~8 GB, matching Switch 2 UMA footprint).
 inline constexpr uint64_t GLOBAL_MIN_GRAPHICS_REQ = 8192ull << 20;
 
+/// A small shared-memory retention floor for already-resident Vega textures.
+inline uint64_t vega_retention_floor(uint64_t resident, uint64_t physical_free, uint64_t commit_free,
+                                     uint64_t commit_reserve) {
+    constexpr uint64_t physical_reserve = 1024ull << 20;
+    constexpr uint64_t margin = 256ull << 20;
+    constexpr uint64_t cap = 768ull << 20;
+    commit_reserve = std::max<uint64_t>(commit_reserve, 2560ull << 20);
+    if (physical_free <= physical_reserve || commit_free <= commit_reserve) return 0;
+    const uint64_t commit_room = commit_free - commit_reserve;
+    if (commit_room <= margin) return 0;
+    return std::min({resident, cap, physical_free - physical_reserve, commit_room - margin});
+}
+
 /// Whether the textures are compacted, by RX_VK_COMPACT as the environment has it: on when it is not set, off for 0 (or empty).
 /// It was opt-in (RX_VK_COMPACT=1) while its hold could let go of textures in use; that is what hold_keeps and hold_met are for
 inline bool enabled(const char* env) { return !env || atoi(env) != 0; }

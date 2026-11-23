@@ -2897,7 +2897,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                 if (tex.astc) {
                     // Large CPU-decoded levels blocked the Vega replay thread for over 100 ms each.
                     // Both entry points decode with the same block routine and write identical RGBA8.
-                    constexpr uint64_t parallel_astc_min_bytes = 256 * 1024;
+                    constexpr uint64_t parallel_astc_min_bytes = 64 * 1024;
                     const auto decode = block_bytes >= parallel_astc_min_bytes &&
                                         policy_rule::windows_vega_compat(dev.facts)
                                             ? Tegra::Texture::ASTC::Decompress
@@ -6665,7 +6665,7 @@ void texture_frame(uint64_t completed) {
     const uint64_t active_floor = known ? vram_compact::floor_within(dynamic_floor, used, allowed) : 0;
     pool_pressure = !known ? 0 : (used > allowed / 100 * 97) ? 2 : (pressure > allowed / 10 * 9) ? 1 : 0;   // (target pool: halve at >90%, flush at >97%)
     compact.pressed = known && vram_compact::pressed(used, allowed);   // (hookshot, RX_VK_COMPACT: by the driver's own count)
-    const uint64_t size_budget = budget;   // (the budget as a size, before the rules that take an excess off it: rule_target)
+    uint64_t size_budget = budget;   // (the budget as a size, before the rules that take an excess off it: rule_target)
     ahead_budget_bytes = size_budget;      // (and what textures prepared ahead stay under: texture_ahead_run)
     if (known && pressure > allowed / 10 * 9) {
         const uint64_t over = pressure - allowed / 10 * 9;
@@ -6720,6 +6720,24 @@ void texture_frame(uint64_t completed) {
         budget = std::min(budget, cut);
         rule_budget = std::min(rule_budget, cut);
     }
+#ifdef _WIN32
+    // The Vega local heap is much smaller than its shared memory. Keep some
+    // existing textures when Windows has room, so short turns do not reload them.
+    // Driver refusals and the commit rule below can still cut the budget.
+    if (known && allowed && allowed < (1024ull << 20) &&
+        policy_rule::windows_vega_compat(dev.facts) && !getenv("RX_VK_VRAM_MB")) {
+        MEMORYSTATUSEX memory{sizeof(memory)};
+        if (GlobalMemoryStatusEx(&memory)) {
+            const uint64_t retained = vram_compact::vega_retention_floor(
+                total_bytes, memory.ullAvailPhys, memory.ullAvailPageFile, commit_reserve());
+            size_budget = std::max(size_budget, retained);
+            rule_budget = std::max(rule_budget, retained);
+            budget = std::max(budget, retained);
+            if (evict_to) evict_to = std::max(evict_to, retained);
+            if (hold_to) hold_to = std::max(hold_to, retained);
+        }
+    }
+#endif
     // (hookshot) and pipelines the driver refused for want of memory since the last look: what vram_compact::short_excess asks,
     // whatever the count said
     static int64_t refusals_seen = 0;

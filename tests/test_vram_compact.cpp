@@ -9,6 +9,13 @@
 int main() {
     using namespace vram_compact;
     const uint64_t MB = 1ull << 20;
+    CHECK(vega_retention_floor(1200 * MB, 900 * MB, 4000 * MB, 2560 * MB) == 0);
+    CHECK(vega_retention_floor(1200 * MB, 3200 * MB, 2700 * MB, 2560 * MB) == 0);
+    CHECK(vega_retention_floor(1200 * MB, 3200 * MB, 2000 * MB, 0) == 0);
+    CHECK(vega_retention_floor(1200 * MB, 1600 * MB, 4500 * MB, 2560 * MB) == 576 * MB);
+    CHECK(vega_retention_floor(1200 * MB, 3200 * MB, 3100 * MB, 2560 * MB) == 284 * MB);
+    CHECK(vega_retention_floor(420 * MB, 3200 * MB, 5000 * MB, 2560 * MB) == 420 * MB);
+    CHECK(vega_retention_floor(1200 * MB, 3200 * MB, 5000 * MB, 2560 * MB) == 768 * MB);
     // on unless RX_VK_COMPACT says 0: not set is on (the default), and 1 still is
     CHECK(enabled(nullptr));
     CHECK(enabled("1") && enabled("2"));
