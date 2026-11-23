@@ -1170,7 +1170,8 @@ bool fault_retry_on() {
     return on;
 }
 /// (relink) A compute pipeline the driver's compiler fails on (AMD's, -13, on some programs) is built again without its
-/// optimizer, as a graphics one is (build_graphics): run a little slower rather than left out. Not one it faulted in (-77)
+/// optimizer, as a graphics one is (build_graphics): run a little slower rather than left out. Not one it faulted in (-77),
+/// unless on AMD's proprietary driver where -77 is a compiler hang in the optimised path; without the optimizer it succeeds.
 VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
     if (!cache && (cache = compute_cache()) != VK_NULL_HANDLE) ccache_built++;   // (a lean start: the compute pipelines' own cache)
     const VkResult r = guarded_compute_once(cache, ci, pl);
@@ -1178,6 +1179,21 @@ VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInf
         (ci->flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT))
         return r;
     if ((int)r == -77 && !fault_retry_on()) {
+        // (amd-fix, grass flicker) On AMD's proprietary driver -77 (VK_ERROR_INITIALIZATION_FAILED) is a compiler hang
+        // inside the optimised path, not a true GPU fault; the unoptimised build succeeds and produces working pipelines
+        // (programs 6eaa646d07ea4e43 and 9ef43d77b041f01d on RDNA 2 / RX 6600 family). Retry without the optimizer once
+        // before blacklisting. RX_VK_FAULT_RETRY=1 already covers this; this makes it implicit on AMD proprietary.
+        if (driver_id_once() == VK_DRIVER_ID_AMD_PROPRIETARY) {
+            VkComputePipelineCreateInfo again = *ci;
+            again.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+            *pl = VK_NULL_HANDLE;
+            const VkResult second = guarded_compute_once(cache, &again, pl);
+            static std::atomic<int> told_amd{0};
+            if (told_amd++ < 20)
+                logf("vk: compute pipeline faulted (-77) with optimizer on AMD proprietary: %s without it",
+                     second == VK_SUCCESS ? "made" : "not made either");
+            if (second == VK_SUCCESS) return second;
+        }
         static std::atomic<int> told{0};
         if (told++ < 20) logf("vk: the driver faulted compiling a compute pipeline: that one is left out, and not built again without the optimizer");
         return r;
@@ -2401,9 +2417,12 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
         // among them; 5fa56485a6b07619 and 6eaa646d07ea4e43 on an RX 6600 XT since 0.7.8) builds it again without its
         // optimizer, which it does: the draws are then drawn, a little slower, instead of left out. Not for the memory errors,
         // which the optimizer does not cause, nor for a fault (fault_retry_on: the second build waited in the driver for
-        // good): a program the driver faulted in is kept out of it
+        // good): a program the driver faulted in is kept out of it.
+        // (amd-fix, grass flicker) AMD's proprietary driver also returns -77 (kDriverFault) for some graphics pipelines in
+        // the optimised path (programs 6eaa646d07ea4e43 and 9ef43d77b041f01d); retry those without the optimizer too.
+        const bool amd_prop_retry = (int)r == -77 && driver_id_once() == VK_DRIVER_ID_AMD_PROPRIETARY;
         if (r != VK_SUCCESS && r != VK_ERROR_OUT_OF_HOST_MEMORY && r != VK_ERROR_OUT_OF_DEVICE_MEMORY &&
-            (r != kDriverFault || fault_retry_on()) && !(ci.flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT)) {
+            (r != kDriverFault || fault_retry_on() || amd_prop_retry) && !(ci.flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT)) {
             const VkResult first = r;
             ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
             pl = VK_NULL_HANDLE;
@@ -3358,7 +3377,10 @@ void build_descriptors(const NvnState& s, const Program& p) {
                 uint64_t n = std::max<uint64_t>(((size + (addr - base)) + 3) & ~3ull, 16);
                 {   // (relink, RX_VK_SSBO_STRETCH=1: a read-only buffer bound to its pool's end, up to 64 MB. Lichii bf3f395c9: the grass's
                     // task and mesh programs read records 12-18 MB past a base whose size word said less, read 0 and culled every blade)
-                    static const bool stretch = getenv("RX_VK_SSBO_STRETCH") != nullptr;
+                    // (amd-fix, grass flicker) Default on for read-only single-binding SSBOs in compute: the foliage culling
+                    // programs reliably over-read their declared sizes, zeroing the culled-out geometry. RX_VK_NO_SSBO_STRETCH=1
+                    // restores the old opt-in behaviour (RX_VK_SSBO_STRETCH=1).
+                    static const bool stretch = !getenv("RX_VK_NO_SSBO_STRETCH") || getenv("RX_VK_SSBO_STRETCH") != nullptr;
                     if (stretch && !d.is_written && addr && d.count == 1)
                         if (const uint64_t end = gpu_pool_end(base); end > base + n)
                             n = std::max<uint64_t>(n, std::min<uint64_t>(end - base, 64ull << 20) & ~uint64_t{3});
@@ -10049,7 +10071,10 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
     dclock.t_pipe = slow_dispatch_timing() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     end_pass(cmd);
     static const bool no_grid_patch = getenv("RX_VK_NO_GRID_PATCH") != nullptr;
-    grid_patch_want = indirect && !no_grid_patch, grid_patch_at = UINT64_MAX;
+    // (amd-fix, grass flicker) OoT's foliage culling chains write the next dispatch's group counts on the GPU within the
+    // same frame; applying grid_patch only to indirect dispatches missed direct ones whose counts were still GPU-written,
+    // leaving the culling program reading stale (last-frame) bounds and flickering grass in/out each frame.
+    grid_patch_want = !no_grid_patch, grid_patch_at = UINT64_MAX;
     static const bool capture_compute = !getenv("RX_VK_CAPTURE_COMPUTE") || atoi(getenv("RX_VK_CAPTURE_COMPUTE")) != 0;
     // (RX_VK_CAPTURE_COMPUTE_MAX=<bytes>: the largest of them noted. Every one up to 64 KB was 140 to 220 ranges over 22 MB in
     // the village, whose pools' mirror syncs then took 2.68 ms a frame for 0.65: 52.9 -> 46.9 frames a second where the frame
