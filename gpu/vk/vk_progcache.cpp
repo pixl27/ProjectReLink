@@ -1265,6 +1265,17 @@ bool segment_heap() {
     return false;
 #endif
 }
+bool async_loads_on() {
+    static const bool on = [] {
+        if (const char* override = getenv("RX_VK_ASYNC_LOAD"))
+            return atoi(override) != 0;
+        // With asynchronous cache reads on this Windows Vega iGPU, the Water Temple's
+        // hearts, item icons and magic bar stayed blank after the scene loaded.
+        return !policy_rule::windows_vega_compat(dev.facts);
+    }();
+    return on;
+}
+
 unsigned prepare_cpus() {
     uint64_t avail_mb = 0;
 #ifdef _WIN32

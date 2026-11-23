@@ -57,7 +57,17 @@ thread_local bool upload_defer_ok = true;
 struct Held { uint32_t w, h, layers; int nvn; };
 struct { int64_t deferred = 0; std::unordered_map<uint32_t, Held> held; } burst;
 std::mutex burst_mu;
-int64_t steady_ns() { return 123; }
+int64_t now_ns = 123;
+int64_t steady_ns() { return now_ns; }
+struct DeviceFacts {
+    bool windows = false;
+    uint32_t device_id = 0;
+    bool amd() const { return device_id != 0; }
+};
+struct { DeviceFacts facts; } dev;
+namespace policy_rule {
+bool windows_vega_compat(const DeviceFacts& f) { return f.windows && f.amd() && f.device_id == 0x15E7; }
+}
 static bool env_on(const char* n) { const char* e = std::getenv(n); return e && *e && std::atoi(e) != 0; }
 CUT_DEFER
 CUT_PCT
@@ -91,6 +101,14 @@ int main(int argc, char** argv) {
         upload_defer(w), upload_defer(w);   // (two lookups in one present: one texture, held back since this present)
         expect(w.defer_frame == frame_no && w.defer_asks == 2 && w.defer_ns == 123, true, "the held texture's age noted once");
         expect(st_deferred_tex_frame.load() >= 1 && burst.held.count(w.id) == 1, true, "the distinct textures counted");
+        ++frame_no;
+        tl_upload_frame = frame_no;
+        now_ns += 250000000;
+        expect(upload_defer(w), true, "ordinary hardware still uses the upload budget");
+        dev.facts = {true, 0x15E7};
+        expect(upload_defer(w), false, "a held Vega texture gets its upload after 250 ms");
+        expect(held(45, 45), true, "new Vega textures still get the normal budget");
+
         std::vector<uint32_t> v{9, 1, 5, 3, 7, 2, 8, 4, 6, 10};
         expect(defer_pct(v, 1.0) == 10 && defer_pct(v, 0.95) == 10 && defer_pct(v, 0.5) == 6, true, "the percentiles");
         std::vector<float> none;

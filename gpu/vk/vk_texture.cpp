@@ -2895,9 +2895,16 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - u0).count();
                 }
                 if (tex.astc) {
-                    Tegra::Texture::ASTC::DecompressSerial(std::span<const uint8_t>(blocks, block_bytes), g.w, px_h, g.d,
-                                                           (u32)tex.block_w, (u32)tex.block_h,
-                                                           std::span<uint8_t>(out, (size_t)g.w * px_h * g.d * 4));
+                    // Large CPU-decoded levels blocked the Vega replay thread for over 100 ms each.
+                    // Both entry points decode with the same block routine and write identical RGBA8.
+                    constexpr uint64_t parallel_astc_min_bytes = 256 * 1024;
+                    const auto decode = block_bytes >= parallel_astc_min_bytes &&
+                                        policy_rule::windows_vega_compat(dev.facts)
+                                            ? Tegra::Texture::ASTC::Decompress
+                                            : Tegra::Texture::ASTC::DecompressSerial;
+                    decode(std::span<const uint8_t>(blocks, block_bytes), g.w, px_h, g.d,
+                           (u32)tex.block_w, (u32)tex.block_h,
+                           std::span<uint8_t>(out, (size_t)g.w * px_h * g.d * 4));
                 } else if (widen_from) {
                     widen_rows(out, blocks, (size_t)g.tw * th * g.td, src_bpb, out_bpb, widen_alpha(src_vf));
                 }
@@ -4243,6 +4250,11 @@ bool upload_defer(Texture& tex) {
     if (!budget_ns || !upload_defer_ok || tex.uploaded || !tex.astc || tex.gpu_written) return false;
     const int64_t spent = summed ? frame_upload_ns.load(std::memory_order_relaxed) : tl_upload_frame == frame_no ? tl_upload_ns : 0;
     if (spent < budget_ns) return false;
+    // On Windows Vega, repeatedly deferring CPU-decoded textures kept black
+    // placeholders visible for seconds during area transitions.
+    constexpr int64_t max_vega_deferral_ns = 250'000'000;
+    if (tex.defer_frame && policy_rule::windows_vega_compat(dev.facts) &&
+        steady_ns() - tex.defer_ns >= max_vega_deferral_ns) return false;
     st_deferred.fetch_add(1, std::memory_order_relaxed), st_deferred_frame.fetch_add(1, std::memory_order_relaxed);
     tex.defer_asks++;
     if (tex.defer_seen != frame_no) {   // (the deferral's age: the distinct textures, and when each was first held back)

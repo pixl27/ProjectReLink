@@ -31,9 +31,12 @@ def rule():
 
 
 def shader_rule():
-    source = (ROOT / "gpu/vk/vk_shader.cpp").read_text(encoding="utf-8")
+    source = (ROOT / "gpu/vk/vk_progcache.cpp").read_text(encoding="utf-8")
     at = source.index("bool async_loads_on() {")
-    return source[at:source.index("\n}", at) + 2]
+    policy = (ROOT / "gpu/vk/device_policy.h").read_text(encoding="utf-8")
+    start = policy.index("inline bool windows_vega_compat(")
+    helper = policy[start:policy.index("\n}", start) + 2]
+    return "namespace policy_rule {\n" + helper + "\n}\n" + source[at:source.index("\n}", at) + 2]
 
 
 SOURCE = """

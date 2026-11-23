@@ -100,6 +100,11 @@ struct DeviceFacts {
 // the facts at the start; a site that has to ask later (the allowance at its first call) calls the rule itself.
 namespace policy_rule {
 
+inline bool windows_vega_compat(const DeviceFacts& facts) {
+    return facts.windows && facts.amd() && facts.device_id == 0x15E7;
+}
+
+
 constexpr uint64_t kMB = 1ull << 20, kGB = 1ull << 30;
 
 /// RX_VK_NATIVE_FADD unset: the drivers the GPU's own float add was run on (vk_main.cpp native_fadd_wanted has the runs).
