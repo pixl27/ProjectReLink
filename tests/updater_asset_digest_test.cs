@@ -365,6 +365,7 @@ namespace HookshotBuilder
     sealed class Tools
     {
         public string Version => "v0.0.0";
+        public bool RedTunicRelease => false;
         public static Tools Find() => new();
     }
 

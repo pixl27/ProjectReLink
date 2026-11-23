@@ -24,7 +24,7 @@ def function(source, marker):
 
 
 def fixture(source):
-    condition = re.search(r'if \((GetFileAttributesW\(marker\).*?)\) \{', source).group(1)
+    condition = re.search(r'if \((repair \|\| GetFileAttributesW\(marker\).*?)\) \{', source).group(1)
     start = source.index("        wchar_t staged_exe[MAX_PATH];")
     end = source.index("        write_parts(install, parts, nparts);", start) + len("        write_parts(install, parts, nparts);")
     stage = source[start:end]
@@ -55,7 +55,7 @@ static void write_parts(const wchar_t *, const Part *, int) { receipts++; }
 '''
     code += function(source, "static int builder_ready(") + '\n'
     code += function(source, "static int home_path(") + '\n'
-    code += '\nstatic int admission(const wchar_t *exe, const wchar_t *marker) { return (' + condition + '); }\n'
+    code += '\nstatic int admission(const wchar_t *exe, const wchar_t *marker, int repair) { return (' + condition + '); }\n'
     code += r'''
 static int stage(const wchar_t *folder) {
     wchar_t install[MAX_PATH], final_dir[MAX_PATH], marker[MAX_PATH];
@@ -71,7 +71,7 @@ int main(void) {
     int argc; wchar_t **argv=CommandLineToArgvW(GetCommandLineW(),&argc);
     if(!argv || argc!=5) return 2;
     swprintf(g_home.root,MAX_PATH,L"%ls\\HookshotBuilder",argv[1]);
-    int reuse=admission(argv[2],argv[3]);
+    int reuse=admission(argv[2],argv[3],0);
     int published=stage(argv[4]);
     if(published && (!wcsstr(last_error,L"antivirus") || !wcsstr(last_error,argv[4]))) return 5;
     printf("%d %d %d %d %d\n",reuse,published,moves,markers,receipts);

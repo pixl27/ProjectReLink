@@ -20,12 +20,12 @@ RUNNER = (ROOT / "builder" / "HookshotBuilder" / "Runner.cs").read_text(encoding
 class WindowsBuilderTests(unittest.TestCase):
     def test_the_package_names_its_own_python_whenever_it_has_the_folder(self):
         find = RUNNER[RUNNER.index("public static Tools? Find()"):RUNNER.index("static (string Exe, string[]? Args) PythonOnPath()")]
-        self.assertIn('return new Tools(bundled, File.Exists(py) || Directory.Exists(Path.Combine(bundled, "python")) ? py : "python");',
+        self.assertIn('return new Tools(bundled, HasRedTunicMarker(bundled) || File.Exists(py) || Directory.Exists(Path.Combine(bundled, "python")) ? py : "python");',
                       find)
         self.assertNotIn('File.Exists(py) ? py : "python"', RUNNER)
 
     def test_missing_is_the_file_gone_with_its_folder_there(self):
-        self.assertIn('public bool OwnPythonMissing => !File.Exists(Python) && Directory.Exists(Path.Combine(Root, "python"));',
+        self.assertIn('public bool OwnPythonMissing => !File.Exists(Python) && (RedTunicRelease || Directory.Exists(Path.Combine(Root, "python")));',
                       RUNNER)
         self.assertNotIn('tools.Python == "python"', RUNNER)   # (the old test: never true once the package names its own)
 

@@ -26,7 +26,7 @@ int wmain(int argc, wchar_t **argv) {
     wchar_t volume[MAX_PATH], root[MAX_PATH], exe[MAX_PATH], ordinary[MAX_PATH], cwd[MAX_PATH];
     wchar_t marker[MAX_PATH], moved[MAX_PATH], next[MAX_PATH], normalized[MAX_PATH];
     join(volume, argv[1], L"volume old");
-    join(root, volume, HB_HOME_FOLDER);
+    join(root, volume, L"HookshotBuilder");
     join(exe, root, L"versions\\v-authored\\HookshotBuilder\\HookshotBuilder.exe");
     join(ordinary, argv[1], L"standard");
     join(cwd, argv[1], L"unrelated cwd");
@@ -41,17 +41,17 @@ int wmain(int argc, wchar_t **argv) {
     CHECK(hb_home_mark(root));
     CHECK(hb_home_marked(root) == 1);
     HbHome home;
-    CHECK(hb_home_discover(&home, NULL, exe, ordinary) && home.portable && !wcscmp(home.root, root));
+    CHECK(hb_home_discover(&home, NULL, exe, ordinary, 0) && home.portable && !wcscmp(home.root, root));
     wchar_t original_setup[MAX_PATH]; join(original_setup, volume, L"HookshotBuilder.exe");
-    CHECK(hb_home_discover(&home, NULL, original_setup, ordinary) && home.portable && !wcscmp(home.root, root));
-    CHECK(hb_home_discover(&home, root, exe, ordinary) && home.portable && !wcscmp(home.root, root));
-    CHECK(hb_home_discover(&home, ordinary, exe, ordinary) && !home.portable && !wcscmp(home.root, ordinary));
-    CHECK(!hb_home_discover(&home, L"relative", exe, ordinary) && !home.root[0]);
+    CHECK(hb_home_discover(&home, NULL, original_setup, ordinary, 0) && home.portable && !wcscmp(home.root, root));
+    CHECK(hb_home_discover(&home, root, exe, ordinary, 0) && home.portable && !wcscmp(home.root, root));
+    CHECK(hb_home_discover(&home, ordinary, exe, ordinary, 0) && !home.portable && !wcscmp(home.root, ordinary));
+    CHECK(!hb_home_discover(&home, L"relative", exe, ordinary, 0) && !home.root[0]);
     join(moved, argv[1], L"volume moved");
     CHECK(MoveFileW(volume, moved));
-    join(next, moved, HB_HOME_FOLDER);
+    join(next, moved, L"HookshotBuilder");
     join(exe, next, L"versions\\v-authored\\HookshotBuilder\\HookshotBuilder.exe");
-    CHECK(hb_home_discover(&home, NULL, exe, ordinary) && home.portable && !wcscmp(home.root, next));
+    CHECK(hb_home_discover(&home, NULL, exe, ordinary, 0) && home.portable && !wcscmp(home.root, next));
 
     /* Corrupt a separate owned root; never overwrite the valid native interoperability marker. */
     join(root, argv[1], L"broken");
@@ -59,7 +59,7 @@ int wmain(int argc, wchar_t **argv) {
     const char invalid[] = HB_HOME_MAGIC "\0x";
     CHECK(put(marker, invalid, sizeof invalid - 1));
     CHECK(hb_home_marked(root) == -1 && !hb_home_mark(root));
-    CHECK(!hb_home_discover(&home, root, exe, ordinary) && !home.root[0]);
+    CHECK(!hb_home_discover(&home, root, exe, ordinary, 0) && !home.root[0]);
     const char bom[] = "\xef\xbb\xbf" HB_HOME_MAGIC;
     CHECK(put(marker, bom, sizeof bom - 1) && hb_home_marked(root) == -1);
     char large[4096]; memset(large, 'x', sizeof large);

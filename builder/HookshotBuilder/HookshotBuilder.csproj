@@ -8,10 +8,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>HookshotBuilder</AssemblyName>
     <RootNamespace>HookshotBuilder</RootNamespace>
-    <Version>4.0.2</Version>
+    <Version>4.0.3</Version>
     <Product>Red Tunic Builder</Product>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <AssemblyTitle>Red Tunic Builder</AssemblyTitle>
     <ApplicationIcon>../../assets/red-tunic.ico</ApplicationIcon>
   </PropertyGroup>
 
@@ -27,6 +28,7 @@
   <!-- Inter (SIL Open Font License, Fonts/Inter-LICENSE.txt) and the hookshot, inside the app -->
   <ItemGroup>
     <Resource Include="Fonts\*.ttf" />
+    <Resource Include="../../assets/red-tunic.ico" Link="Images/red-tunic.ico" />
     <Resource Include="../../assets/red-tunic.png" Link="Images/hookshot.png" />
     <None Include="Fonts\Inter-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

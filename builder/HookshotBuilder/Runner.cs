@@ -7,7 +7,8 @@ namespace HookshotBuilder;
 sealed record Tools(string Root, string Python, string[]? PythonArgs = null)
 {
     public const string RedTunicReleases = "https://github.com/spacefarergames/RedTunic/releases";
-    public bool RedTunicRelease => File.Exists(Path.Combine(Root, "red-tunic-release.txt"));
+    public bool RedTunicRelease => HasRedTunicMarker(Root);
+    static bool HasRedTunicMarker(string root) => File.Exists(Path.Combine(root, "red-tunic-release.txt"));
 
     /// The toolchain's switches a game folder's build was made with (BuildRecord.cs): set over the others, so a rebuild is
     /// that build again
@@ -17,7 +18,7 @@ sealed record Tools(string Root, string Python, string[]? PythonArgs = null)
     public string? Version => File.Exists(Path.Combine(Root, "version.txt")) ? File.ReadAllText(Path.Combine(Root, "version.txt")).Trim() : null;
 
     /// The package's own Python is gone: an antivirus took it, most often, after a false alarm on the download
-    public bool OwnPythonMissing => !File.Exists(Python) && Directory.Exists(Path.Combine(Root, "python"));
+    public bool OwnPythonMissing => !File.Exists(Python) && (RedTunicRelease || Directory.Exists(Path.Combine(Root, "python")));
 
     public const string OwnPythonMissingText =
         "The builder's own Python (tools/python/python.exe) is missing. Your antivirus probably removed it: restore it " +
@@ -34,7 +35,7 @@ sealed record Tools(string Root, string Python, string[]? PythonArgs = null)
             // trust with the game files. Its start now fails and says how to get the package's Python back. Only a
             // package with no python folder at all uses the PC's)
             var py = Path.Combine(bundled, "python", "python.exe");
-            return new Tools(bundled, File.Exists(py) || Directory.Exists(Path.Combine(bundled, "python")) ? py : "python");
+            return new Tools(bundled, HasRedTunicMarker(bundled) || File.Exists(py) || Directory.Exists(Path.Combine(bundled, "python")) ? py : "python");
         }
         // (the source tree the app was built in: its builder\ folder holds the app. Not any parent folder with an nx2\
         // folder, such as one another user of the PC made at the drive's root)

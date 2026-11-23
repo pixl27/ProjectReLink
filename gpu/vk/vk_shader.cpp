@@ -1695,7 +1695,14 @@ std::unordered_set<const Program*> stand_ins;
 std::vector<std::unique_ptr<Program>> stand_ins_done;   // (shader_mu: kept, a draw may still hold one)
 std::atomic<int64_t> st_async_loads{0}, st_async_ns{0}, st_async_variants{0};
 bool async_loads_on() {
-    static const bool on = !getenv("RX_VK_ASYNC_LOAD") || atoi(getenv("RX_VK_ASYNC_LOAD")) != 0;
+    static const bool on = [] {
+        if (const char* override = getenv("RX_VK_ASYNC_LOAD"))
+            return atoi(override) != 0;
+        // With asynchronous cache reads on this Windows Vega iGPU, the Water Temple's
+        // hearts, item icons and magic bar stayed blank after the scene loaded.
+        const DeviceFacts& facts = dev.facts;
+        return !(facts.windows && facts.amd() && facts.device_id == 0x15E7);
+    }();
     return on;
 }
 FILE* own_cache_handle() {

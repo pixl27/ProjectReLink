@@ -3496,7 +3496,7 @@ def cli():
                 say("error", drive_error(e))
                 sys.exit(1)
             say("error", "The builder stopped on an error it did not expect: %s: %s. Please send the text under Show details to the "
-                "Hookshot issues page." % (type(e).__name__, str(e)[:300]))
+                "Red Tunic issues page." % (type(e).__name__, str(e)[:300]))
             sys.exit(1)
 
 

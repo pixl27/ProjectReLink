@@ -83,8 +83,8 @@ public partial class MainWindow : Window
         Loaded += (_, _) => Start();
         var tools = Tools.Find();
         ToolsNote.Text = tools != null
-            ? "Nothing else to install: Hookshot's own build tools are here, downloaded and checked by its setup."
-            : "Hookshot's build tools are missing from its folder. Press Build and Hookshot offers to download them again.";
+            ? "The build tools are bundled with Red Tunic Builder."
+            : "The build tools are missing. Extract a fresh Red Tunic Builder ZIP.";
         SetStep(0);
         Refresh();
     }
@@ -212,7 +212,7 @@ public partial class MainWindow : Window
                 break;
             case Mode.UpdateGame:
                 FilesTitle.Text = "Update available";
-                FilesSub.Text = (pinned != null ? $"You chose Hookshot {pinned} in the Version menu." : $"Hookshot {updateTarget} is available.") +
+                FilesSub.Text = (pinned != null ? $"You chose Red Tunic {pinned} in the Version menu." : $"Red Tunic {updateTarget} is available.") +
                                 $" Your game is {game}: Update builds it again from the game files kept in its folder, compiling only what changed.";
                 BuildButton.Content = "Update";
                 break;
@@ -229,13 +229,13 @@ public partial class MainWindow : Window
             case Mode.UpdateBuilder:
                 FilesTitle.Text = "Build your game";
                 FilesSub.Text = pinned != null
-                    ? $"You chose Hookshot {pinned} in the Version menu (this builder is {builder}): install it first, then build."
-                    : $"Hookshot Builder {updateTarget} is available (this one is {builder}): update it first, then build.";
+                    ? $"You chose Red Tunic {pinned} in the Version menu (this builder is {builder}): install it first, then build."
+                    : $"Red Tunic Builder {updateTarget} is available (this one is {builder}): update it first, then build.";
                 BuildButton.Content = "Update builder";
                 break;
             default:
                 FilesTitle.Text = "Build your game";
-                FilesSub.Text = "Pick your game files and where the game goes. Hookshot does the rest, once.";
+                FilesSub.Text = "Pick your game files and where the game goes. Red Tunic Builder does the rest, once.";
                 BuildButton.Content = "Build the game";
                 break;
         }
@@ -274,7 +274,7 @@ public partial class MainWindow : Window
             LaunchUpdate.Visibility = Visibility.Visible;
         }
         else if (game != null && game != updateTarget)
-            LaunchStatus.Text = $"{updateTarget} is out: build this folder again with the Hookshot Builder to get it";
+            LaunchStatus.Text = $"{updateTarget} is out: build this folder again with the Red Tunic Builder to get it";
         else LaunchStatus.Text = tools?.RedTunicRelease == true ? "Matches this Red Tunic Builder"
             : latestTag == null ? "Up to date with this builder (git.notrexed.dev did not answer)" : "Up to date";
     }
@@ -392,7 +392,7 @@ public partial class MainWindow : Window
     /// (going to an older version, from another track: asked first)
     bool OlderOk(string? have) =>
         !Switching || !Updater.Newer(have, updateTarget) ||
-        MessageBox.Show(this, $"{updateTarget} is older than {have}, the version you have now. Install {updateTarget}?", "Hookshot",
+        MessageBox.Show(this, $"{updateTarget} is older than {have}, the version you have now. Install {updateTarget}?", "Red Tunic Builder",
                         MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
 
     void LaunchPlayClick(object sender, RoutedEventArgs e)
@@ -870,7 +870,7 @@ public partial class MainWindow : Window
     {
         if (!File.Exists(System.IO.Path.Combine(x, "main")))
         {
-            MessageBox.Show(this, "That exefs folder has no file named main.", "Hookshot");
+            MessageBox.Show(this, "That exefs folder has no file named main.", "Red Tunic Builder");
             return;
         }
         sourcePicked = true;
@@ -892,7 +892,7 @@ public partial class MainWindow : Window
 
     void BrowseWork(object sender, RoutedEventArgs e)
     {
-        if (PickFolder("Choose where Hookshot keeps its build files") is not { } picked) return;
+        if (PickFolder("Choose where Red Tunic Builder keeps its build files") is not { } picked) return;
         ChangeWork(picked);
     }
 
@@ -903,7 +903,7 @@ public partial class MainWindow : Window
         try { Storage.MoveWork(picked); }
         catch (Exception x) when (x is IOException or UnauthorizedAccessException)
         {
-            MessageBox.Show(this, $"Hookshot cannot keep its build files there: {x.Message}", "Hookshot");
+            MessageBox.Show(this, $"Red Tunic Builder cannot keep its build files there: {x.Message}", "Red Tunic Builder");
         }
         Refresh();
     }
@@ -966,7 +966,7 @@ public partial class MainWindow : Window
                 try { await Updater.RunLatestSetup(this, Array.Empty<string>(), updateTarget, Switching); }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(this, ex.Message + " You can also download HookshotBuilder.exe from the releases page.", "Hookshot");
+                    MessageBox.Show(this, ex.Message + " You can also download HookshotBuilder.exe from the releases page.", "Red Tunic Builder");
                     RefreshMode();
                 }
                 return;
@@ -975,7 +975,7 @@ public partial class MainWindow : Window
         var tools = Tools.Find();
         if (tools == null)
         {
-            ShowProblem("The build tools are not in Hookshot's folder.", tools: true);
+            ShowProblem("The build tools are not in Red Tunic Builder's folder.", tools: true);
             return;
         }
         var args = new List<string>();
@@ -990,12 +990,12 @@ public partial class MainWindow : Window
     }
 
     const string DlssLicense =
-        "NVIDIA DLSS is NVIDIA's, not Hookshot's. With it ticked, the build downloads NVIDIA's DLSS SDK (release v310.9.16) from " +
+        "NVIDIA DLSS is NVIDIA's, not Red Tunic Builder's. With it ticked, the build downloads NVIDIA's DLSS SDK (release v310.9.16) from " +
         "github.com/NVIDIA/DLSS, under NVIDIA's own license, the NVIDIA RTX SDKs license:\n\n" +
         "https://github.com/NVIDIA/DLSS/blob/9981c6350dc58c0ce21f024fd65e31e851c31689/LICENSE.txt\n\n" +
         "Its files stay on this PC (in the builder's ngx-sdk folder, and nvngx_dlss.dll and nvngx_dlssg.dll in the game " +
         "folder's ngx folder). " +
-        "Hookshot never includes or shares them: never share a game folder built with them.\n\n" +
+        "Red Tunic never includes or shares them: never share a game folder built with them.\n\n" +
         "Do you accept NVIDIA's license?";
 
     /// Whether NVIDIA's license was accepted on the DLSS tick, kept in the settings (BuilderSettings.DlssLicense): an update
@@ -1017,7 +1017,7 @@ public partial class MainWindow : Window
     }
 
     const string FsrLicense =
-        "AMD FSR 4 is AMD's, not Hookshot's. With it ticked, the build downloads AMD's FSR runtime for Vulkan (FidelityFX SDK " +
+        "AMD FSR 4 is AMD's, not Red Tunic Builder's. With it ticked, the build downloads AMD's FSR runtime for Vulkan (FidelityFX SDK " +
         "v2.4.0: amd_fidelityfx_loader_vk.dll and amd_fidelityfx_upscaler_vk.dll, signed by AMD) from " +
         "github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK, each file checked against its SHA-256, under AMD's FSR SDK license:\n\n" +
         "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/blob/7539ae8b6568ad29ed78a753404351daf3b5cca7/Kits/FidelityFX/docs/license.md\n\n" +
@@ -1089,7 +1089,7 @@ public partial class MainWindow : Window
     {
         // (a warning, not a stop: the player may have no other folder with the room. An update keeps its rows and its own flow)
         if (!keepRows && HardDriveWarning() is { } slow &&
-            MessageBox.Show(this, slow, "Hookshot", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
+            MessageBox.Show(this, slow, "Red Tunic Builder", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
             return;
         int? workers, memoryGb;
         try
@@ -1099,7 +1099,7 @@ public partial class MainWindow : Window
         }
         catch (ArgumentException e)
         {
-            MessageBox.Show(this, e.Message, "Hookshot");
+            MessageBox.Show(this, e.Message, "Red Tunic Builder");
             return;
         }
         if (!keepRows)
@@ -1416,9 +1416,9 @@ public partial class MainWindow : Window
         // (both places when the build files are in a folder the player chose: the total counts both)
         var where = Storage.WorkChosen ? $"{Storage.Base} and {Storage.Work}" : Storage.Base;
         StorageNote.Text = freeable >= 100L << 20
-            ? $"Hookshot Builder keeps {Storage.Gb(total)} on this PC ({where}). {Storage.Gb(freeable)} of it only makes the next " +
+            ? $"Red Tunic Builder keeps {Storage.Gb(total)} on this PC ({where}). {Storage.Gb(freeable)} of it only makes the next " +
               "update quicker and can be freed: your game keeps playing, and the next update then takes about as long as this build."
-            : $"Hookshot Builder keeps {Storage.Gb(total)} on this PC ({where}): the builder itself.";
+            : $"Red Tunic Builder keeps {Storage.Gb(total)} on this PC ({where}): the builder itself.";
         FreeButton.Visibility = freeable >= 100L << 20 ? Visibility.Visible : Visibility.Collapsed;
         FreeButton.IsEnabled = true;
         FreeButton.Content = "Free up space";
@@ -1492,14 +1492,15 @@ public partial class MainWindow : Window
         if (tools)
         {
             ProblemTitle.Text = "The build tools need repairing";
-            ProblemHead.Text = "Your antivirus removed part of the build tools";
+            ProblemHead.Text = HasSetup ? "Some build tools are missing" : "Extract a fresh Red Tunic Builder ZIP";
             ProblemText.Text = why + "\n\nAntivirus programs sometimes flag unsigned developer tools by mistake.";
             var base_ = Storage.Base;
             foreach (var (n, s) in new[]
                      {
                          (1, "Open Windows Security → Protection history, and restore the removed files."),
                          (2, $"Or add {base_} to its exclusions."),
-                         (3, "Then press Repair: Hookshot downloads the tools again from their official releases and checks each one."),
+                         (3, HasSetup ? "Press Repair to download and verify the missing tools."
+                                      : "Open Releases, download the Windows Builder ZIP, and extract it into a fresh folder."),
                      })
                 ProblemSteps.Children.Add(new TextBlock { Text = $"{n}.  {s}", Style = (Style)FindResource("Note"), FontSize = 14, Margin = new Thickness(0, 6, 0, 0) });
         }
@@ -1509,6 +1510,7 @@ public partial class MainWindow : Window
             ProblemHead.Text = "What went wrong";
             ProblemText.Text = why;
         }
+        RepairButton.Content = HasSetup ? "Repair" : "Open releases";
         RepairButton.Visibility = tools ? Visibility.Visible : Visibility.Collapsed;
         ProblemDetails.Content = "Show details";
         if (!updating) SetStep(1);   // (the update keeps its versions in the head)
@@ -1530,7 +1532,7 @@ public partial class MainWindow : Window
     void CopyForReport(object sender, RoutedEventArgs e)
     {
         var lines = log.ToString().Split('\n');
-        var text = $"Hookshot Builder {Tools.Find()?.Version ?? "(source)"} on Windows {Environment.OSVersion.Version}\n" +
+        var text = $"Red Tunic Builder {Tools.Find()?.Version ?? "(source)"} on Windows {Environment.OSVersion.Version}\n" +
                    $"{ProblemTitle.Text}: {lastFailure}\n\n" + string.Join("\n", lines.Skip(Math.Max(0, lines.Length - 200)));
         try { Clipboard.SetText(text); CopyReport.Content = "Copied"; } catch (Exception) { }
     }
@@ -1538,17 +1540,19 @@ public partial class MainWindow : Window
     void Back(object sender, RoutedEventArgs e) => ToFiles();
 
     /// The setup (HookshotBuilder-Setup.exe beside this app) checks every part against its checksum and downloads the missing ones
+    static string SetupPath => System.IO.Path.Combine(AppContext.BaseDirectory, "HookshotBuilder-Setup.exe");
+    static bool HasSetup => File.Exists(SetupPath);
+
     void Repair(object sender, RoutedEventArgs e)
     {
-        var setup = System.IO.Path.Combine(AppContext.BaseDirectory, "HookshotBuilder-Setup.exe");
+        var setup = SetupPath;
         if (File.Exists(setup))
         {
             Process.Start(new ProcessStartInfo(setup, "--repair") { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory });
             Application.Current.Shutdown();
             return;
         }
-        Process.Start(new ProcessStartInfo(Tools.Find()?.RedTunicRelease == true ? Tools.RedTunicReleases :
-            "https://git.notrexed.dev/Hookshot/Hookshot/releases/latest") { UseShellExecute = true });
+        Process.Start(new ProcessStartInfo(Tools.RedTunicReleases) { UseShellExecute = true });
     }
 
     // ================= the update (Updater.cs): the game started this app with --update <folder> =================
@@ -1611,7 +1615,7 @@ public partial class MainWindow : Window
             why = $"This game's version ({rec.Version}) does not apply the mods' code patches yet: update the game first, then Rebuild.";
         if (rec == null || why != null)
         {
-            MessageBox.Show(this, why ?? "This game cannot be rebuilt here.", "Hookshot", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, why ?? "This game cannot be rebuilt here.", "Red Tunic Builder", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         keepPatchBuild = folder;
@@ -1663,7 +1667,7 @@ public partial class MainWindow : Window
 
     void CloseWindow(object sender, RoutedEventArgs e)
     {
-        if (runner != null && MessageBox.Show(this, T(S.CloseQuestion), "Hookshot", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        if (runner != null && MessageBox.Show(this, T(S.CloseQuestion), "Red Tunic Builder", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         runner?.Cancel();
         Close();
     }
