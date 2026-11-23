@@ -35,6 +35,10 @@ The earlier user report describes 30–60 FPS in Hyrule Field on an AMD Ryzen 5 
 
 ## Verification
 
-Release build and regression results are recorded when packaging finishes. Local game executables, dump data, saves and compiled caches remain on the player's machine.
+The merged Windows Vulkan renderer compiled. The portable Builder archive and direct-launch regression checks passed, along with 13 documentation-site checks.
+
+The Windows integration test run reported 801 passes, 55 failures and 132 skips. Several targeted failures were addressed after that run started. The complete suite has yet to pass.
+
+Local game executables, dump data, saves and compiled caches remain on the player's machine.
 
 [Source](https://github.com/spacefarergames/RedTunic) · [Downloads](https://github.com/spacefarergames/RedTunic/releases)
