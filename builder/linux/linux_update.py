@@ -23,9 +23,9 @@ import zipfile
 from part_links import SYSROOT_PART, is_absolute_link, relative_sysroot_link
 
 LIST_NAME = "hookshot-linux.txt"
-LATEST_LIST = "https://git.notrexed.dev/Hookshot/Hookshot/releases/latest/download/" + LIST_NAME
-LATEST_API = "https://git.notrexed.dev/api/v1/repos/Hookshot/Hookshot/releases/latest"
-RELEASES_API = "https://git.notrexed.dev/api/v1/repos/Hookshot/Hookshot/releases?limit=20"
+LATEST_LIST = "https://github.com/spacefarergames/RedTunic/releases/latest/download/" + LIST_NAME
+LATEST_API = "https://api.github.com/repos/spacefarergames/RedTunic/releases/latest"
+RELEASES_API = "https://api.github.com/repos/spacefarergames/RedTunic/releases?per_page=20"
 # (the update tracks: the builder's Track choice, by default the track of the build installed. The setup,
 # builder/setup/setup.c, and the Windows builder, Updater.cs, use the same rules)
 TRACKS = ("release", "rc", "nightly")

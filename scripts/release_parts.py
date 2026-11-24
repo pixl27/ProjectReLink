@@ -203,11 +203,9 @@ def package(a):
         copy(os.path.join(ROOT, name), os.path.join(tools, name))
     for icon in ("red-tunic.png", "red-tunic.ico"):
         copy(os.path.join(ROOT, "assets", icon), os.path.join(tools, "assets", icon))
-    for f in tracked("gpu", "host", "native", "nx2", "scripts", "third_party", "tools", "assets/profiles"):
+    for f in tracked("gpu", "host", "native", "nx2", "scripts", "third_party", "tools"):
         copy(os.path.join(ROOT, f), os.path.join(tools, *f.split("/")))
     if a.list:
-        if not profile(argparse.Namespace(list=a.list, work=os.path.join(tools, "work"))) == 0:
-            return 1
         tp = named_part(a.list, "third_party")
         if tp:
             known = set(tracked("third_party"))
@@ -219,9 +217,7 @@ def package(a):
         if a.cpm_add and cpm_add(a.list, a.cpm_add, tools) != 0:
             return 1
     else:
-        print("no setup list: the package has no play profile and no prebuilt third_party files")
-    if state_list(tools) != 0:
-        return 1
+        print("no setup list: the package has no prebuilt third_party files")
     print("package folder: %s" % out)
     return 0
 

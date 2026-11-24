@@ -3764,15 +3764,32 @@ bool sampler_cache_on();   // (hookshot, RX_VK_SAMPLER_CACHE and the Sampler cac
 VkSampler sampler_for(int id, bool compare, bool one_level) {
     static const bool on = !getenv("RX_VK_SAMPLER_CACHE") || atoi(getenv("RX_VK_SAMPLER_CACHE")) != 0;
     if (!on || id < 0 || id >= 4096) return sampler_make(id, compare, one_level);
-    struct Entry { uint64_t gen; VkSampler s; uint64_t frame; };
+    struct Entry {
+        uint64_t gen, frame, retired;
+        VkSampler s;
+        uint32_t slot_version, aniso;
+        float lod_bias;
+    };
     static thread_local Entry table[2][2][4096];   // (gen 0: never filled; the generation starts at 1)
     const uint64_t gen = sampler_registrations_generation();   // (read first: a registration after it makes the next call miss)
     // (near the device's sampler limit, an entry lasts a present: the book sees the samplers in use, sampler_book)
     const uint64_t frame = sampler_book.watching.load(std::memory_order_relaxed) ? texture_frame_no() : 0;
     Entry& e = table[compare ? 1 : 0][one_level ? 1 : 0][id];
-    if (e.gen == gen && e.frame == frame) return e.s;
+    static const bool reuse = env_on("RX_VK_BINDING_REUSE");
+    // Registrations publish the global generation before the slot version. Check both
+    // on the opt-in path so a lookup between those publications cannot keep a stale sampler.
+    const uint32_t version = reuse ? sampler_slot_version(id) : 0;
+    if (e.gen == gen && e.frame == frame && (!reuse || e.slot_version == version)) return e.s;
+    const uint64_t retired = reuse ? sampler_book.retired_gen.load(std::memory_order_acquire) : 0;
+    const uint32_t aniso = reuse && !one_level ? aniso_override() : 0;
+    const float bias = reuse ? upscale_lod_bias() : 0.0f;
+    if (reuse && e.s && e.frame == frame && e.retired == retired && e.slot_version == version &&
+        e.aniso == aniso && e.lod_bias == bias) {
+        e.gen = gen;
+        return e.s;
+    }
     const VkSampler made = sampler_make(id, compare, one_level);
-    if (made) e = {gen, made, frame};   // (a failed creation is retryable without a new registration)
+    if (made) e = {gen, frame, retired, made, version, aniso, bias};   // (a failed creation is retryable)
     return made;
 }
 VkSampler sampler_make(int id, bool compare, bool one_level) {
@@ -4081,6 +4098,12 @@ VkImageView texture_view_of(uint32_t handle, VkImageViewType want, ViewUse use, 
     const uint64_t key = (uint64_t)(handle & 0xFFFFF) | (uint64_t)want << 20 | (uint64_t)use << 28 | (uint64_t)storage_as << 32;
     static const bool view_fast_on = !getenv("RX_VK_VIEW_FAST") || atoi(getenv("RX_VK_VIEW_FAST")) != 0;
     ViewFast* vf = view_fast_on ? &view_fast()[(key * 0x9E3779B97F4A7C15ull) >> 54] : nullptr;
+    // Keep the existing view through a small number of unrelated evictions. The gone ring
+    // rejects the texture's own removal, compaction, and any history it cannot prove.
+    static const bool reuse = env_on("RX_VK_BINDING_REUSE");
+    if (reuse && vf && vf->key == key && vf->version == version && vf->view && vf->destroy_gen != dgen &&
+        dgen - vf->destroy_gen <= 8 && texture_kept_since(vf->tex, vf->destroy_gen, dgen))
+        vf->destroy_gen = dgen;
     if (vf && vf->key == key && vf->version == version && vf->destroy_gen == dgen) {
         // (the epoch's touch is done here, as the map's path does it: the map's own copy of the epoch may go stale, and then
         // the first lookup of that key through the map touches the texture again, which only marks it used twice)
@@ -8480,6 +8503,29 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
     di.memoryBarrierCount = 1, di.pMemoryBarriers = &mb;
     mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mb.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
     mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, mb.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    // Vega's fallback consumes one indirect record. Keep the dependency on
+    // the source count and scratch slot without making other buffers visible.
+    static const bool scoped_on = env_on("RX_VK_MESH_CONVERT_SCOPED");
+    static const bool trace_counts = env_on("RX_VK_G3_MESHCOUNT");
+    const bool scoped = !dev.mesh_shader && scoped_on && !trace_counts && policy_rule::windows_vega_compat(dev.facts);
+    VkBufferMemoryBarrier2 buffers[2]{{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2},
+                                     {VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2}};
+    if (scoped) {
+        for (auto& barrier : buffers) {
+            barrier.srcStageMask = mb.srcStageMask;
+            barrier.dstStageMask = mb.dstStageMask;
+            barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        }
+        buffers[0].srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        buffers[0].dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+        buffers[0].buffer = args.buffer, buffers[0].offset = args.offset + 4 * word, buffers[0].size = 4;
+        buffers[1].srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+        buffers[1].dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        buffers[1].buffer = mesh_ring, buffers[1].offset = off, buffers[1].size = 12;
+        di.memoryBarrierCount = 0;
+        di.bufferMemoryBarrierCount = 2;
+        di.pBufferMemoryBarriers = buffers;
+    }
     vkCmdPipelineBarrier2(cmd, &di);
     VkBufferCopy first{args.offset + 4 * word, off, 4};
     const VkBufferCopy* regions = &first;
@@ -8500,14 +8546,21 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
     }
     vkCmdCopyBuffer(cmd, args.buffer, mesh_ring, n, regions);
     {   // (diagnosis, default off) RX_VK_G3_MESHCOUNT=1: the same counts into a host-visible twin of the ring, for mesh_count_note
-        static const bool on = env_on("RX_VK_G3_MESHCOUNT");
-        if (on) {
+        if (trace_counts) {
             if (!mesh_dbg && !create_buffer(kMeshRing, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, mesh_dbg, mesh_dbg_mem, &mesh_dbg_ptr)) mesh_dbg = VK_NULL_HANDLE;
             if (mesh_dbg) vkCmdCopyBuffer(cmd, args.buffer, mesh_dbg, n, regions);
         }
     }
     mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
     mb.dstStageMask = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, mb.dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+    if (scoped) {
+        buffers[1].srcStageMask = mb.srcStageMask;
+        buffers[1].srcAccessMask = mb.srcAccessMask;
+        buffers[1].dstStageMask = mb.dstStageMask;
+        buffers[1].dstAccessMask = mb.dstAccessMask;
+        di.bufferMemoryBarrierCount = 1;
+        di.pBufferMemoryBarriers = &buffers[1];
+    }
     vkCmdPipelineBarrier2(cmd, &di);
     mesh_conv_buf = mesh_ring, mesh_conv_off = off;
     return true;
@@ -13937,19 +13990,12 @@ std::vector<NoteRef> pipe_notes_refs(bool* whole) {
     if (!f) return refs;
     uint64_t head[2] = {0, 0};
     if (fread(head, 8, 2, f) == 2 && head[0] == program_cache_stamp() && head[1] == sizeof(PipeNote)) {
-        // (what a reference needs lies in two places of a note: its first words, and the vertex formats inside its state)
-        constexpr size_t kFront = offsetof(PipeNote, s);
-        constexpr size_t kVattr = offsetof(PipeNote, s) + offsetof(NvnState, vattr);
-        static_assert(kFront >= 24 + 5 * 4 + 8 * 4, "a note's first words: its keys, targets and formats");
+        // Read each complete record sequentially. Only its reference stays in memory.
         std::unordered_set<uint64_t> seen;
-        uint8_t front[kFront];
-        PipeNote probe{};   // (only its targets are filled in, for note_color_types)
-        for (int64_t at = 16;; at += (int64_t)sizeof(PipeNote)) {
-            NoteRef r;
-            if (_fseeki64(f, at, SEEK_SET) || fread(front, 1, kFront, f) != kFront) break;
-            if (_fseeki64(f, at + (int64_t)kVattr, SEEK_SET) || fread(r.vattr, 4, 16, f) != 16) break;
-            if (_fseeki64(f, at + (int64_t)sizeof(PipeNote) - 1, SEEK_SET) || fgetc(f) == EOF) break;   // (a whole record)
-            std::memcpy((void*)&probe, front, kFront);
+        PipeNote probe{};
+        for (int64_t at = 16; fread(&probe, sizeof probe, 1, f) == 1; at += sizeof(PipeNote)) {
+            NoteRef r{};
+            std::memcpy(r.vattr, probe.s.vattr, sizeof r.vattr);
             if (!targets_ok(probe.n, probe.samples, probe.topo) ||
                 !formats_ok(probe.n, probe.color_format, probe.has_depth, probe.depth_format))
                 continue;

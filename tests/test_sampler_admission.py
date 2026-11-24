@@ -78,6 +78,8 @@ def main():
              "descriptor-push", "descriptor-pool", "descriptor-compute", "descriptor-whole",
              "limit", "limit-full", "limit-reuse", "limit-alias-commit", "limit-retire-commit"]
     failed = []
+    has_reuse = "RX_VK_BINDING_REUSE" in actual
+    count = len(cases) * 3 + int(has_reuse)
     with tempfile.TemporaryDirectory(prefix="sampler-admission-") as temp:
         cpp, exe = Path(temp) / "fixture.cpp", Path(temp) / "fixture.exe"
         cpp.write_text(fixture, encoding="utf-8")
@@ -91,12 +93,16 @@ def main():
                 if r.returncode:
                     last = (r.stderr.strip().splitlines() or ["exit %d" % r.returncode])[-1]
                     failed.append(f"{route} {case}: {last}")
+        if has_reuse:
+            r = subprocess.run([str(exe), "reuse", "unrelated-registrations"], timeout=20, capture_output=True, text=True)
+            if r.returncode:
+                failed.append(f"binding reuse: {r.stderr.strip() or r.returncode}")
     for f in failed:
         print("FAIL: " + f)
     if failed:
-        print(f"{len(failed)} of {len(cases) * 3} sampler cache/admission/policy/limit cases failed")
+        print(f"{len(failed)} of {count} sampler cache/admission/policy/limit cases failed")
         return 1
-    print(f"{len(cases) * 3} sampler cache/admission/policy/limit cases passed")
+    print(f"{count} sampler cache/admission/policy/limit cases passed")
     return 0
 
 

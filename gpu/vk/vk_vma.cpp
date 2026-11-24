@@ -132,6 +132,7 @@ void tag_mapped(const VmaAllocationInfo& info, MemKind kind) {
 }
 }  // namespace
 
+std::atomic<uint64_t> texture_pool_oom{0};
 std::atomic<int> vram_alloc_failures{0};   // (images VRAM refused, read by the texture budget)
 
 
@@ -406,7 +407,10 @@ bool create_image(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation& al
         VmaAllocationCreateInfo pai = ai;
         pai.pool = pool;
         pai.usage = VMA_MEMORY_USAGE_UNKNOWN;
-        if (vmaCreateImage(vma, &ci, &pai, &image, &allocation, nullptr) == VK_SUCCESS) return note_alloc(allocation, image_kind(ci)), true;
+        const VkResult allocated = vmaCreateImage(vma, &ci, &pai, &image, &allocation, nullptr);
+        if (allocated == VK_SUCCESS) return note_alloc(allocation, image_kind(ci)), true;
+        if (pool == texture_pool && allocated == VK_ERROR_OUT_OF_DEVICE_MEMORY)
+            texture_pool_oom.fetch_add(1, std::memory_order_relaxed);
     }
     if (vmaCreateImage(vma, &ci, &ai, &image, &allocation, nullptr) == VK_SUCCESS) return note_alloc(allocation, image_kind(ci)), true;
     if (ai.flags & VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT) {

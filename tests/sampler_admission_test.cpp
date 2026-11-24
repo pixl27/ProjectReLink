@@ -57,6 +57,9 @@ bool lod_per_id = false;   // (the limit cases: each id its own sampler, by its 
 std::string policy;
 std::string descriptor_policy;
 float registration_lod_max = 8;
+std::string route;
+uint32_t binding_version = 1;
+unsigned binding_lookups = 0;
 struct Saved {
     VkSamplerCreateInfo ci{};
     bool custom = false, reduced = false;
@@ -72,9 +75,10 @@ uint64_t mix(uint64_t a, uint64_t b) { return (a ^ b) * 0x9e3779b97f4a7c15ull; }
 uint64_t texture_frame_no() { return frame_no; }
 bool sampler_cache_on() { return !cache_off; }
 uint64_t sampler_registrations_generation() { return generation; }
-uint32_t sampler_slot_version(int) { return (uint32_t)generation; }
+uint32_t sampler_slot_version(int) { return route == "reuse" ? binding_version : (uint32_t)generation; }
 bool sampler_of(int id, nvn_samp_par* p) {
     if (id < 0) return false;
+    if (route == "reuse") ++binding_lookups;
     *p = {};
     p->minf = NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR; p->magf = NVN_MAG_FILTER_LINEAR;
     p->aniso = 1; p->lod_max = registration_lod_max; p->lod_bias = id * 0.25f;
@@ -103,6 +107,7 @@ bool sampler_of(int id, nvn_samp_par* p) {
 const char* getenv(const char* name) {
     if (!std::strcmp(name, "RX_VK_PUSH_ALL") && descriptor_policy == "descriptor-whole") return "1";
     if (!std::strcmp(name, "RX_VK_SAMPLER_CACHE") && cache_off) return "0";
+    if (!std::strcmp(name, "RX_VK_BINDING_REUSE") && route == "reuse") return "1";
     if (!std::strcmp(name, "RX_VK_ANISO") && policy == "anisotropy") return "16";
     if (!std::strcmp(name, "RX_VK_ANISO") && policy == "anisotropy-env-off") return "0";
     if (!std::strcmp(name, "RX_VK_FORCE_LINEAR") && policy == "force-linear") return "1";
@@ -157,7 +162,11 @@ struct DescWriter { std::vector<VkWriteDescriptorSet> writes; } descriptor_write
 DescWriter& dw() { return descriptor_writes; }
 struct Pushed;
 std::array<Pushed, 2>& pushed();
-struct Recording { VkDescriptorPool pool{}; std::vector<VkDescriptorPool> extra; } recording;
+struct Recording {
+    VkDescriptorPool pool{};
+    std::vector<VkDescriptorPool> extra;
+    uint32_t pool_sets = 0, pool_descs[6] = {};
+} recording;
 Recording* cur = &recording;
 std::atomic<uint64_t> pools_extra{0};
 bool g_fine = false;
@@ -191,7 +200,6 @@ int ub_snap_dedup_mode() { return 1; }
 /* DESCRIPTORS */
 std::array<Pushed, 2>& pushed() { static std::array<Pushed, 2> state; return state; }
 
-std::string route;
 VkSampler get(int id = 0, bool compare = false, bool one_level = false) {
     return route == "make" ? sampler_make(id, compare, one_level) : sampler_for(id, compare, one_level);
 }
@@ -303,6 +311,31 @@ void run(const std::string& test) {
     cache_off = route == "cache-off";
     dev.props.limits.maxSamplerLodBias = 16; dev.props.limits.maxSamplerAnisotropy = 8;
     dev.features.samplerAnisotropy = VK_TRUE; dev.custom_border_color = true;
+    if (test == "unrelated-registrations") {
+        policy = "upscale-bias-change";
+        const auto first = get();
+        valid(first);
+        assert(binding_lookups == 1);
+        generation++;
+        assert(get() == first && binding_lookups == 1);
+        // A sampler registration can publish its global generation before the affected slot.
+        binding_version++;
+        registration_lod_max = 3;
+        const auto updated = get();
+        valid(updated);
+        assert(updated != first && binding_lookups == 2 && live[updated].ci.maxLod == 3);
+        row_times = 4;
+        generation++;
+        const auto anisotropic = get();
+        valid(anisotropic);
+        assert(anisotropic != updated && live[anisotropic].ci.maxAnisotropy == 4);
+        up_bias = -0.25f;
+        generation++;
+        const auto biased = get();
+        valid(biased);
+        assert(biased != anisotropic && live[biased].ci.mipLodBias == -0.75f);
+        return;
+    }
     if (limit_case(test)) return;
     if (test.find("descriptor-") == 0) {
         descriptor_policy = test;

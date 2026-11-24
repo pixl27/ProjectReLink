@@ -86,9 +86,9 @@ struct PipeNote {
 std::vector<NoteRef> pipe_notes_refs(bool* whole = nullptr);   // (vk_pipelines.h)
 static std::string dir;
 std::string pipe_notes_path() { return dir + "hookshot_pipelines.bin"; }
-// (stand-ins, put in place of the cut source's own calls: the opens of the notes, the walk's seeks, the file's size and time)
+// (stand-ins, put in place of the cut source's own calls: the opens of the notes, the walk's reads, the file's size and time)
 static bool open_fails, size_fails, time_fails;
-static int64_t seek_fails_at = -1, read_fails_from = -1;
+static int64_t short_read_at = -1, read_fails_from = -1;
 FILE* walk_fopen(const char* path, const char* mode) {
     if (open_fails) return nullptr;   // (another program holds the file with reads denied)
     FILE* f = fopen(path, mode);
@@ -101,11 +101,12 @@ FILE* walk_fopen(const char* path, const char* mode) {
 #endif
     return f;
 }
-int walk_fseek(FILE* f, int64_t at, int whence) {
-    if (at == seek_fails_at) {   // (one seek fails, its stream's flags left as they are)
-        seek_fails_at = -1;
+size_t walk_fread(void* data, size_t size, size_t count, FILE* f) {
+    const int64_t at = _ftelli64(f);
+    if (at == short_read_at) {   // (a read returns short, its stream's flags left as they are)
+        short_read_at = -1;
         errno = EINVAL;
-        return -1;
+        return 0;
     }
 #ifndef _WIN32
     if (at == read_fails_from) {   // (from here on the stream's reads fail: its descriptor becomes a folder's, EISDIR)
@@ -114,7 +115,7 @@ int walk_fseek(FILE* f, int64_t at, int whence) {
         if (folder >= 0) dup2(folder, fileno(f)), close(folder);
     }
 #endif
-    return _fseeki64(f, at, whence);
+    return fread(data, size, count, f);
 }
 uintmax_t id_file_size(const std::string& path, std::error_code& ec) {
     if (size_fails) { ec = std::make_error_code(std::errc::permission_denied); return (uintmax_t)-1; }
@@ -331,14 +332,14 @@ int main(int argc, char** argv) {
         const std::vector<NoteRef> relocked = start_note_refs(true);
         open_fails = false;
         CHECK(relocked.empty() && k.walks == 2);
-        // (a seek failing at the fourth note: the walk stops there with three, not kept; the next use reads all five)
+        // (a short read at the fourth note: the walk stops there with three, not kept; the next use reads all five)
         k = StartNoteRefs{};
-        seek_fails_at = 16 + 3 * (int64_t)sizeof(PipeNote);
-        const std::vector<NoteRef> seeked = start_note_refs(false);
-        seek_fails_at = -1;
-        const std::vector<NoteRef> reseeked = start_note_refs(true);
-        CHECK(seeked.size() == 3 && seeked.size() < 5 && k.walks == 2);
-        CHECK(reseeked.size() == 5 && same(reseeked, base_notes_refs()));
+        short_read_at = 16 + 3 * (int64_t)sizeof(PipeNote);
+        const std::vector<NoteRef> partial = start_note_refs(false);
+        short_read_at = -1;
+        const std::vector<NoteRef> recovered = start_note_refs(true);
+        CHECK(partial.size() == 3 && partial.size() < 5 && k.walks == 2);
+        CHECK(recovered.size() == 5 && same(recovered, base_notes_refs()));
 #ifndef _WIN32
         {   // (reads failing from the fourth note on: the walk stops there, not kept; Windows has its own case below)
             k = StartNoteRefs{};
@@ -423,16 +424,16 @@ WHOLE = "if (whole) *whole = feof(f) && !ferror(f);"
 # (the cut source's calls the driver's stand-ins take the place of)
 WALK_OPEN = 'fopen(pipe_notes_path().c_str(), "rb")'
 ID_OPEN = 'fopen(path.c_str(), "rb")'
-WALK_SEEK = "_fseeki64("
+WALK_READ = "fread("
 ID_CALLS = ("std::filesystem::file_size(path, ec)", "std::filesystem::last_write_time(path, ec_time)")
 # (each broken variant: the part it runs, the replacement, and the text of the check of its own case that must fail)
 BROKEN = (("kept-unchecked", "once", KEPT_TEST, "if (!k.kept) {", "grown.size() == 6"),
           ("size-unchecked", "once", KEPT_TEST, "if (!k.kept || k.time != time) {", "coarse.size() == 4"),
           ("time-unchecked", "once", KEPT_TEST, "if (!k.kept || k.size != size) {", "rewritten[2].key == 1000"),
           ("failed-walk-kept", "fail", KEEP, "k.kept = size >= 0 && after == size && after_time == time;",
-           "seeked.size() == 3"),
+           "partial.size() == 3"),
           ("read-failure-unseen", "fail", WHOLE, "if (whole) *whole = true;", "!cut.empty() && cut.size() < 5"),
-          ("seek-failure-unseen", "fail", WHOLE, "if (whole) *whole = !ferror(f);", "seeked.size() == 3"),
+          ("short-read-unseen", "fail", WHOLE, "if (whole) *whole = !ferror(f);", "partial.size() == 3"),
           ("unread-id-kept", "fail", KEEP, "k.kept = whole && after == size && after_time == time;", "unknown.size() == 6"),
           ("unread-time-kept", "fail", SIZE_OF_ID, "*size = ec || !reads ? -1 : (int64_t)n;", "no_time[1].key == 2000"),
           ("unreadable-unseen", "fail", SIZE_OF_ID, "*size = ec || ec_time ? -1 : (int64_t)n;", "relocked.empty()"))
@@ -443,12 +444,12 @@ def fixture(draw, pipelines):
     start = between(draw, "struct StartNoteRefs {", "/// (hookshot, RX_VK_LOAD=create) The first start after a preparation",
                     where="gpu/vk/vk_draw.cpp")
     for anchor, text, n in ((KEPT_TEST, start, 1), (KEEP, start, 1), (SIZE_OF_ID, start, 1), (WHOLE, walk, 1),
-                            (WALK_OPEN, walk, 1), (WALK_SEEK, walk, 3), (ID_OPEN, start, 1), (ID_CALLS[0], start, 1),
+                            (WALK_OPEN, walk, 1), (WALK_READ, walk, 2), (ID_OPEN, start, 1), (ID_CALLS[0], start, 1),
                             (ID_CALLS[1], start, 1)):
         if text.count(anchor) != n:
             raise SystemExit("FAIL: gpu/vk/vk_draw.cpp does not have %r %d times (the check and its broken variants cut it)"
                              % (anchor, n))
-    walk = walk.replace(WALK_OPEN, "walk_" + WALK_OPEN).replace(WALK_SEEK, "walk_fseek(")
+    walk = walk.replace(WALK_OPEN, "walk_" + WALK_OPEN).replace(WALK_READ, "walk_fread(")
     start = (start.replace(ID_OPEN, "walk_" + ID_OPEN).replace(ID_CALLS[0], "id_file_size(path, ec)")
              .replace(ID_CALLS[1], "id_last_write_time(path, ec_time)"))
     return (DRIVER.replace("/* NOTEREF */", block(pipelines, "struct NoteRef {", where="gpu/vk/vk_pipelines.h"))

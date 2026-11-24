@@ -112,6 +112,45 @@ int main() {
 """
 
 
+AHEAD_COPY_PROBE = r"""
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <condition_variable>
+#include <cstdint>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <span>
+#include <vector>
+struct LevelGeo { uint32_t w = 256, h = 256; };
+void logf(const char*, ...) {}
+bool astc_ahead_on() { return true; }
+std::atomic<bool> ahead_memory_pressure{false};
+%s
+int main() {
+    auto& slot = astc_ahead_queue().jobs[0];
+    auto result = std::make_shared<AstcAheadJob>();
+    result->bw = result->bh = 8;
+    result->blocks.assign(16384, 7);
+    result->rgba.assign(256 * 1024, 31);
+    slot = result;
+    std::vector<uint8_t> block = result->blocks, out(result->rgba.size(), 0);
+    auto copy = [&] { return astc_ahead_copy(block, 256, 256, 1, 8, 8, out); };
+    assert(!copy() && slot && out.front() == 0);
+    result->state = AstcAheadJob::ready;
+    block.back() ^= 1;
+    assert(!copy() && slot && out.front() == 0);
+    block.back() ^= 1;
+    ahead_memory_pressure.store(true);
+    assert(!copy() && slot && out.front() == 0);
+    ahead_memory_pressure.store(false);
+    assert(copy() && !slot && out == result->rgba);
+    assert(!copy());
+}
+"""
+
+
 def check_source():
     src = (ROOT / "gpu/vk/vk_texture.cpp").read_text(encoding="utf-8")
     for needle in ('#include "astc_reuse.h"',
@@ -153,6 +192,16 @@ def main():
         probe.write_text(CPU_CACHE_PROBE % cache, encoding="utf-8")
         subprocess.run([args.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror",
                         "-I", str(ROOT / "gpu/vk"), str(probe), "-o", str(exe)], check=True)
+        subprocess.run([str(exe)], check=True)
+
+        ahead = block(src, "struct AstcAheadJob {") + ";\n"
+        ahead += block(src, "struct AstcAheadQueue {") + ";\n"
+        ahead += block(src, "AstcAheadQueue& astc_ahead_queue()")
+        ahead += block(src, "bool astc_ahead_copy(")
+        probe = Path(tmp) / "ahead-copy.cpp"
+        probe.write_text(AHEAD_COPY_PROBE % ahead, encoding="utf-8")
+        subprocess.run([args.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror",
+                        str(probe), "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
 
 

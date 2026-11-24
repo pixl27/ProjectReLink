@@ -30,7 +30,7 @@ class AppImageScripts(unittest.TestCase):
         start = script.index("# ---- the tools (the sources")
         end = script.index("cp -a third_party/opus", start)
         with tempfile.TemporaryDirectory(prefix="hookshot-appimage-scripts-") as folder:
-            env = dict(os.environ, T=folder, VERSION="authored-test")
+            env = dict(os.environ, T=folder, VERSION="authored-test", RED_TUNIC_PACKAGE="1")
             result = subprocess.run(["bash", "-eu", "-o", "pipefail", "-c", script[start:end]], cwd=ROOT, env=env,
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

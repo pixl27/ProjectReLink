@@ -533,7 +533,7 @@ def _arg(name):
 class Builder(tk.Tk):
     def __init__(self, launch=None, update=None, fetched=False, tag=None, allow_downgrade_from=None):
         super().__init__()
-        self.title("Hookshot Builder")
+        self.title("Red Tunic Builder")
         self.apply_scale()
         self.apply_theme()
         self.minsize(self.px(760), min(self.px(520), self.winfo_screenheight() * 2 // 3))   # (scaled up, no taller than the screen)
@@ -883,7 +883,7 @@ class Builder(tk.Tk):
 
     # ---- the form ----
     def show_form(self):
-        self.title("Hookshot Builder")
+        self.title("Red Tunic Builder")
         if self.page:
             self.page.destroy()
         px = self.px

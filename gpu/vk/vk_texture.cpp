@@ -90,6 +90,7 @@
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
 namespace mkwvk {
+extern std::atomic<uint64_t> texture_pool_oom;
 extern std::atomic<int> vram_alloc_failures;   // (vk_vma.cpp)
 namespace {
 
@@ -2496,6 +2497,58 @@ void upload_frame_report() {
 }
 bool upload_inner(Texture& tex, const Ranges* dirty);
 // (hookshot, smoothness: textures prepared ahead, further down) a first upload a draw asked for is remembered
+std::atomic<bool> ahead_memory_pressure{false};
+struct AstcAheadJob {
+    uint64_t address = 0;
+    LevelGeo geo{};
+    uint32_t bw = 0, bh = 0;
+    int64_t offered = 0;
+    enum State { queued, decoding, ready } state = queued;
+    std::vector<uint8_t> swizzled, blocks, rgba;
+};
+struct AstcAheadQueue {
+    std::mutex mu;
+    std::condition_variable cv;
+    std::array<std::shared_ptr<AstcAheadJob>, 3> jobs;
+    bool started = false;
+    uint64_t prepared = 0, hits = 0;
+};
+AstcAheadQueue& astc_ahead_queue() {
+    // The detached renderer worker only uses process-lifetime storage.
+    static auto* const queue = new AstcAheadQueue;
+    return *queue;
+}
+bool astc_ahead_on() {
+    static const bool on = env_on("RX_VK_ASTC_PREFETCH");
+    return on && policy_rule::windows_vega_compat(dev.facts) && astc_on_cpu();
+}
+bool astc_ahead_copy(std::span<const uint8_t> blocks, uint32_t w, uint32_t h, uint32_t d, uint32_t bw, uint32_t bh,
+                     std::span<uint8_t> out) {
+    if (!astc_ahead_on() || d != 1 || out.size() < (256u << 10) || out.size() > (4u << 20) ||
+        ahead_memory_pressure.load(std::memory_order_relaxed)) return false;
+    auto& q = astc_ahead_queue();
+    std::shared_ptr<AstcAheadJob> hit;
+    uint64_t hits = 0, prepared = 0;
+    {
+        std::unique_lock lk(q.mu, std::try_to_lock);
+        if (!lk) return false;
+        for (auto& j : q.jobs) {
+            if (!j || j->state != AstcAheadJob::ready || j->geo.w != w || j->geo.h != h || j->bw != bw || j->bh != bh ||
+                j->rgba.size() != out.size() || j->blocks.size() != blocks.size() ||
+                std::memcmp(j->blocks.data(), blocks.data(), blocks.size())) continue;
+            hit = std::move(j);
+            hits = ++q.hits, prepared = q.prepared;
+            break;
+        }
+    }
+    if (!hit) return false;
+    std::memcpy(out.data(), hit->rgba.data(), out.size());
+    if (hits <= 4 || hits % 100 == 0)
+        logf("vk: background ASTC: %llu exact hits from %llu prepared levels", (unsigned long long)hits,
+             (unsigned long long)prepared);
+    return true;
+}
+
 thread_local bool ahead_running = false;
 void ahead_learn(const Texture& tex);
 bool upload(Texture& tex, const Ranges* dirty) {
@@ -2847,6 +2900,52 @@ void unswizzle_upload(std::span<uint8_t> dest, std::span<const uint8_t> src, uin
     Tegra::Texture::UnswizzleTexture(dest, src, bpb, width, height, depth, tile_h, tile_d, 0);
 }
 
+void astc_ahead_worker(AstcAheadQueue& q) {
+    helper_thread_start();
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+    for (;;) {
+        std::shared_ptr<AstcAheadJob> j;
+        {
+            std::unique_lock lk(q.mu);
+            q.cv.wait(lk, [&] {
+                for (auto& candidate : q.jobs) {
+                    if (candidate && candidate->state == AstcAheadJob::queued) {
+                        j = candidate;
+                        return true;
+                    }
+                }
+                return false;
+            });
+            j->state = AstcAheadJob::decoding;
+        }
+        bool decoded = false;
+        if (!ahead_memory_pressure.load(std::memory_order_relaxed)) {
+            try {
+                const LevelGeo& g = j->geo;
+                j->blocks.resize(size_t(g.tw) * g.th * 16);
+                j->rgba.resize(size_t(g.w) * g.h * 4);
+                unswizzle_upload(j->blocks, j->swizzled, 16, g.tw, g.th, 1, g.tile_h, 0);
+                Tegra::Texture::ASTC::DecompressSerial(j->blocks, g.w, g.h, 1, j->bw, j->bh, j->rgba);
+                decoded = true;
+            } catch (const std::exception&) {}   // demand upload is still available
+        }
+        std::vector<uint8_t>().swap(j->swizzled);
+        std::lock_guard lk(q.mu);
+        for (auto& slot : q.jobs) {
+            if (slot != j) continue;
+            if (decoded && !ahead_memory_pressure.load(std::memory_order_relaxed)) {
+                j->state = AstcAheadJob::ready;
+                q.prepared++;
+            } else {
+                slot.reset();
+            }
+            break;
+        }
+    }
+}
+
 bool upload_inner(Texture& tex, const Ranges* dirty) {
     PROF(PROF_UPLOAD);
     if (upload_never(tex)) return false;
@@ -3073,10 +3172,12 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                                             : Tegra::Texture::ASTC::DecompressSerial;
                     const std::span<const uint8_t> encoded(blocks, block_bytes);
                     const std::span<uint8_t> decoded(out, out_bytes);
-                    if (vega)
-                        decode_astc_vega_cached(decode, encoded, g.w, px_h, g.d, tex.block_w, tex.block_h, decoded);
-                    else
+                    if (vega) {
+                        if (!astc_ahead_copy(encoded, g.w, px_h, g.d, tex.block_w, tex.block_h, decoded))
+                            decode_astc_vega_cached(decode, encoded, g.w, px_h, g.d, tex.block_w, tex.block_h, decoded);
+                    } else {
                         decode(encoded, g.w, px_h, g.d, tex.block_w, tex.block_h, decoded);
+                    }
                 } else if (widen_from) {
                     widen_rows(out, blocks, (size_t)g.tw * th * g.td, src_bpb, out_bpb, widen_alpha(src_vf));
                 }
@@ -4519,10 +4620,83 @@ void texture_ahead_gone(const nvn_tex* t) {
     std::lock_guard lk(ahead_mu);
     ahead_queue.gone(t->gpu);
 }
+// Physical RAM and commit headroom are pressure signals. The gate stops speculative work only.
+void texture_ahead_update_pressure() {
+#ifdef _WIN32
+    static const bool on = env_on("RX_VK_TEX_AHEAD_PRESSURE");
+    if (!on || !policy_rule::windows_vega_compat(dev.facts)) return;
+    static int64_t next_check = 0;
+    const int64_t now = ahead_now_ms();
+    if (now < next_check) return;
+    next_check = now + 500;
+    MEMORYSTATUSEX m{sizeof(m)};
+    if (!GlobalMemoryStatusEx(&m)) return;
+    const bool was = ahead_memory_pressure.load(std::memory_order_relaxed);
+    const uint64_t free_phys = (was ? 2560ull : 1536ull) << 20;
+    const uint64_t free_commit = (was ? 4096ull : 2560ull) << 20;
+    const bool paused = m.ullAvailPhys < free_phys || m.ullAvailPageFile < free_commit;
+    if (paused == was) return;
+    ahead_memory_pressure.store(paused, std::memory_order_relaxed);
+    if (paused && astc_ahead_on()) {
+        auto& q = astc_ahead_queue();
+        std::lock_guard lk(q.mu);
+        for (auto& j : q.jobs)
+            if (j && j->state != AstcAheadJob::decoding) j.reset();
+    }
+    logf("vk: texture prefetch %s: %llu MB physical and %llu MB commit available", paused ? "paused" : "resumed",
+         (unsigned long long)(m.ullAvailPhys >> 20), (unsigned long long)(m.ullAvailPageFile >> 20));
+#endif
+}
+
+// Submit the top mip of a known 2D material. The worker owns a snapshot, never a pointer into guest memory.
+// A draw compares the decoded level's source blocks exactly before using it.
+bool astc_ahead_offer(const nvn_tex& t, int64_t now) {
+    if (!astc_ahead_on() || !vk_format(t.d.format).astc || nvn_tex_is_linear(&t.d) ||
+        t.d.width > 1024 || t.d.height > 1024 || uint64_t(t.d.width) * t.d.height * 4 < (256u << 10)) return false;
+    if (ahead_memory_pressure.load(std::memory_order_relaxed)) return true;
+    Texture shape{};
+    shape.d = t.d;
+    shape.type = VK_IMAGE_TYPE_2D;
+    int bw = 0, bh = 0;
+    shape.bpb = nvn_block_size(t.d.format, &bw, &bh);
+    if (shape.bpb != 16 || bw <= 1 || bh <= 1) return false;
+    shape.block_w = bw, shape.block_h = bh;
+    const LevelGeo g = level_geo(shape, 0);
+    if (!g.swizzled || g.swizzled > (2u << 20) || g.tile_d || g.offset > t.L.size || g.swizzled > t.L.size - g.offset ||
+        memory_has_shadow(t.gpu + g.offset, g.swizzled) || memory_writeback_ever(t.gpu + g.offset, g.swizzled)) return false;
+    uint64_t avail = 0;
+    const uint8_t* p = host->gpu_ptr(t.gpu + g.offset, &avail);
+    if (!p || avail < g.swizzled) return false;
+    auto& q = astc_ahead_queue();
+    std::unique_lock lk(q.mu, std::try_to_lock);
+    if (!lk) return true;
+    std::shared_ptr<AstcAheadJob>* next = nullptr;
+    for (auto& j : q.jobs) {
+        if (j && j->state == AstcAheadJob::ready && now - j->offered > 1500) j.reset();
+        if (j && j->address == t.gpu && j->geo.w == g.w && j->geo.h == g.h && j->bw == (uint32_t)bw && j->bh == (uint32_t)bh)
+            return true;
+        if (!j && !next) next = &j;
+    }
+    if (!next) return true;
+    try {
+        auto job = std::make_shared<AstcAheadJob>();
+        job->address = t.gpu, job->geo = g, job->bw = bw, job->bh = bh, job->offered = now;
+        job->swizzled.assign(p, p + g.swizzled);
+        if (!q.started) {
+            std::thread(astc_ahead_worker, std::ref(q)).detach();
+            q.started = true;
+        }
+        *next = std::move(job);
+        q.cv.notify_one();
+    } catch (const std::exception&) {}   // demand upload is still available
+    return true;
+}
+
 void texture_ahead_frame(int64_t draws) {
     if (!ahead_on()) return;
     static const int64_t budget_ns = (int64_t)((getenv("RX_VK_TEX_AHEAD_MS") ? atof(getenv("RX_VK_TEX_AHEAD_MS")) : 12.0) * 1e6);
-    ahead_allow_ns = texture_ahead::allowance_ns(draws, budget_ns);
+    texture_ahead_update_pressure();
+    ahead_allow_ns = ahead_memory_pressure.load(std::memory_order_relaxed) ? 0 : texture_ahead::allowance_ns(draws, budget_ns);
     ahead_spent_ns = 0;
     std::unique_lock lk(ahead_mu);
     ahead_n.stale += ahead_queue.trim(ahead_now_ms());
@@ -4530,7 +4704,8 @@ void texture_ahead_frame(int64_t draws) {
     ++frames;
     // Following Rekarina's streaming notes, keep disk I/O out of gameplay
     // and don't hold the registration lock across a filesystem write.
-    if (ahead_dirty && draws < texture_ahead::kLightDraws && frames - last_save >= 300) {
+    if (ahead_dirty && !ahead_memory_pressure.load(std::memory_order_relaxed) &&
+        draws < texture_ahead::kLightDraws && frames - last_save >= 300) {
         auto drawn = ahead_drawn;
         ahead_dirty = false;
         last_save = frames;
@@ -4588,6 +4763,7 @@ void texture_ahead_run() {
                 !texture_ahead::room(total_bytes, ahead_budget_bytes, texture_ahead::kVegaReserveBytes + bytes))
                 continue;
         }
+        if (vega && astc_ahead_offer(t, now)) continue;
         // (as a draw's first use of it would: made, and uploaded from the game's memory, into this recording's uploads)
         const uint64_t bytes0 = total_bytes;
         if (texture_get(&t, true)) {
@@ -6343,7 +6519,15 @@ void compact_step(uint64_t completed) {
         return;   // (the images the GPU is done with are freed now, before the next pass opens)
     }
     if (!image_compact_active()) {
-        if (frame_no < compact.next_check) return;
+        // The normal allocator can fall back immediately. Bring forward a
+        // bounded compaction check at the frame boundary after pool OOM.
+        static const bool early_on = env_on("RX_VK_COMPACT_ON_POOL_OOM");
+        static uint64_t oom_seen = 0, next_early = 0;
+        const uint64_t oom = early_on ? texture_pool_oom.load(std::memory_order_relaxed) : 0;
+        const bool early = oom != oom_seen && frame_no >= next_early;
+        if (frame_no < compact.next_check && !early) return;
+        oom_seen = oom;
+        if (early) next_early = frame_no + 120;
         compact.next_check = frame_no + 120;
         static const char* compact_env = getenv("RX_VK_COMPACT_MB");
         uint64_t min_free = 512ull << 20;
@@ -6360,6 +6544,7 @@ void compact_step(uint64_t completed) {
             vram_compact::returnable(block_bytes, free_bytes, kept) < vram_compact::run_from(min_free, compact.pressed))
             return;
         if (!image_compact_begin(64ull << 20, 12)) return;
+        if (early) logf("vk: texture-pool allocation failed; starting a bounded compaction check early");
         compact.runs++, compact.moved = compact.moved_bytes = compact.ignored = compact.passes = 0;
         logf("vk: VRAM compaction %llu begins: the textures' blocks hold %llu MB, %llu MB of it free space",
              (unsigned long long)compact.runs, (unsigned long long)(block_bytes >> 20), (unsigned long long)(free_bytes >> 20));

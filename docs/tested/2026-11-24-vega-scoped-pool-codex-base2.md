@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Installed Red Tunic 4.1.0 host (source 2cd2475d), previous local Vulkan DLL | Windows 11 Pro for Workstations 26300 | Radeon Vega 1002:15E7 / AMD 26.5.2 | Ryzen 5 5625U / 16 GB | 1920×1080 output with 67% render scale, headless Vulkan, CPU ASTC, frame generation off, isolated shader cache on D: | Lakeside checkpoint, HyruleField_Adult, scripted right-stick turn | Base 2, 106 presents at 7.46 fps, 374.5 ms p95, 453.3 ms p99, 749.1 ms maximum, 11 frames over 250 ms. The baseline cache started with 945 kept programs. |

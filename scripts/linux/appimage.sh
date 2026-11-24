@@ -19,6 +19,11 @@ ROOT=$PWD
 B=$ROOT/build-linux
 DEPS=${DEPS:-$B/deps}
 APPDIR=$B/AppDir
+if [ -f assets/red-tunic.png ]; then
+    RED_TUNIC_PACKAGE=1
+else
+    RED_TUNIC_PACKAGE=0
+fi
 # (--long: a nightly built on a tagged commit is v2.1.0-rc.1-0-g1a2b3c4, so the updaters know it is the nightly:
 # builder/linux/linux_update.py track_of)
 VERSION=${HOOKSHOT_VERSION:-$(git describe --tags --long --always --match "v[0-9]*" 2>/dev/null || echo dev)}
@@ -40,7 +45,16 @@ T=$APPDIR/usr/share/hookshot
 L=$APPDIR/usr/lib/hookshot   # (what the image builds with: emsdk's clang, FFmpeg, SDL2, the sysroot; AppRun points there)
 
 # ---- the tools (the sources the player's build compiles, and the scripts) ----
-cp -a nx2 host scripts LICENSE readme.md assets native "$T/"
+cp -a nx2 host scripts LICENSE readme.md native "$T/"
+if [ "$RED_TUNIC_PACKAGE" = 1 ]; then
+    mkdir -p "$T/assets"
+    cp assets/red-tunic.png assets/red-tunic.ico assets/red-tunic-vega-path.svg "$T/assets/"
+    cp assets/red-tunic.png "$T/assets/hookshot.png"
+    if [ -f "RELEASE_NOTES_${VERSION#v}.md" ]; then cp "RELEASE_NOTES_${VERSION#v}.md" "$T/"; fi
+    printf '%s\n' 'Red Tunic builder with no recorded game data' > "$T/.red-tunic-source-only"
+else
+    cp -a assets "$T/"
+fi
 printf '%s
 ' "$VERSION" > "$T/VERSION"   # (no git history in here: nx2/version.py reads the release name from it)
 mkdir -p "$T/builder" "$T/gpu/render" "$T/gpu/vk" "$T/third_party"
@@ -81,7 +95,7 @@ cp -a third_party/zbic "$T/third_party/"
 cp -a third_party/fidelityfx "$T/third_party/"
 cp -a third_party/a64-kit/* "$T/third_party/a64-kit/"
 rm -f "$T/third_party/a64-kit/tools/lld-link.exe"
-if [ -d work ]; then
+if [ "$RED_TUNIC_PACKAGE" = 0 ] && [ -d work ]; then
     mkdir -p "$T/work/image"
     for f in hot_funcs.txt hot_order.txt hookshot_pieces.prof hookshot_vk.profdata; do [ -f "work/$f" ] && cp "work/$f" "$T/work/"; done
     [ -f work/image/chunks.txt ] && cp work/image/chunks.txt "$T/work/image/"
@@ -89,7 +103,7 @@ fi
 # (the pipeline state list's sources, assets/pipeline_states/, came with assets/ above, and are required: nx2/make_game.py merges
 # them beside the game, and without them a new install's first field load is drawn white for seconds while its pipelines
 # compile; v2.0.8 to v2.0.14 shipped none. scripts/linux/check_player_build.sh reads them back from the image)
-[ -n "$(find "$T/assets/pipeline_states" -name "*.bin.xz" 2>/dev/null)" ] || { echo "assets/pipeline_states/ holds no pipeline state list: a release ships them (docs/development.md, \"The pipeline state list\")"; exit 1; }
+[ "$RED_TUNIC_PACKAGE" = 1 ] || [ -n "$(find "$T/assets/pipeline_states" -name "*.bin.xz" 2>/dev/null)" ] || { echo "assets/pipeline_states/ holds no pipeline state list: a release ships them (docs/development.md, \"The pipeline state list\")"; exit 1; }
 find "$T" -name __pycache__ -prune -exec rm -rf {} +
 
 # ---- what it builds with ----
@@ -202,16 +216,21 @@ cp builder/linux/AppRun "$APPDIR/AppRun"
 cp builder/linux/hookshot-builder.desktop "$APPDIR/"
 # (RecompLauncher reads this from inside the AppImage, at /recomplauncher.json)
 cp recomplauncher.json "$APPDIR/recomplauncher.json"
-cp assets/hookshot.png "$APPDIR/hookshot.png"
+cp "$T/assets/hookshot.png" "$APPDIR/hookshot.png"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
-cp assets/hookshot.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/hookshot.png"
+cp "$T/assets/hookshot.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/hookshot.png"
 
 # (the update list, beside AppRun and not inside a hashed part: hookshot-linux.txt names each part's checksum)
 # (the parts are served from the linux-parts release of the repository this is built in, where
 # scripts/linux/publish_parts.sh uploads them: without --base the list named NotRexed/Hookshot's release, which a fork's
 # CI does not upload to, so a fork's update list named parts that were not there)
-python3 scripts/linux/make_parts.py "$APPDIR" "$VERSION" "$B/parts" \
-    --base "https://git.notrexed.dev/${HOOKSHOT_REPOSITORY:-Hookshot/Hookshot}/releases/download/linux-parts"
+if [ "$RED_TUNIC_PACKAGE" = 1 ] && [ "${RED_TUNIC_BUILD_PARTS:-0}" = 1 ]; then
+    python3 scripts/linux/make_parts.py "$APPDIR" "$VERSION" "$B/parts" \
+        --base "https://github.com/spacefarergames/RedTunic/releases/download/linux-parts"
+elif [ "$RED_TUNIC_PACKAGE" = 0 ]; then
+    python3 scripts/linux/make_parts.py "$APPDIR" "$VERSION" "$B/parts" \
+        --base "https://git.notrexed.dev/${HOOKSHOT_REPOSITORY:-Hookshot/Hookshot}/releases/download/linux-parts"
+fi
 
 # The update information AppImageUpdate and Gear Lever read: the newest .zsync of this repository's latest release (or of
 # the release HOOKSHOT_UPDATE_RELEASE names). appimagetool writes it into the image and makes the .zsync beside it with
@@ -221,6 +240,10 @@ UPDATE_RELEASE=${HOOKSHOT_UPDATE_RELEASE:-latest}
 [ "$UPDATE_RELEASE" = latest ] && UPDATE_PATH=latest/download || UPDATE_PATH=download/$UPDATE_RELEASE
 UPDATE_INFO=${HOOKSHOT_UPDATE_INFO:-"zsync|https://git.notrexed.dev/$UPDATE_REPO/releases/$UPDATE_PATH/Hookshot-x86_64.AppImage.zsync"}
 OUT=$B/Hookshot-$VERSION-x86_64.AppImage
+if [ "$RED_TUNIC_PACKAGE" = 1 ]; then
+    OUT=$B/RedTunic-$VERSION-x86_64.AppImage
+    UPDATE_INFO=${HOOKSHOT_UPDATE_INFO:-"zsync|https://github.com/spacefarergames/RedTunic/releases/latest/download/RedTunic-x86_64.AppImage.zsync"}
+fi
 rm -f "$OUT" "$OUT.zsync"
 # (from build-linux/: appimagetool writes the .zsync into the current folder)
 (cd "$B" && ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$DEPS/appimagetool" --runtime-file "$DEPS/runtime-x86_64" \

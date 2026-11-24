@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Red Tunic 4.1.0 host (source 2cd2475d), renderer rebuilt from 4.2.1 with scoped mesh barriers and early texture-pool compaction | Windows 11 Pro for Workstations 26300 | Radeon Vega 1002:15E7 / AMD 26.5.2 | Ryzen 5 5625U / 16 GB | 1920×1080 output with 67% render scale, headless Vulkan, CPU ASTC, frame generation off, both renderer opt-ins on, isolated shader cache on D: | Lakeside checkpoint, HyruleField_Adult, scripted right-stick turn | Patch 2, 111 presents at 5.97 fps, 376.9 ms p95, 772.3 ms p99, 1368.7 ms maximum, 17 frames over 250 ms. The cache started with 920 kept programs and an allocation failure started early compaction. |

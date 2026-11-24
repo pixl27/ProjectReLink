@@ -88,6 +88,12 @@ def check_source():
     for needle in ("texture_ahead::allowance_ns(draws, ", "ahead_queue.trim(", "texture_ahead::save_drawn("):
         if needle not in frame:
             fail.append("texture_ahead_frame no longer has: " + needle)
+    pressure = block(tex, "void texture_ahead_update_pressure()")
+    if "GlobalMemoryStatusEx" not in pressure or "ahead_memory_pressure" not in pressure:
+        fail.append("texture prefetch no longer reads Windows pressure before pausing speculative work")
+    if frame.index("texture_ahead_update_pressure()") > frame.index("ahead_allow_ns =") or \
+       "ahead_memory_pressure.load(std::memory_order_relaxed) ? 0 : texture_ahead::allowance_ns" not in frame:
+        fail.append("texture prefetch must use the current pressure gate before advancing the queue")
     # what a draw samples for the first time is remembered; what was prepared is not learnt from itself
     up = block(tex, "bool upload(Texture& tex, const Ranges* dirty)")
     if "ahead_learn(tex);" not in up or "!ahead_running" not in up:

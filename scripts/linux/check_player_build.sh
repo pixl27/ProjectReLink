@@ -18,7 +18,7 @@
 # Neither may write into the image's tree: on a player's PC it is read-only.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-IMAGE=${1:-$(ls -t build-linux/Hookshot-*-x86_64.AppImage 2>/dev/null | head -1 || true)}
+IMAGE=${1:-$(ls -t build-linux/*-x86_64.AppImage 2>/dev/null | head -1 || true)}
 [ -n "$IMAGE" ] && [ -f "$IMAGE" ] || { echo "no AppImage to check (scripts/linux/appimage.sh makes one)"; exit 1; }
 IMAGE=$(readlink -f "$IMAGE")
 TMP=$(mktemp -d)
@@ -35,13 +35,21 @@ in_image() {
 touch "$TMP/before"
 sleep 1   # (so a file written below is newer than the stamp)
 
-echo "== the pipeline state list (assets/pipeline_states/: nx2/make_game.py merges it beside the game)"
-(cd "$T" && in_image "$R/usr/python/bin/python3" -I -B nx2/pipeline_states.py check --dir assets/pipeline_states) ||
-    { echo "the AppImage carries no readable assets/pipeline_states/: a new install's first field load would be drawn white"; exit 1; }
+if [ -f "$T/.red-tunic-source-only" ]; then
+    echo "== source-only Red Tunic package"
+    for forbidden in work assets/saves assets/pipeline_states assets/profiles; do
+        [ ! -e "$T/$forbidden" ] || { echo "unexpected local data in $forbidden"; exit 1; }
+    done
+else
+    echo "== the pipeline state list (assets/pipeline_states/: nx2/make_game.py merges it beside the game)"
+    (cd "$T" && in_image "$R/usr/python/bin/python3" -I -B nx2/pipeline_states.py check --dir assets/pipeline_states) ||
+        { echo "the AppImage carries no readable assets/pipeline_states/: a new install's first field load would be drawn white"; exit 1; }
 
-echo "== the hot list (assets/profiles/hot_funcs.txt: the lifted functions every build compiles at -O2, nx2/make_game.py)"
-grep -qE '^f_[0-9a-f]{8}$' "$T/assets/profiles/hot_funcs.txt" 2>/dev/null && ! grep -qvE '^f_[0-9a-f]{8}$' "$T/assets/profiles/hot_funcs.txt" ||
-    { echo "the AppImage carries no hot list, or one with a line that is not f_<8 hex>: every lifted function would be built at -O1"; exit 1; }
+    echo "== the hot list (assets/profiles/hot_funcs.txt: the lifted functions every build compiles at -O2, nx2/make_game.py)"
+    grep -qE '^f_[0-9a-f]{8}$' "$T/assets/profiles/hot_funcs.txt" 2>/dev/null && ! grep -qvE '^f_[0-9a-f]{8}$' "$T/assets/profiles/hot_funcs.txt" ||
+        { echo "the AppImage carries no hot list, or one with a line that is not f_<8 hex>: every lifted function would be built at -O1"; exit 1; }
+
+fi
 
 echo "== AppRun --cli --help"
 in_image "$R/AppRun" --cli --help > "$TMP/help.txt"

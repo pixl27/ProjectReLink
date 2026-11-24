@@ -51,10 +51,13 @@ class AppImageHeaders(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="hookshot-appimage-headers-") as folder:
             packaged = Path(folder) / "tools"
             packaged.mkdir()
-            env = dict(os.environ, T=str(packaged), VERSION="authored-test")
+            env = dict(os.environ, T=str(packaged), VERSION="authored-test", RED_TUNIC_PACKAGE="1")
             result = subprocess.run(["bash", "-eu", "-o", "pipefail", "-c", script[start:end]],
                                     cwd=ROOT, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((packaged / ".red-tunic-source-only").is_file())
+            for local_data in ("work", "assets/pipeline_states", "assets/profiles", "assets/saves"):
+                self.assertFalse((packaged / local_data).exists(), local_data)
             entries = [p.relative_to(ROOT).as_posix() for p in (ROOT / "host").rglob("*")
                        if p.suffix in (".c", ".h")]
             entries += [p.relative_to(ROOT).as_posix() for p in (ROOT / "gpu/render").glob("*.h")]

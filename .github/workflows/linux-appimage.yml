@@ -171,6 +171,7 @@ jobs:
           # (a release is named by its tag: a promoted version's commit also has its release candidate's tag, which git
           # describe could name instead)
           HOOKSHOT_VERSION: ${{ env.RELEASE_TAG }}
+          RED_TUNIC_BUILD_PARTS: '1'
           HOOKSHOT_UPDATE_RELEASE: >-
             ${{ env.RELEASE_TAG == '' && github.event_name == 'push' && github.ref == 'refs/heads/main' && 'nightly'
             || contains(env.RELEASE_TAG, '-') && 'rc' || 'latest' }}

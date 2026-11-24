@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Red Tunic 4.1.0 host (source 2cd2475d), 4.2.1 Windows renderer with camera experiments | Windows 11 Pro for Workstations 26300, normal window | Radeon Vega 1002:15E7 / AMD 26.5.2 | Ryzen 5 5625U / 16 GB | 67% render scale at 1080p, CPU ASTC, frame generation off, all three new switches off, isolated cache | Lakeside checkpoint, HyruleField_Adult, scripted right-stick turn | warm1, 109 presents at 6.62 fps, 529.3 ms p99 and 56 frames over 100 ms. Cache warm-up sample, excluded from the A/B comparison. |
