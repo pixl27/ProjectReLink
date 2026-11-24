@@ -27,7 +27,7 @@ def package(tools):
     script = (ROOT / "scripts/linux/appimage.sh").read_text(encoding="utf-8")
     start = script.index("# ---- the tools (the sources")
     end = script.index("# ---- what it builds with", start)
-    subprocess.run(["bash", "-u", "-c", script[start:end]], cwd=ROOT, env=dict(os.environ, T=str(tools), VERSION="test"),
+    subprocess.run(["bash", "-u", "-c", script[start:end]], cwd=ROOT, env=dict(os.environ, T=str(tools), VERSION="test", RED_TUNIC_PACKAGE="1"),
                    capture_output=True, text=True)
 
 
@@ -80,9 +80,11 @@ class PlayerBuildFromTheAppImage(unittest.TestCase):
         self.assertRegex(r.stdout, r"dry run: [1-9]\d* files to compile besides the lift's, 0 missing")
 
     def test_the_image_carries_the_renderer_sources_and_assets(self):
-        # (every player's build compiles the back end: its sources and the committed play profile, assets/profiles/)
         self.assertTrue((self.tools / "gpu/vk/vk_main.cpp").is_file())
-        self.assertTrue((self.tools / "assets/profiles").is_dir())
+        self.assertTrue((self.tools / "assets/red-tunic.png").is_file())
+        self.assertTrue((self.tools / ".red-tunic-source-only").is_file())
+        for local_data in ("assets/profiles", "assets/pipeline_states", "assets/saves", "work"):
+            self.assertFalse((self.tools / local_data).exists(), local_data)
 
     def test_a_file_the_image_lacks_fails(self):
         first = (self.tools / "third_party/opus/sources.txt").read_text().split()[0]

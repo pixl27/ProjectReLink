@@ -48,7 +48,7 @@ L=$APPDIR/usr/lib/hookshot   # (what the image builds with: emsdk's clang, FFmpe
 cp -a nx2 host scripts LICENSE readme.md native "$T/"
 if [ "$RED_TUNIC_PACKAGE" = 1 ]; then
     mkdir -p "$T/assets"
-    cp assets/red-tunic.png assets/red-tunic.ico assets/red-tunic-vega-path.svg "$T/assets/"
+    cp assets/red-tunic.png assets/red-tunic.ico assets/red-tunic-vega-path.svg assets/branding.md "$T/assets/"
     cp assets/red-tunic.png "$T/assets/hookshot.png"
     if [ -f "RELEASE_NOTES_${VERSION#v}.md" ]; then cp "RELEASE_NOTES_${VERSION#v}.md" "$T/"; fi
     printf '%s\n' 'Red Tunic builder with no recorded game data' > "$T/.red-tunic-source-only"

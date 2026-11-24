@@ -4,7 +4,7 @@
 
 Red Tunic is an unofficial native PC recompilation of the Nintendo Switch 2 remake of *The Legend of Zelda: Ocarina of Time*. It builds locally from your own copy of the game. Red Tunic is based on Hookshot and focuses on integrated AMD Radeon graphics, starting with the Ryzen 5 5625U with 16 GB of shared memory.
 
-[Project and source updates](https://github.com/spacefarergames/RedTunic) · [Releases](https://github.com/spacefarergames/RedTunic/releases) · [Technical documentation](docs/README.md)
+[Project and source updates](https://github.com/spacefarergames/RedTunic) · [Releases](https://github.com/spacefarergames/RedTunic/releases) · [Technical documentation](docs/README.md) · [Brand artwork](assets/branding.md)
 
 ![Red Tunic Vega path from native x64 through 720p Vulkan to 1080p output](assets/red-tunic-vega-path.svg)
 
@@ -60,7 +60,7 @@ Version 4.0.2 integrates Hookshot through commit `38b90dfe` (fetched 23 November
 
 | Area | Red Tunic change |
 | --- | --- |
-| Branding and CPU target | Red Tunic name, red tunic and Radeon-inspired logo, and version 4.0.0. Ryzen builds use x86-64-v3 and tune for the detected Zen generation. |
+| Branding and CPU target | Red Tunic name and its original release branding. Ryzen builds use x86-64-v3 and tune for the detected Zen generation. |
 | Loading and settings | Animated procedural fire and embers below the startup logo, eased progress during shader and pipeline preparation, and red tints in the game menu and Windows Builder. |
 | Internal resolution | On matching AMD integrated graphics, Auto (this PC) fixes the render scale at two thirds and a fresh install selects 1920 × 1080 docked output. The 3D scene renders at 1280 × 720 in that configuration. The preset selects the in-game upscaler and reduces grass and shadow settings to 75%. |
 | Native Vulkan and task/mesh draws | Uses native Vulkan mesh shaders where supported by hardware and driver policy. The compute fallback handles task and mesh work on Vega and avoids an extra transfer barrier for indirect setup. Eligible draw passes use the game's barrier ordering on AMD APUs. |
@@ -102,7 +102,11 @@ The redistribution archive contains the Builder, source and dependencies. The ga
 
 ### On Linux
 
-Follow the Linux commands in [Build from source](#build-from-source). Linux builds use the host Vulkan driver. The [Steam Deck playbook](docs/steam-deck-playbook.md) covers the inherited handheld setup.
+1. Download `RedTunic-v4.2.2-x86_64.AppImage` and `SHA256SUMS` from [Red Tunic Releases](https://github.com/spacefarergames/RedTunic/releases).
+2. Verify the download with `sha256sum --ignore-missing --check SHA256SUMS`. Run `chmod +x RedTunic-v4.2.2-x86_64.AppImage`, then open it.
+3. Select your supported game dump and choose a separate game output folder. Open the same AppImage to play after the build finishes.
+
+Linux uses the host Vulkan driver. See [Build from source](#build-from-source) if you prefer to build the Builder locally. The [Steam Deck playbook](docs/steam-deck-playbook.md) covers the inherited handheld setup.
 
 ### Where the files go
 

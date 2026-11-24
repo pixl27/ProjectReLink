@@ -158,10 +158,12 @@ def check_release():
     appimage = (ROOT / "scripts" / "linux" / "appimage.sh").read_text(encoding="utf-8")
     check("the AppImage builds no renderer of its own (every player's build compiles it, with the profile)",
           "RX_VK_ONLY" not in appimage and "RX_VK_PGO" not in appimage)
-    check("the AppImage carries assets/ (the committed profile, for every player's own renderer)",
-          "cp -a nx2 host scripts LICENSE readme.md assets " in appimage)
-    check("and a developer's own profile when the checkout has one",
-          "for f in hot_funcs.txt hot_order.txt hookshot_pieces.prof hookshot_vk.profdata; do" in appimage)
+    check("the Red Tunic package stages only its artwork and excludes the recorded profiles",
+          'cp assets/red-tunic.png assets/red-tunic.ico assets/red-tunic-vega-path.svg assets/branding.md "$T/assets/"' in appimage
+          and 'if [ "$RED_TUNIC_PACKAGE" = 0 ] && [ -d work ]; then' in appimage)
+    check("the upstream package keeps build-profile support",
+          'else\n    cp -a assets "$T/"\nfi' in appimage
+          and "for f in hot_funcs.txt hot_order.txt hookshot_pieces.prof hookshot_vk.profdata; do" in appimage)
     docs = (ROOT / "docs" / "development.md").read_text(encoding="utf-8")
     for switch in ("RX_VK_PGO=gen", "RX_VK_PGO_FILE=<file>"):
         check("%s is in docs/development.md's switch tables" % switch, switch in docs)
