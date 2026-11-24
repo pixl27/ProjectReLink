@@ -4294,12 +4294,15 @@ struct SlowWatch {
     int64_t prof0[PROF_COUNT];
     int64_t ms0[4];   // (hookshot: memory sync's parts and the lock wait, at the start)
     const char* what;
+    const bool active = presents_now >= 600;
     explicit SlowWatch(const char* w) : what(w) {
-        std::memcpy(prof0, prof_ns, sizeof prof0);
+        if (!active) return;
+        for (int i = 2; i < PROF_COUNT; i++) prof0[i] = prof_ns[i].get();
         for (int i = 0; i < 3; i++) ms0[i] = memsync_part_ns[i].load(std::memory_order_relaxed);
         ms0[3] = memsync_lock_wait_ns.load(std::memory_order_relaxed);
     }
     ~SlowWatch() {
+        if (!active) return;
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         if (ms < 15.0 || presents_now < 600) return;   // (after the first load)
         double phase[PROF_COUNT]{};

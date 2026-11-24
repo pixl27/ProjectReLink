@@ -55,7 +55,7 @@ def main():
                         str(cpp), "-o", str(exe)], check=True)
         for cache in ["coherent", "noncoherent"]:
             for case in ["cpu", "astc", "atom", "reuse", "inflight-tail", "multiple", "failure", "empty-range",
-                         "small-fallback", "unmapped-fallback", "unmapped-both", "fallback-astc", "fallback-reuse"]:
+                         "small-fallback", "dedicated-fallback", "unmapped-fallback", "unmapped-both", "fallback-astc", "fallback-reuse"]:
                 subprocess.run([str(exe), case, cache], check=True, timeout=15)
 
 

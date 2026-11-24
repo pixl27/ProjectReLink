@@ -16,6 +16,9 @@ def main() -> int:
     replay = (ROOT / "gpu/vk/vk_replay.cpp").read_text(encoding="utf-8")
     note = replay.find("void hitch_note(")
     watch = replay.find("~SlowWatch()")
+    snapshot = replay[replay.find("explicit SlowWatch("):watch]
+    if "prof0[i] = prof_ns[i].get()" not in snapshot:
+        raise SystemExit("FAIL: SlowWatch must snapshot the sum of each phase's counter slots")
     if note < 0 or watch < 0 or note > watch:
         raise SystemExit("FAIL: hitch_note is not defined before SlowWatch")
     body = replay[watch:replay.find("void submit_memory_work(", watch)]

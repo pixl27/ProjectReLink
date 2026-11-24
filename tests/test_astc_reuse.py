@@ -44,6 +44,28 @@ int main() {
     encoded.front() = 8;
     run(257);
     assert(decodes == 4);
+
+    // Two different textures that hash to the same bucket both stay warm.
+    encoded.front() = 40;
+    const uint64_t first = astc_reuse::xxh64(encoded.data(), encoded.size(), 0);
+    uint8_t other = 41;
+    for (;; ++other) {
+        assert(other != 40);
+        encoded.front() = other;
+        const uint64_t hash = astc_reuse::xxh64(encoded.data(), encoded.size(), 0);
+        if (hash %% 16 == first %% 16 && hash %% 512 != first %% 512) break;
+    }
+    for (uint8_t value : {uint8_t(40), other}) {
+        encoded.front() = value;
+        run(260);
+        run(260);
+    }
+    const unsigned warmed = decodes;
+    for (uint8_t value : {uint8_t(40), other, uint8_t(40), other}) {
+        encoded.front() = value;
+        run(260);
+    }
+    assert(decodes == warmed);
 }
 """
 

@@ -64,7 +64,7 @@ def main():
     need("* bc_layers() * 16;" in block(tex, "bool bc_scratch_make() {"), "the scratch's output buffer is sized for more layers than a run")
     layout = block(tex, "bool bc_scratch_layout(")
     need(layout.count("0, 1, 0, bc_layers()};") == 2 and "kBcLayers" not in layout, "a scratch's first layout names layers it does not have")
-    upload = block(tex, "bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty) {")
+    upload = block(tex, "bool upload_astc_gpu(")
     need("const uint32_t run = bc_layers();" in upload and "k1 - k0 < run" in upload, "an upload's run is not the scratch's layers")
     copy = block(tex, "bool texture_copy_into_bc(")
     need("l0 += bc_layers()" in copy and "std::min(bc_layers(), layers - l0)" in copy and "kBcLayers" not in copy,

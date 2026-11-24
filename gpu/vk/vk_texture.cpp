@@ -673,11 +673,11 @@ uint64_t staging_keep() {
 }
 
 /// An arena of size bytes, made and mapped (false: none could be)
-bool arena_make(Arena& a, uint64_t size) {
+bool arena_make(Arena& a, uint64_t size, bool dedicated = false) {
     void* m = nullptr;
     a.size = size;
     if (!create_buffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, a.buffer, a.allocation,
-                       &m))
+                       &m, dedicated))
         return false;
     if (!m) {
         destroy_buffer(a.buffer, a.allocation);   // (made but not mapped: of no use here)
@@ -852,7 +852,9 @@ Staging staging(uint64_t n, uint64_t align = 256) {
     // be made even for a 36 KB upload, the idle ones having been given back (texture_frame), and every upload failed until one
     // was free: BC3 textures drawn as noise (RX 5500M, 2.9 GB of RAM available)
     if (!make(std::max(kArena, need))) {
-        const bool small = need < kArena && make(need);
+        // Rekarina 1.2.10 retries failed staging outside its pool. Let small uploads
+        // bypass VMA's block allocation if the normal smaller arena also fails.
+        const bool small = need < kArena && (make(need) || arena_make(a, need, true));
         static std::atomic<int> told{0};
         if (told++ < 8)
             logf("vk: staging: no %llu MB arena could be made (%zu kept); %s", (unsigned long long)(kArena >> 20), arenas.size(),
@@ -928,11 +930,12 @@ bool astc_on_cpu() {
     }();
     return on;
 }
-bool astc_ready() {
+bool astc_ready(bool hybrid = false) {
+    if (!hybrid && astc_on_cpu()) return false;
     static int state = 0;   // 0 untried, 1 ready, -1 unavailable
     if (state) return state > 0;
     state = -1;
-    if (!dev.push_descriptor || !vkCmdPushDescriptorSetKHR || astc_on_cpu()) return false;
+    if (!dev.push_descriptor || !vkCmdPushDescriptorSetKHR) return false;
     const VkDescriptorSetLayoutBinding b[2] = {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
@@ -1776,12 +1779,12 @@ bool astc_kinds_wanted(const Texture& tex) {
     return tex.bc && !tex.bc_resized && linear_twin(tex.format) != VK_FORMAT_BC7_UNORM_BLOCK && bc1_on();
 }
 
-bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty) {
+bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty, bool hybrid = false) {
 #ifdef TRACY_ENABLE
     HT_SCOPE("texture upload_astc_gpu");
 #endif
     astc_fail = nullptr;
-    if (tex.type != VK_IMAGE_TYPE_2D || tex.samples != VK_SAMPLE_COUNT_1_BIT || !astc_ready()) {
+    if (tex.type != VK_IMAGE_TYPE_2D || tex.samples != VK_SAMPLE_COUNT_1_BIT || !astc_ready(hybrid)) {
         astc_fail = "not a 2D image the GPU decoder takes";
         return false;
     }
@@ -2508,6 +2511,8 @@ bool upload(Texture& tex, const Ranges* dirty) {
     const bool ok = upload_inner(tex, dirty);
     tl_first_upload = tl_reupload = false;
     const int64_t ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+    if (ok && tex.astc && !dirty)
+        tex.astc_upload_us = up_route == UP_CPU ? (uint32_t)std::min<int64_t>(ns / 1000, 1'000'000) : 0;
     frame_upload_ns.fetch_add(ns, std::memory_order_relaxed);
     frame_kind_ns[kind].fetch_add(ns, std::memory_order_relaxed);
     {   // (this thread's share of the frame's upload time: upload_defer's budget)
@@ -2578,17 +2583,22 @@ void decode_astc_vega_cached(AstcCpuDecoder decode, std::span<const uint8_t> blo
         return;
     }
     static std::mutex mu;
-    static std::array<AstcCpuCacheEntry, 16> cache;
+    // Two entries per bucket keep alternating textures from evicting each other.
+    // The first entry is the most recently used. The total remains 16 entries.
+    static std::array<std::array<AstcCpuCacheEntry, 2>, 8> cache;
     static std::array<uint64_t, 512> recent{};
     const std::array<uint32_t, 5> shape{w, h, d, bw, bh};
     const uint64_t hash = astc_reuse::xxh64(blocks.data(), blocks.size(), 0);
-    auto& slot = cache[hash % cache.size()];
+    auto& bucket = cache[hash % cache.size()];
     bool seen;
     {
         std::lock_guard lock(mu);
-        if (slot.shape == shape && slot.blocks.size() == blocks.size() &&
-            !std::memcmp(slot.blocks.data(), blocks.data(), blocks.size())) {
-            std::memcpy(out.data(), slot.rgba.data(), out.size());
+        for (auto& entry : bucket) {
+            if (entry.shape != shape || entry.blocks.size() != blocks.size() ||
+                std::memcmp(entry.blocks.data(), blocks.data(), blocks.size()))
+                continue;
+            std::memcpy(out.data(), entry.rgba.data(), out.size());
+            if (&entry != &bucket.front()) std::swap(entry, bucket.front());
             return;
         }
         auto& last = recent[hash % recent.size()];
@@ -2605,7 +2615,8 @@ void decode_astc_vega_cached(AstcCpuDecoder decode, std::span<const uint8_t> blo
     decode(blocks, w, h, d, bw, bh, entry.rgba);
     std::memcpy(out.data(), entry.rgba.data(), out.size());
     std::lock_guard lock(mu);
-    slot = std::move(entry);
+    bucket.back() = std::move(bucket.front());
+    bucket.front() = std::move(entry);
 }
 
 // Longshot #2343's generation-aware hash reuse, with exact range keys.
@@ -2860,7 +2871,47 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
         tex.blocks_hash = 0;
         if (!dirty && !tex.uploaded && reuse_upload(tex, total)) return up_route = UP_ASTC, true;
     }
-    if (tex.astc && (up_route = UP_ASTC, upload_astc_gpu(tex, total, dirty))) return true;
+    if (tex.astc) {
+        up_route = UP_ASTC;
+        if (!astc_on_cpu() && upload_astc_gpu(tex, total, dirty)) return true;
+        // Keep Vega's RGBA8 allocation and CPU fallback. Only opt in to small,
+        // complete, sampled 2D textures for which every shader write is known valid.
+        static const bool hybrid_on = env_on("RX_VK_VEGA_ASTC_GPU");
+        static uint64_t hybrid_frame = 0, hybrid_pixels = 0;
+        if (hybrid_on && astc_on_cpu() && policy_rule::windows_vega_compat(dev.facts) &&
+            !dirty && !tex.uploaded && !tex.bc && !tex.sparse && !tex.gpu_written &&
+            tex.type == VK_IMAGE_TYPE_2D && tex.d.target == NVN_TEXTURE_TARGET_2D &&
+            tex.samples == VK_SAMPLE_COUNT_1_BIT && !tex.skip && tex.levels <= 11 && tex.layers == 1 && tex.depth == 1 &&
+            tex.width >= 512 && tex.height >= 512 && tex.width <= 1024 && tex.height <= 1024 &&
+            linear_twin(tex.format) == VK_FORMAT_R8G8B8A8_UNORM && !nvn_tex_is_linear(&tex.d) &&
+            (tex.usage & VK_IMAGE_USAGE_STORAGE_BIT)) {
+            if (hybrid_frame != frame_no) hybrid_frame = frame_no, hybrid_pixels = 0;
+            const uint64_t tail0 = level_geo(tex, 0).offset;
+            const uint64_t alignment = std::max<uint64_t>(dev.props.limits.minStorageBufferOffsetAlignment, 4);
+            uint64_t pixels = 0;
+            bool complete = tail0 < total && !(tail0 & 15) && !(total & 15) &&
+                            tex.L.layer_size <= total && total - tail0 <= dev.props.limits.maxStorageBufferRange;
+            // Reject the entire route before any dispatch if one mip cannot be decoded.
+            for (uint32_t level = 0; complete && level < tex.levels; ++level) {
+                const LevelGeo g = level_geo(tex, level);
+                complete = g.offset >= tail0 && g.offset < total && g.swizzled <= total - g.offset &&
+                           (g.offset - tail0) % alignment == 0;
+                pixels += uint64_t(g.w) * g.h;
+            }
+            if (complete && hybrid_pixels + pixels <= 2 * 1024 * 1024 && astc_ready(true)) {
+                for (uint32_t level = 0; complete && level < tex.levels; ++level)
+                    complete = astc_level_view(&tex, level, ~0u) != VK_NULL_HANDLE;
+            }
+            if (complete && hybrid_pixels + pixels <= 2 * 1024 * 1024 &&
+                upload_astc_gpu(tex, total, nullptr, true)) {
+                hybrid_pixels += pixels;
+                static uint64_t uploads = 0;
+                if (++uploads <= 4 || uploads % 100 == 0)
+                    logf("vk: Vega GPU ASTC: %llu eligible textures uploaded", (unsigned long long)uploads);
+                return true;
+            }
+        }
+    }
     up_route = UP_CPU;
     if (tex.bc) return false;   // (no CPU path into BC3)
     // (the GPU's unswizzle reads guest memory as it is: not where the capture kept the storage as it was at its submit)
@@ -7200,7 +7251,22 @@ void texture_frame(uint64_t completed) {
         return unused < need_dead || tex->last_value > completed ||
                (!tex->gpu_written && (sweep || unused < need_unused));
     });
-    std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    static const bool astc_retain = env_on("RX_VK_VEGA_ASTC_RETAIN");
+    const bool rank_astc = astc_retain && policy_rule::windows_vega_compat(dev.facts) && !sweep && !evict_to && pool_pressure < 2;
+    const auto eviction_age = [&](const auto& entry) {
+        const auto& [last, tex] = entry;
+        const uint64_t unused = frame_no - last;
+        if (!rank_astc || unused >= 120 || tex->gpu_written || tex->released || tex->astc_upload_us < 8000)
+            return unused;
+        // Give expensive textures a short preference, scaled by what they cost to keep.
+        const uint64_t mib = std::max<uint64_t>(1, (tex->bytes + (1ull << 20) - 1) >> 20);
+        const uint64_t bonus = std::min<uint64_t>(60, tex->astc_upload_us / (500 * mib));
+        return unused > bonus ? unused - bonus : 0;
+    };
+    std::sort(order.begin(), order.end(), [&](const auto& a, const auto& b) {
+        const uint64_t age_a = eviction_age(a), age_b = eviction_age(b);
+        return age_a != age_b ? age_a > age_b : a.first < b.first;
+    });
     static uint64_t n_dead, b_dead, dead_logged_at;
     // (hookshot) the textures to go are chosen first and destroyed after; the write-backs among them go to the GPU in a few
     // batches (flush_textures), not one submission and one wait each: a sweep of 500 at a scene load stalled for seconds

@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Local Red Tunic 4.1.0 mip and retention renderer | Windows 11 Pro for Workstations 26300 | Radeon Vega 1002:15E7 / AMD 26.5.2 | Ryzen 5 5625U / 16 GB | 1920x1080 output, 67% scale, headless Vulkan, frame generation off, HOS_RESERVE_CORE=1, RX_VK_VEGA_ASTC_GPU=0, RX_VK_VEGA_ASTC_RETAIN=0 | Lakeside checkpoint in HyruleField_Adult, 100 presents from scripted camera input | 6.82 fps, 312.6 ms p95, 660.3 ms p99, 767.3 ms max, 8 frames over 250 ms, peak sampled private memory 13256 MB, 3 logged remakes after eviction, at least 0 hybrid uploads logged. HUD and minimap regions passed non-black checks. |

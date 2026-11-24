@@ -60,6 +60,7 @@ import object_store as _object_store
 import lift_store as _lift_store
 import build_jobs as _build_jobs
 import game_title
+import red_tunic_vega
 import log_redact as _log_redact
 # (hookshot) RX_TARGET=windows on Linux: the Windows game, with llvm-mingw's Linux release (HOOKSHOT_MINGW, or llvm-mingw
 # beside the builder), to run under Proton or copy to a Windows PC
@@ -2632,6 +2633,7 @@ def parse_args():
                    help="with --romfs (development: scripts/dev_packs.py): read the romfs where it is, without a copy or links in "
                         "the game folder, which then has no romfs: the game is started with --romfs naming it. "
                         "HOOKSHOT_ROMFS_IN_PLACE=1 asks the same of a --romfs build and is passed over by any other")
+    p.add_argument("--vega-profile", action="store_true", help="apply the Radeon Vega preset on Windows if automatic detection misses it")
     p.add_argument("--no-prepare-shaders", action="store_true",
                    help="leave the shaders' preparation to the game's first start (the builder's \"Prepare shaders now\" unticked)")
     p.add_argument("--compile-shaders", choices=tuple(COMPILE_LEVELS),
@@ -3460,6 +3462,8 @@ def main(a=None):
     # (after the times: they stay comparable from build to build, without a GPU's minutes that can be switched off)
     if getattr(a, "compile_shaders", None):   # (the choice kept in the folder: the game's own preparations at a start follow it)
         write_compile_level(out, a.compile_shaders)
+    if os.name == "nt" and (getattr(a, "vega_profile", False) or red_tunic_vega.detected()):
+        red_tunic_vega.apply(out)
     level = compile_level(a, out)
     skipped = prepare_skipped(a)
     if skipped:

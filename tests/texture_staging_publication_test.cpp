@@ -23,15 +23,18 @@ std::vector<std::unique_ptr<VmaAllocation_T>> allocations;
 bool coherent = false, fail_buffer = false;
 // Keep the production 1-MB rounding, with a smaller authored large-arena threshold to bound test memory.
 constexpr uint64_t kModelArena = 2u << 20;
+bool fail_pooled = false;
+enum class MemKind { Staging };
+struct MemKindScope { explicit MemKindScope(MemKind) {} };
 bool fail_large = false, unmap_large = false, unmap_all = false;
 std::vector<uint64_t> attempts;
 unsigned destroys = 0;
 uint64_t rec_value = 1, completed_value = 0;
 struct { VkPhysicalDeviceProperties props{}; } dev;
 int flushes = 0;
-bool create_buffer(uint64_t n, VkBufferUsageFlags, bool, VkBuffer& b, VmaAllocation& a, void** map) {
+bool create_buffer(uint64_t n, VkBufferUsageFlags, bool, VkBuffer& b, VmaAllocation& a, void** map, bool dedicated) {
     attempts.push_back(n);
-    if (fail_buffer || (fail_large && n >= kModelArena)) return false;
+    if (fail_buffer || (fail_pooled && !dedicated) || (fail_large && n >= kModelArena)) return false;
     allocations.push_back(std::make_unique<VmaAllocation_T>());
     a = allocations.back().get(); a->cpu.resize(n); a->gpu.resize(n);
     b = reinterpret_cast<VkBuffer>(a);
@@ -74,7 +77,7 @@ struct Texture {
 };
 struct { uint64_t offset = 0; } geo;
 auto level_geo(const Texture&, int) { return geo; }
-bool astc_ready() { return true; }
+bool astc_ready(bool) { return true; }
 std::vector<uint8_t> guest(8192, 0x5b);
 const uint8_t* guest_bytes(uint64_t at, uint64_t n, std::vector<uint8_t>&) {
     require(at <= guest.size() && n <= guest.size() - at, "authored guest bounds"); return guest.data() + at;
@@ -127,6 +130,11 @@ int run(int argc, char** argv) {
         cpu(kModelArena,0x5b); cpu(31,0xa7); require(arenas.size() == 2, "multiple arenas independently published");
     } else if (test == "failure") {
         fail_buffer = true; auto s = staging(64); require(!s.buffer && !s.data && !s.allocation && flushes == 0, "failed slice unpublished");
+    } else if (test == "dedicated-fallback") {
+        fail_pooled = true;
+        cpu(64, 0x5b);
+        require(attempts == std::vector<uint64_t>{kModelArena, 1u << 20, 1u << 20},
+                "dedicated retry follows both ordinary allocations");
     } else if (test == "empty-range") {
         flush_mapped_range(nullptr, 0, 0); require(flushes == 0, "empty range no VMA call");
     } else if (test == "small-fallback" || test == "unmapped-fallback") {
@@ -138,7 +146,7 @@ int run(int argc, char** argv) {
     } else if (test == "unmapped-both") {
         unmap_all = true; auto s = staging(64);
         require(!s.buffer && !s.data && !s.allocation && arenas.empty() && flushes == 0, "no unmapped slice admitted");
-        require(attempts.size() == 2 && destroys == 2, "both successfully allocated unmapped attempts released");
+        require(attempts.size() == 3 && destroys == 3, "both successfully allocated unmapped attempts released");
     } else if (test == "fallback-astc") {
         fail_large = true; require(upload_astc_gpu(tex, tex.L.layer_size * tex.layers, nullptr), "ASTC gather uses the mapped fallback");
         require(attempts == std::vector<uint64_t>({kModelArena, 1u << 20}) && flushes == 1, "ASTC fallback bytes published once");

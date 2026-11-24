@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Local Red Tunic 4.1.0 hybrid ASTC renderer | Windows 11 Pro for Workstations 26300 | Radeon Vega 1002:15E7 / AMD 26.5.2 | Ryzen 5 5625U / 16 GB | 1920x1080 output, 67% render scale, headless Vulkan, frame generation off, RX_VK_VEGA_ASTC_GPU=1 | Lakeside checkpoint, HyruleField_Adult, first 100 presents from scripted camera input | 7.67 fps, 307.0 ms p95, 646.2 ms p99, 717.0 ms max, 8 frames over 250 ms, peak sampled private memory 7849 MB. 3 eligible GPU uploads reported. Local HUD and minimap-region captures passed non-black checks. |

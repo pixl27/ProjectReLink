@@ -94,6 +94,7 @@ struct Texture {
     uint64_t pad = 0;         // (what the allocator gave it beyond that: padding and alignment; counted in the budget with bytes)
     uint64_t ci_key = 0;      // (its image's create info, for spare images: vk_texture.cpp)
     uint32_t id = 0;          // (its creation number: diagnostics tell images at one address apart)
+    uint32_t astc_upload_us = 0;  // last full CPU ASTC upload, for budget eviction ordering
     uint64_t first_seen = 0;  // (the present it was made at)
     uint64_t owned_frame = 0; // (the present its storage was last noted as render targets' (gpu_owned))
     uint32_t key_layout = 0, key_cls = 0;   // (the key's storage layout and format class)

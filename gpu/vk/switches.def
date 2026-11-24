@@ -1034,6 +1034,8 @@ SW(RX_VK_UPSCALE_LOD_BIAS, kill, bool, "on (upscalers add a texture LOD bias for
 SW(RX_VK_UPSCALE_LOG, diag, bool, "off", "Logs once the upscale filter's mode, sharpness, source, crop and destination sizes.")
 SW(RX_VK_VALIDATION, diag, bool, "off", "Enables the Khronos validation layer on the Vulkan instance.")
 GONE(RX_VK_VB_RANGE, "2026-11-16", "it does nothing: only the vertex bindings that changed are bound")
+SW(RX_VK_VEGA_ASTC_GPU, attempt, bool, "off", "1 tries bounded GPU ASTC decoding for eligible Vega RGBA8 textures; other uploads keep their existing path.")
+SW(RX_VK_VEGA_ASTC_RETAIN, attempt, bool, "off", "1 prefers recently used ASTC textures with costly CPU uploads during normal Vega budget eviction.")
 SW(RX_VK_VERIFY_DIM, diag, string, "no verification", "WxH: hashes the guest memory of textures that size at upload and every 300 frames, logging writes the tracking missed.")
 SW(RX_VK_VIEW_FAST, kill, bool, "on: a texture's view is found in a fast table before the map", "=0 looks every view up in the map.")
 SW(RX_VK_VRAM_MB, hw, int, "by rule from the driver's allowance, the card's VRAM, system RAM and integrated or not (texture_budget.h); capped at 1024 MB on AMD APUs", "Sets the texture budget in MB for a test, in place of the hardware rule.")
