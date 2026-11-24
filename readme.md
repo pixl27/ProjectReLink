@@ -12,6 +12,14 @@ Red Tunic is an unofficial native PC recompilation of the Nintendo Switch 2 rema
 
 Red Tunic's reference system is a Ryzen 5 5625U with Radeon Vega and 16 GB of shared RAM. Its Windows Vega path keeps the 720p internal preset and focuses on texture correctness, predictable memory use and fewer long upload stalls. Read the [Vega rendering guide](docs/red-tunic-vega.md) and [measured test runs](docs/tested-configurations.md).
 
+## Builder preview
+
+| Game setup | Startup |
+| --- | --- |
+| ![Red Tunic Builder game-setup screen with an example installation path](docs/images/red-tunic-builder-main.png) | ![Red Tunic Builder starting with the original crimson cloak icon](docs/images/red-tunic-builder-splash.png) |
+
+The previews show the Windows Builder in a game-free setup. See the [brand artwork notes](assets/branding.md) for the icon and preview sources.
+
 ## Updating
 
 Get new Windows Builder archives from [Red Tunic Releases](https://github.com/spacefarergames/RedTunic/releases). Extract the new Builder into its own folder, open it, and select the existing game output directory to rebuild with the bundled version. Keep the game output directory to reuse your saves and settings. For a source checkout, use `git pull --ff-only` and rebuild locally.
