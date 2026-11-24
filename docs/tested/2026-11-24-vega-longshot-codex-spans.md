@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Local 4.0.2 host with the 4.0.6 Vega renderer backport with live depth retention and Longshot byte-range readbacks | Windows 11 Pro for Workstations 26300 | Radeon Vega 1002:15E7 / AMD 26.5.2 | Ryzen 5 5625U / 16 GB | 1920x1080, 67% Vega preset, headless Vulkan, frame generation off, RX_VK_WB_SPANS=1 | Lakeside checkpoint, map ID HyruleField_Adult, settled 360-present camera turn | 7.47 fps, 321 ms p95, 1057 ms max, 26 frames over 250 ms, 6 over 500 ms; option left off locally (Longshot spans) |

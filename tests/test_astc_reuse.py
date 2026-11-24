@@ -47,6 +47,48 @@ int main() {
 }
 """
 
+HASH_MEMO_PROBE = r"""
+#include "astc_reuse.h"
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <mutex>
+#include <vector>
+struct Host { uint64_t guest_size() const { return 4096; } };
+static Host fixture;
+static Host* host = &fixture;
+static uint32_t gen = 1;
+static bool shadow = false, gpu_written = false;
+static uint64_t reads = 0;
+static std::atomic<int64_t> st_reuse_hash_bytes{0};
+static std::array<uint8_t, 128> bytes{};
+bool env_on(const char*) { return true; }
+bool memory_has_shadow(uint64_t, uint64_t) { return shadow; }
+bool memory_writeback_ever(uint64_t, uint64_t) { return gpu_written; }
+bool memory_written_since(uint64_t, uint64_t, uint32_t prior) { return prior < gen; }
+uint32_t memory_generation() { return gen; }
+const uint8_t* guest_bytes(uint64_t, uint64_t, std::vector<uint8_t>&) {
+    ++reads;
+    return bytes.data();
+}
+%s
+int main() {
+    const auto first = reuse_blocks_hash(64, 64);
+    assert(first == reuse_blocks_hash(64, 64) && reads == 1);
+    ++gen;
+    bytes[0] = 1;
+    const auto changed = reuse_blocks_hash(64, 64);
+    assert(changed != first && reads == 2);
+    shadow = true;
+    bytes[0] = 2;
+    assert(reuse_blocks_hash(64, 64) != changed && reads == 3);
+    shadow = false;
+    gpu_written = true;
+    assert(reuse_blocks_hash(64, 64) != changed && reads == 4);
+}
+"""
+
 
 def check_source():
     src = (ROOT / "gpu/vk/vk_texture.cpp").read_text(encoding="utf-8")
@@ -76,6 +118,13 @@ def main():
                         str(ROOT / "tests/test_astc_reuse.cpp"), "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
         src = (ROOT / "gpu/vk/vk_texture.cpp").read_text(encoding="utf-8")
+        probe = Path(tmp) / "hash-memo.cpp"
+        memo = src[src.index("std::atomic<int64_t> st_hash_memo_hits"):src.index("uint64_t reuse_blocks_hash(")]
+        memo += block(src, "uint64_t reuse_blocks_hash(")
+        probe.write_text(HASH_MEMO_PROBE % memo, encoding="utf-8")
+        subprocess.run([args.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror",
+                        "-I", str(ROOT / "gpu/vk"), str(probe), "-o", str(exe)], check=True)
+        subprocess.run([str(exe)], check=True)
         cache = block(src, "struct AstcCpuCacheEntry {") + ";\n"
         cache += block(src, "void decode_astc_vega_cached(")
         probe = Path(tmp) / "cpu-cache.cpp"

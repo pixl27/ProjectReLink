@@ -49,6 +49,13 @@ int main(int argc, char** argv) {
     CHECK(!room(2145 * MB, 2400 * MB));
     CHECK(!room(3000 * MB, 2400 * MB));
     CHECK(!room(0, 0));                                         // (the budget not known yet)
+    const uint64_t vega_reserve = kVegaReserveBytes + vega_upload_estimate(1024, 1024);
+    CHECK(vega_reserve == 41 * MB);
+    CHECK(room(131 * MB, 218 * MB, vega_reserve));
+    CHECK(!room(178 * MB, 218 * MB, vega_reserve));
+    CHECK(!room(UINT64_MAX, 218 * MB, vega_reserve));
+    CHECK(!vega_upload_estimate(1025, 1024));
+    CHECK(!vega_upload_estimate(0, 1024));
 
     // ---- the queue: oldest first, a second after it was made ----
     Queue<int> q;

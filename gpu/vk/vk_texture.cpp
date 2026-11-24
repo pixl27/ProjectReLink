@@ -2608,19 +2608,53 @@ void decode_astc_vega_cached(AstcCpuDecoder decode, std::span<const uint8_t> blo
     slot = std::move(entry);
 }
 
-/// A new decoded ASTC texture's blocks hashed (its first upload, whole), and the image of a finalized one with the same blocks
-/// and shape copied into it: true when it was. One uploaded again keeps no hash, and is not listed when finalized
-bool reuse_upload(Texture& tex, uint64_t total) {
-    const auto t0 = std::chrono::steady_clock::now();
+// Longshot #2343's generation-aware hash reuse, with exact range keys.
+// Captured or GPU-written pages must still take the ordinary hashing path.
+std::atomic<int64_t> st_hash_memo_hits{0}, st_hash_memo_bytes{0};
+uint64_t reuse_blocks_hash(uint64_t guest, uint64_t total) {
+    struct Entry { uint64_t guest = 0, size = 0, hash = 0; uint32_t gen = 0; };
+    static std::array<Entry, 4096> memo;
+    static std::mutex memo_mu;
+    static const bool enabled = env_on("RX_VK_HASH_MEMO");
+    const uint64_t limit = std::min<uint64_t>(host->guest_size(), 1ull << 39);
+    const bool tracked = enabled && guest && total && guest < limit && total <= limit - guest &&
+                         !memory_has_shadow(guest, total) && !memory_writeback_ever(guest, total);
+    const uint32_t gen = tracked ? memory_generation() : 0;
+    const size_t index = ((guest >> 6) ^ (total * 0x9e3779b185ebca87ull)) % memo.size();
+    if (tracked && gen) {
+        Entry entry;
+        {
+            std::lock_guard lock(memo_mu);
+            entry = memo[index];
+        }
+        if (entry.guest == guest && entry.size == total && entry.gen <= gen &&
+            !memory_written_since(guest, total, entry.gen)) {
+            st_hash_memo_hits++;
+            st_hash_memo_bytes += total;
+            return entry.hash;
+        }
+    }
     static thread_local std::vector<uint8_t> scratch;
     astc_reuse::Hasher h;
     for (uint64_t at = 0; at < total; at += 64ull << 20) {
         const uint64_t n = std::min<uint64_t>(64ull << 20, total - at);
-        h.add(guest_bytes(tex.gpu + at, n, scratch), n);
+        h.add(guest_bytes(guest + at, n, scratch), n);
     }
-    tex.blocks_hash = h.h | 1;
+    const uint64_t hash = h.h | 1;
+    if (tracked && gen && gen == memory_generation() && !memory_has_shadow(guest, total) &&
+        !memory_writeback_ever(guest, total)) {
+        std::lock_guard lock(memo_mu);
+        memo[index] = {guest, total, hash, gen};
+    }
+    st_reuse_hash_bytes += total;
+    return hash;
+}
+
+/// A new decoded ASTC texture's blocks hashed and a matching finalized image copied into it.
+bool reuse_upload(Texture& tex, uint64_t total) {
+    const auto t0 = std::chrono::steady_clock::now();
+    tex.blocks_hash = reuse_blocks_hash(tex.gpu, total);
     st_reuse_hash_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
-    st_reuse_hash_bytes += (int64_t)total;
     if (tex.sparse || tex.type != VK_IMAGE_TYPE_2D || !tex.image) return false;
     Texture* from;
     {
@@ -2754,6 +2788,39 @@ bool upload_all_zero(Texture& tex, uint64_t total, const Ranges* dirty, bool wid
              tex.nvn_format, (unsigned long long)(total >> 20), ms, what);
     return true;
 }
+// Longshot #2343: a whole depth upload with verified zero contents can
+// clear the image instead of unswizzling and staging the same zero texels.
+bool upload_small_zero_depth(Texture& tex, uint64_t total, const Ranges* dirty) {
+    static const bool enabled = env_on("RX_VK_DEPTH_ZERO");
+    if (!enabled || dirty || total < (256ull << 10) || total >= (32ull << 20) ||
+        tex.aspect != VK_IMAGE_ASPECT_DEPTH_BIT || !tex.image || tex.sparse || tex.gpu_written ||
+        tex.type != VK_IMAGE_TYPE_2D || tex.samples != VK_SAMPLE_COUNT_1_BIT)
+        return false;
+    static thread_local std::vector<uint8_t> scratch;
+    constexpr uint64_t chunk = 1ull << 20;
+    for (uint64_t at = 0; at < total; at += chunk) {
+        const uint64_t n = std::min(chunk, total - at);
+        const uint8_t* bytes = guest_bytes(tex.gpu + at, n, scratch);
+        uint64_t word = 0, i = 0;
+        for (; i + sizeof(word) <= n && !word; i += sizeof(word))
+            std::memcpy(&word, bytes + i, sizeof(word));
+        for (; i < n && !word; i++) word = bytes[i];
+        if (word) return false;
+    }
+    texture_resident_flush(&tex);
+    const VkCommandBuffer cmd = upload_cmd();
+    checkpoint_mark(cmd, tex.gpu, 'u');
+    const VkImageSubresourceRange range{tex.aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
+    const VkClearDepthStencilValue zero{0.0f, 0};
+    vkCmdClearDepthStencilImage(cmd, tex.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+    static std::atomic<uint64_t> clears{0}, bytes{0};
+    const uint64_t count = ++clears;
+    const uint64_t saved = (bytes += total);
+    if (count <= 4 || count % 100 == 0)
+        logf("vk: verified zero depth: %llu GPU clears, %.1f MB of uploads avoided",
+             (unsigned long long)count, saved / 1048576.0);
+    return true;
+}
 /// An image no upload takes, whatever memory there is: its upload fails every time, and it is not tried again
 bool upload_never(const Texture& tex) {
     return !tex.gpu || tex.samples != VK_SAMPLE_COUNT_1_BIT || !tex.guest_size ||
@@ -2804,6 +2871,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
     const VkFormat src_vf = tex.d.format ? vk_format(tex.nvn_format).format : tex.format;
     widened(src_vf, &widen_from);
     if (upload_all_zero(tex, total, dirty, widen_from != 0)) return true;
+    if (!widen_from && upload_small_zero_depth(tex, total, dirty)) return true;
     const int src_bpb = tex.bpb;
     const int out_bpb = tex.astc ? 4 : widen_from ? (widen_from == 3 ? 4 : widen_from == 6 ? 8 : 16) : src_bpb;
     const uint32_t copy_layers = tex.type == VK_IMAGE_TYPE_3D ? 1 : tex.layers;
@@ -4445,6 +4513,7 @@ void texture_ahead_run() {
                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
     };
     const int64_t now = ahead_now_ms();
+    const bool vega = policy_rule::windows_vega_compat(dev.facts);
     ahead_running = true;
     while (spent() < ahead_allow_ns) {
         nvn_tex t;
@@ -4452,7 +4521,8 @@ void texture_ahead_run() {
         {
             std::lock_guard lk(ahead_mu);
             ahead_load();
-            if (!texture_ahead::room(total_bytes, ahead_budget_bytes)) {
+            if (!texture_ahead::room(total_bytes, ahead_budget_bytes,
+                                     vega ? texture_ahead::kVegaReserveBytes : texture_ahead::kReserveBytes)) {
                 ahead_n.no_room++;
                 break;
             }
@@ -4461,6 +4531,12 @@ void texture_ahead_run() {
             if (!known) ahead_n.not_drawn_before++;
         }
         if (!known) continue;
+        if (vega) {
+            const uint64_t bytes = texture_ahead::vega_upload_estimate(t.d.width, t.d.height);
+            if (t.d.target != NVN_TEXTURE_TARGET_2D || t.d.samples > 1 || !bytes ||
+                !texture_ahead::room(total_bytes, ahead_budget_bytes, texture_ahead::kVegaReserveBytes + bytes))
+                continue;
+        }
         // (as a draw's first use of it would: made, and uploaded from the game's memory, into this recording's uploads)
         const uint64_t bytes0 = total_bytes;
         if (texture_get(&t, true)) {
@@ -6909,6 +6985,7 @@ void texture_frame(uint64_t completed) {
     }
     // (hookshot) the 90% rule and the driver's limit let go of their excess, not of an eighth of the cache, while that excess is
     // small (a large one is cut to 7/8 as before): vram_compact.h
+    if (policy_rule::windows_vega_compat(dev.facts)) ahead_budget_bytes = std::min(size_budget, budget);
     const uint64_t rule_to = vram_compact::rule_target(total_bytes, size_budget, rule_budget);
     // (hookshot, RX_VK_COMPACT: the driver's limit asks for more than the reserve does: a pass over the budget, to 7/8 of it, as
     // before. Rare once the reserve is set: its line is 17 points under the limit's and counts the textures' free space out, so
@@ -6973,6 +7050,9 @@ void texture_frame(uint64_t completed) {
              "those retired, %zu listed; %lld MB of blocks hashed in %lld ms", (long long)st_reused.load(),
              (long long)(st_reused_bytes.load() >> 20), (long long)st_reuse_retired.load(), freed.size(),
              (long long)(st_reuse_hash_bytes.load() >> 20), (long long)(st_reuse_hash_ns.load() / 1000000));
+        if (st_hash_memo_hits.load())
+            logf("vk: ASTC hash memo: %lld hits, %lld MB skipped",
+                 (long long)st_hash_memo_hits.load(), (long long)(st_hash_memo_bytes.load() >> 20));
         for (size_t i = 0; i < big.size() && i < 8; i++)
             logf("vk:   %llu MB: %#llx %ux%ux%u x%u levels %u NVN %#x%s%s, last used %llu presents ago",
                  (unsigned long long)(big[i]->bytes >> 20), (unsigned long long)big[i]->gpu, big[i]->width, big[i]->height,
@@ -7261,9 +7341,14 @@ void texture_frame(uint64_t completed) {
         if (e.shifted) n_dead++, b_dead += tex->bytes;
         {   // (hookshot) why it goes, and whether its texels go with it (evict_reason.h). The flush above can fail: then they did
             const bool lost = evict_reason::texels_lost(tex->gpu_written, e.overwritten, e.flush && flushed_ok.count(tex));
-            tally.add(evict_reason::classify(e.shifted, e.overwritten), lost, tex->bytes, tex->released);
             // (hookshot: its texels nowhere else: kept in system memory (park_texture) for when it is made again at this storage)
             const bool parked = lost && park_texture(*tex, frame_no);
+            // A live depth target may be sampled again as a shadow map.
+            // Keep its last valid image when neither preservation path succeeded.
+            if (lost && !parked && !tex->released && (tex->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) &&
+                policy_rule::windows_vega_compat(dev.facts))
+                continue;
+            tally.add(evict_reason::classify(e.shifted, e.overwritten), lost, tex->bytes, tex->released);
             static int lost_logged;
             if (lost && !parked && lost_logged++ < 100)
                 // (always over the budget: a sweep lets only drawn-over textures go, and those lose nothing)

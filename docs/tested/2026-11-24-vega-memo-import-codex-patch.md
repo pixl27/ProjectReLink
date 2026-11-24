@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Local 4.0.2 host with the 4.0.6 Vega renderer backport with Vega texture lookahead and hash memo | Windows 11 Pro for Workstations 26300 | Radeon Vega 1002:15E7 / AMD 26.5.2 | Ryzen 5 5625U / 16 GB | 1920x1080, 67% Vega preset, headless Vulkan, frame generation off, RX_VK_HASH_MEMO=1, RX_VK_ASYNC_IMPORT=1 | Lakeside checkpoint, map ID HyruleField_Adult, settled 360-present camera turn | 9.54 fps, 231 ms p95, 558 ms max, 17 frames over 250 ms, 1 over 500 ms; 166 hash memo hits skipped 57 MB and at least 86 bindings served from copies; scene and HUD visible (Vega memo and import) |

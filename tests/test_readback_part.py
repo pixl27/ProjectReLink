@@ -67,6 +67,7 @@ FIXTURE = r"""
 using mkwvk::PageMarks;
 constexpr uint64_t kPageShift = 12, kChunkPages = 16, kPages = 64;
 [[maybe_unused]] static bool env_on(const char*) { return false; }   // (nothing the check cuts reads a switch now)
+[[maybe_unused]] static bool env_on_or(const char*, int def) { return def != 0; }   // (a switch at its default: RX_VK_WB_SPANS)
 namespace {
 /* PAGES */
 static int failures;

@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Local 4.0.2 host with the 4.0.6 Vega renderer backport and live depth retention patch | Windows 11 Pro for Workstations 26300 | Radeon Vega 1002:15E7 / AMD 26.5.2 | Ryzen 5 5625U / 16 GB | 1920x1080, 67% Vega preset, headless Vulkan, frame generation off | Lakeside checkpoint, map ID HyruleField_Adult, settled 360-present camera turn | Completed the route with scene and HUD visible; 8.38 fps, 301 ms p95, 1108 ms max, 22 frames over 250 ms, 3 over 500 ms (shadow patch nofg) |

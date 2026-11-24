@@ -76,7 +76,17 @@ inline int64_t allowance_ns(int64_t last_draws, int64_t budget_ns) { return last
 constexpr uint64_t kReserveBytes = 256ull << 20;
 /// Whether the texture cache has room for one more: kReserveBytes under its budget stay free, so that a texture prepared
 /// never pushes another out (a budget of 0: not known yet, no room)
-inline bool room(uint64_t cache_bytes, uint64_t budget_bytes) { return cache_bytes + kReserveBytes <= budget_bytes; }
+inline bool room(uint64_t cache_bytes, uint64_t budget_bytes, uint64_t reserve = kReserveBytes) {
+    return cache_bytes <= budget_bytes && reserve <= budget_bytes - cache_bytes;
+}
+
+// Bound speculative uploads to single-sample 2D textures no larger than 1024 square.
+// Eight bytes per base texel cover RGBA8 and its mip chain, plus room for image padding.
+constexpr uint64_t kVegaReserveBytes = 32ull << 20;
+inline uint64_t vega_upload_estimate(uint32_t width, uint32_t height) {
+    if (!width || !height || width > 1024 || height > 1024) return 0;
+    return (uint64_t)width * height * 8 + (1ull << 20);
+}
 
 /// The textures the game has made and that wait to be looked at, oldest first, by where their storage starts
 template <class Item>

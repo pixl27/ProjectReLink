@@ -56,6 +56,8 @@ void note(const char* what, uint64_t a, uint64_t b = 0) {
 }
 uint32_t texture_slot_version(int id) { return versions[id & 4095]; }
 uint64_t texture_destroy_generation() { return destroy_gen; }
+bool texture_gone_ring_on() { return false; }
+bool texture_kept_since(const Texture*, uint64_t, uint64_t) { return false; }
 uint32_t texture_epoch() { return epoch; }
 bool env_on(const char*) { return false; }
 void logf(const char*, ...) {}

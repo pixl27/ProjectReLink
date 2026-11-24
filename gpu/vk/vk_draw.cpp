@@ -4098,6 +4098,10 @@ VkImageView texture_view_of(uint32_t handle, VkImageViewType want, ViewUse use, 
     static const bool log_hits = env_on("RX_VK_LOG_HITS");
     static int64_t st_hit, st_new, st_ver, st_gen, st_n;
     const auto it = handle_hits().find(key);
+    // A surviving view can be reused after an unrelated eviction. Misses still resolve under ParLock.
+    if (it != handle_hits().end() && it->second.version == version && it->second.destroy_gen != dgen &&
+        it->second.view && texture_gone_ring_on() && texture_kept_since(it->second.tex, it->second.destroy_gen, dgen))
+        it->second.destroy_gen = dgen;
     if (log_hits) {   // (the counters were a second search of this map on every binding, with the log off)
         if (++st_n % 200000 == 0)
             logf("vk: handle hits %lld, new %lld, slot re-registered %lld, a texture destroyed %lld", (long long)st_hit,

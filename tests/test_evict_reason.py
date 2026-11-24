@@ -14,6 +14,7 @@ def check_source():
     src = (ROOT / "gpu/vk/vk_texture.cpp").read_text(encoding="utf-8")
     for needle in ('#include "evict_reason.h"', "evict_reason::classify(e.shifted, e.overwritten), lost, tex->bytes, tex->released)",
                    "evict_reason::texels_lost(tex->gpu_written, e.overwritten, e.flush && flushed_ok.count(tex))",
+                   "if (lost && !parked && !tex->released && (tex->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) &&\n                policy_rule::windows_vega_compat(dev.facts))\n                continue;",
                    "evict_reason::describe(tally, why, sizeof why)", "flushed_ok.insert(f.t)",
                    "if (e.flush) e.flush = !evict_reason::write_back_stale(e.tex->last_written, other[i++]);"):
         if needle not in src:

@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Local 4.0.2 host with the 4.0.6 Vega renderer backport with live depth retention and Vega texture lookahead | Windows 11 Pro for Workstations 26300 | Radeon Vega 1002:15E7 / AMD 26.5.2 | Ryzen 5 5625U / 16 GB | 1920x1080, 67% Vega preset, headless Vulkan, frame generation off | Lakeside checkpoint, map ID HyruleField_Adult, settled 360-present camera turn | 245 textures prepared, 100 MB cumulative; 9.03 fps, 240 ms p95, 585 ms max, 15 frames over 250 ms, 4 over 500 ms; scene and HUD visible (Vega lookahead) |
