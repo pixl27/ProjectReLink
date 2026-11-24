@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Previous CPU ASTC decoder on the local Red Tunic 4.1.0 host | Windows 11 Pro for Workstations 26300 | Radeon Vega 1002:15E7 / AMD 26.5.2 | Ryzen 5 5625U / 16 GB | 1920x1080 output, 67% scale, headless Vulkan, frame generation off, CPU ASTC, core reserved | Lakeside checkpoint, HyruleField_Adult, 100 presents from camera input | 6.36 fps, 312.4 ms p95, 723.1 ms p99, 737.0 ms max, 12 frames over 250 ms. During the input window Windows sampled up to 17070 pages input per second, 55.2 MB/s disk reads and a minimum of 965 MB available RAM. System counters are not process attribution. |

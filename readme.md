@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/red-tunic.png" alt="Red Tunic logo" width="200"></p>
 
-# Red Tunic 4.2.0
+# Red Tunic 4.2.1
 
 Red Tunic is an unofficial native PC recompilation of the Nintendo Switch 2 remake of *The Legend of Zelda: Ocarina of Time*. It builds locally from your own copy of the game. Red Tunic is based on Hookshot and focuses on integrated AMD Radeon graphics, starting with the Ryzen 5 5625U with 16 GB of shared memory.
 
@@ -19,6 +19,10 @@ Get new Windows Builder archives from [Red Tunic Releases](https://github.com/sp
 ### Latest development build
 
 For development snapshots, use the source at the latest commit you want to test and record its commit ID with your results.
+
+## Changes in 4.2.1
+
+CPU ASTC decoding uses equivalent integer rounding and batches block rows across slices. The Vega preset continues to use the CPU path for texture compatibility. See the [4.2.1 release notes](RELEASE_NOTES_4.2.1.md).
 
 ## Changes in 4.2.0
 
@@ -84,7 +88,7 @@ Clone the [Red Tunic source](https://github.com/spacefarergames/RedTunic), then 
 
 ### On Windows
 
-1. Download `RedTunic-v4.2.0-Windows-x64.zip` and its SHA-256 file from [Red Tunic Releases](https://github.com/spacefarergames/RedTunic/releases). Use `Get-FileHash .\RedTunic-v4.2.0-Windows-x64.zip -Algorithm SHA256` to verify the archive.
+1. Download `RedTunic-v4.2.1-Windows-x64.zip` and its SHA-256 file from [Red Tunic Releases](https://github.com/spacefarergames/RedTunic/releases). Use `Get-FileHash .\RedTunic-v4.2.1-Windows-x64.zip -Algorithm SHA256` to verify the archive.
 2. Extract the entire archive into a short path such as `C:\RedTunicBuilder` and open `HookshotBuilder.exe`. The archive includes the Windows build tools and the Builder runtime.
 3. Select your own supported `.nup` or extracted game folders, choose a separate game output folder, and build. Open the generated `hookshot.exe` in that folder to play.
 

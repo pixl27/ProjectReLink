@@ -1975,12 +1975,7 @@ static void DecompressBlock(std::span<const u8, 16> inBuf, const u32 blockWidth,
                     C0 = ReplicateByteTo16(C0);
                     C1 = ReplicateByteTo16(C1);
                     const u32 C = (C0 * (64 - weight) + C1 * weight + 32) / 64;
-                    if (C == 65535) {
-                        p.Component(c) = 255;
-                    } else {
-                        double Cf = static_cast<double>(C);
-                        p.Component(c) = static_cast<u16>(255.0 * (Cf / 65536.0) + 0.5);
-                    }
+                    p.Component(c) = static_cast<u16>((255u * C + 32768u) >> 16);
                 }
             }
 
@@ -1995,36 +1990,37 @@ void Decompress(std::span<const uint8_t> data, uint32_t width, uint32_t height, 
 
     Common::ThreadWorker& workers{GetThreadWorkers()};
 
-    for (u32 z = 0; z < depth; ++z) {
-        const u32 depth_offset = z * height * width * 4;
-        for (u32 y_index = 0; y_index < rows; ++y_index) {
-            auto decompress_stride = [data, width, height, block_width, block_height, output, rows,
-                                      cols, z, depth_offset, y_index] {
-                const u32 y = y_index * block_height;
+    // Each job owns disjoint output rows. Batch them across slices and
+    // wait once, with bounded queue size even for deep textures.
+    constexpr u64 min_rows_per_job = 4;
+    constexpr u64 max_jobs = 64;
+    const u64 row_count = u64{rows} * depth;
+    const u64 rows_per_job = (std::max)(min_rows_per_job, (row_count + max_jobs - 1) / max_jobs);
+    for (u64 begin = 0; begin < row_count; begin += rows_per_job) {
+        const u64 end = (std::min)(begin + rows_per_job, row_count);
+        workers.QueueWork([=] {
+            std::array<u32, 12 * 12> uncompData;
+            for (u64 row = begin; row < end; ++row) {
+                const u64 z = row / rows;
+                const u32 y = static_cast<u32>(row % rows) * block_height;
+                const u32 decompHeight = (std::min)(block_height, height - y);
                 for (u32 x_index = 0; x_index < cols; ++x_index) {
-                    const u32 block_index = (z * rows * cols) + (y_index * cols) + x_index;
                     const u32 x = x_index * block_width;
-
+                    const u64 block_index = row * cols + x_index;
                     const std::span<const u8, 16> blockPtr{data.subspan(block_index * 16, 16)};
-
-                    // Blocks can be at most 12x12
-                    std::array<u32, 12 * 12> uncompData;
                     DecompressBlock(blockPtr, block_width, block_height, uncompData);
 
-                    u32 decompWidth = (std::min)(block_width, width - x);
-                    u32 decompHeight = (std::min)(block_height, height - y);
-
-                    const std::span<u8> outRow = output.subspan(depth_offset + (y * width + x) * 4);
+                    const u32 decompWidth = (std::min)(block_width, width - x);
+                    const u64 output_offset = ((z * height + y) * width + x) * 4;
                     for (u32 h = 0; h < decompHeight; ++h) {
-                        std::memcpy(outRow.data() + h * width * 4,
+                        std::memcpy(output.data() + output_offset + u64{h} * width * 4,
                                     uncompData.data() + h * block_width, decompWidth * 4);
                     }
                 }
-            };
-            workers.QueueWork(std::move(decompress_stride));
-        }
-        workers.WaitForRequests();
+            }
+        });
     }
+    workers.WaitForRequests();
 }
 
 void DecompressSerial(std::span<const uint8_t> data, uint32_t width, uint32_t height, uint32_t depth,
