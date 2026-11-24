@@ -22,7 +22,7 @@ For development snapshots, use the source at the latest commit you want to test 
 
 ## Changes in 4.2.0
 
-Windows Radeon Vega 1002:15E7 builds get the tested 720p performance profile. Eligible mipmapped ASTC textures can decode on the GPU and expensive recently used textures get priority during ordinary budget eviction. See the [4.2.0 release notes](RELEASE_NOTES_4.2.0.md).
+Windows Radeon Vega 1002:15E7 builds get the tested 720p performance profile. CPU ASTC decoding is the default for visual compatibility. Expensive recently used textures get priority during ordinary budget eviction. See the [4.2.0 release notes](RELEASE_NOTES_4.2.0.md).
 
 ## Changes in 4.1.0
 
