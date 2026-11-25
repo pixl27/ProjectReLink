@@ -1,0 +1,31 @@
+#version 450
+// (relink, Part B) dlss_out.comp for the PsychoV35 tone mapper's picture: the gameplay upscale's output is RGBA16F there
+// (hos_scene_rgba16f, host/nn_vi.c), not R11G11B10F, so the storage image's format qualifier is rgba16f instead of
+// r11f_g11f_b10f. The pass itself is identical: the game's own network's output is the square of its perceptual encoding,
+// and this writes linear colour again (squared, sharpened first when the Sharpness row asks). vk_dlss.cpp makes both
+// pipelines and picks this one when the picture is RGBA16F (scene_tonemap_on).
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D src;
+layout(binding = 1, rgba16f) uniform writeonly image2D dst;
+// pc.linear 1: the picture given is linear colour (FSR 3.1's, given linear colour): its square root taken first
+layout(push_constant) uniform P { ivec2 size; float sharp; float over; int linear; } pc;
+vec3 tap(ivec2 g, bool same) {
+    const ivec2 q = clamp(g, ivec2(0), pc.size - 1);
+    const vec3 c = same ? texelFetch(src, q, 0).rgb : textureLod(src, (vec2(q) + 0.5) / vec2(pc.size), 0.0).rgb;
+    return pc.linear != 0 ? sqrt(max(c, vec3(0.0))) : max(c, vec3(0.0));
+}
+void main() {
+    const ivec2 g = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(g, pc.size))) return;
+    const bool same = all(equal(textureSize(src, 0), pc.size));
+    vec3 c = tap(g, same);
+    if (pc.sharp > 0.0) {
+        const vec3 n = tap(g + ivec2(0, -1), same), s = tap(g + ivec2(0, 1), same);
+        const vec3 w = tap(g + ivec2(-1, 0), same), e = tap(g + ivec2(1, 0), same);
+        const vec3 lo = min(min(min(n, s), min(w, e)), c), hi = max(max(max(n, s), max(w, e)), c);
+        const vec3 room = (hi - lo) * pc.over;
+        c = clamp(c + pc.sharp * (c - (n + s + w + e) * 0.25), max(lo - room, vec3(0.0)), min(hi + room, vec3(1.0)));
+    }
+    c *= c;
+    imageStore(dst, g, vec4(c, 1.0));
+}

@@ -5502,7 +5502,10 @@ void end_pass(VkCommandBuffer cmd) {
         ps.stand_in = 0;
     }
     // (relink, 0.7.9.3: the upscalers' see-through mask from what the pass's blended draws changed: vk_dlss.cpp)
-    if (ps.n && ps.tex[0] && ps.depth_tex && ps.format0 == VK_FORMAT_B10G11R11_UFLOAT_PACK32)
+    // (relink, Part B: the scene is RGBA16F while PsychoV35 is on, B10G11R11 otherwise)
+    if (ps.n && ps.tex[0] && ps.depth_tex &&
+        (ps.format0 == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+         (scene_tonemap_on() && ps.format0 == VK_FORMAT_R16G16B16A16_SFLOAT)))
         dlss_scene_pass_end(cmd, ps.tex[0], ps.color[0], ps.width, ps.height);
     if (dump_on() && !dump_mesh_indirect().empty()) {
         for (const auto& [key, addr] : dump_mesh_indirect()) {
