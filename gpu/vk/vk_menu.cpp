@@ -34,6 +34,7 @@
 #include "vk_paths.h"
 #include "vk_menu.h"
 #include "vk_menu_hit.h"
+#include "shader_recompiler/ir_opt/psychov35.h"   // (relink, after HeyListen 79a34381: PsychoV35's grading bank, psychov35_bank)
 #include "vk_draw.h"   // (pipeline_cache_save: Restart now keeps what was built)
 #include "oot_cheat_items.h"
 #include "oot_teleport_capture.h"   // (relink: the Travel page's pictures)
@@ -101,6 +102,20 @@ const char* tx_framegen(int v) {
     return t[v];
 }
 const char* tx_onoff(int v) { return v ? "On" : "Off"; }
+// (relink, after HeyListen ddb156df / 79a34381) the HDR tone mapper row, and PsychoV35's rows
+const char* tx_tonemap(int v) { return v == 1 ? "PsychoV35" : "Vanilla"; }
+const char* tx_midgray(int v) { return v == 1 ? "Vanilla" : "Render"; }
+const char* tx_color_space(int v) { return v == 2 ? "DCI-P3" : v == 1 ? "BT.709" : "Vanilla"; }
+const char* tx_grade(int v) {   // (PsychoV35's grading rows: RenoDX's 0 to 100)
+    static char b[8];
+    snprintf(b, sizeof b, "%d", v);
+    return b;
+}
+const char* tx_nits(int v) {
+    static char b[24];
+    snprintf(b, sizeof b, "%d nits", v);
+    return b;
+}
 const char* tx_fps_counter(int v) { return v >= 2 ? "Detailed" : v ? "On" : "Off"; }
 const char* tx_menu_look(int v) { return v ? "Dark" : "Light"; }
 // (relink) Motion controls: the choice, and whether a connected controller has a gyroscope (host/pad_sdl.c). Either can be
@@ -675,6 +690,42 @@ Row rows[] = {
     {TAB_GRAPHICS, "HDR", &opts.hdr, 0, 1, 1, tx_onoff,
      "The game's own HDR picture, as on an HDR TV. Needs Windows' HDR on for this display. Applies after a restart.", hn_hdr,
      true, true},
+    // (relink, after HeyListen ddb156df / 79a34381) the HDR tone mapper, and PsychoV35's grading: shown with HDR on (row_shown)
+    {TAB_GRAPHICS, "HDR tone mapper", &opts.hdr_tonemap, 0, 1, 1, tx_tonemap,
+     "With HDR, how the game's scene meets the peak brightness. Vanilla: the game's own curve. PsychoV35: RenoDX's tone "
+     "mapper, the same mid grey with highlights that roll off into the peak and keep their colour. Every Upscaler takes its "
+     "scene: DLSS, DLAA, FSR and the game's own.",
+     nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 UI brightness", &opts.pv35_ui_white, 80, 500, 1, tx_nits,
+     "PsychoV35: how bright the menus and the HUD's white is. The scene keeps the paper white.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 color space", &opts.pv35_color_space, 0, 2, 1, tx_color_space,
+     "PsychoV35: the picture's colours on the display. BT.709: as made, RenoDX's default; Vanilla: through the game's own "
+     "matrix; DCI-P3: read as P3, more vivid.",
+     nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 midgray", &opts.pv35_midgray, 0, 1, 1, tx_midgray,
+     "PsychoV35: Vanilla keeps mid grey where the game's own curve puts it; Render keeps the scene's own.", nullptr, false,
+     true},
+    {TAB_GRAPHICS, "PsychoV35 match tone slope", &opts.pv35_match_slope, 0, 1, 1, tx_onoff,
+     "PsychoV35: On follows the game's own curve's slope at mid grey; Off a neutral one.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 tone slope", &opts.pv35_tone_slope, 0, 100, 1, tx_grade,
+     "PsychoV35: how steeply the tones rise through mid grey. 50 is the game's.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 hue clip emulation", &opts.pv35_hue_clip, 0, 100, 1, tx_grade,
+     "PsychoV35: how much of the game's own colour shift in its brightest parts is kept. 50 is RenoDX's.", nullptr, false,
+     true},
+    {TAB_GRAPHICS, "PsychoV35 exposure", &opts.pv35_exposure, 0, 200, 5, tx_percent,
+     "PsychoV35: the scene's brightness at mid grey. 100% is the game's.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 highlights", &opts.pv35_highlights, 0, 100, 1, tx_grade,
+     "PsychoV35: above 50 brighter highlights, below it softer ones. 50 leaves them as they are.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 shadows", &opts.pv35_shadows, 0, 100, 1, tx_grade,
+     "PsychoV35: above 50 deeper shadows, below it lifted ones. 50 leaves them as they are.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 contrast", &opts.pv35_contrast, 0, 100, 1, tx_grade,
+     "PsychoV35: the contrast around mid grey. 50 is the game's.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 saturation", &opts.pv35_saturation, 0, 100, 1, tx_grade,
+     "PsychoV35: the colours' strength. 50 is the game's.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 bloom", &opts.pv35_bloom, 0, 100, 1, tx_grade,
+     "PsychoV35: the glow around bright things. 50 is the game's; 0 none.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 reset all", nullptr, 0, 0, 0, nullptr,
+     "PsychoV35: every row above back to RenoDX's defaults.", nullptr, false, true},
     {TAB_GRAPHICS, "GPU device", &opts.gpu_device, 0, 8, 1, tx_gpu,
      "Which graphics card the game runs on. Applies after a restart.", hn_gpu, true, true},
     {TAB_GRAPHICS, "Frame generation", &opts.framegen, 0, 8, 1, tx_framegen,
@@ -942,11 +993,15 @@ std::string restart_line(HDC dc, int width) {
 
 /// A row on its tab: the Cheats one only with cheats on, the DLSS model only in a build with DLSS (the Upscaler in every one)
 bool row_shown(int i) {
+    // (relink, after HeyListen ddb156df / 79a34381) the HDR tone mapper with HDR on, PsychoV35's rows with it on PsychoV35
+    const bool hdr_on = hdr_wanted();
+    const bool pv35 = !strncmp(rows[i].name, "PsychoV35", 9);
     return (i != kCheatsRow || cheats_enabled) && (rows[i].value != &opts.dlss || ur::upscaler_shown()) &&
            (rows[i].value != &opts.dlss_model || ur::model_shown(dlss_built())) &&
            (rows[i].value != &opts.fg_kind || dlss_built()) &&   // (relink: the Frame generator row in a build with DLSS)
            // (relink, 0.7.9.3: one Sharpness row: DLSS's, DLAA's and FSR's own value while one of them is chosen)
-           (rows[i].value != &opts.sharpness || !up_sharpened()) && (rows[i].value != &opts.up_sharpness || up_sharpened());
+           (rows[i].value != &opts.sharpness || !up_sharpened()) && (rows[i].value != &opts.up_sharpness || up_sharpened()) &&
+           (rows[i].value != &opts.hdr_tonemap || hdr_on) && (!pv35 || (hdr_on && opts.hdr_tonemap == 1));
 }
 int tab_row_count(int t) {
     int c = 0;
@@ -960,6 +1015,12 @@ const char* row_group(int i, int* place) {
     static const struct { const char* name; const char* group; int place; } groups[] = {
         {"Fullscreen", "DISPLAY", 1}, {"HDR", "DISPLAY", 1}, {"GPU device", "DISPLAY", 1}, {"Output resolution", "DISPLAY", 1},
         {"Handheld profile", "DISPLAY", 1}, {"Ultrawide", "DISPLAY", 1}, {"Field of view", "DISPLAY", 1},
+        {"HDR tone mapper", "DISPLAY", 1},
+        {"PsychoV35 UI brightness", "DISPLAY", 1}, {"PsychoV35 color space", "DISPLAY", 1}, {"PsychoV35 midgray", "DISPLAY", 1},
+        {"PsychoV35 match tone slope", "DISPLAY", 1}, {"PsychoV35 tone slope", "DISPLAY", 1},
+        {"PsychoV35 hue clip emulation", "DISPLAY", 1}, {"PsychoV35 exposure", "DISPLAY", 1},
+        {"PsychoV35 highlights", "DISPLAY", 1}, {"PsychoV35 shadows", "DISPLAY", 1}, {"PsychoV35 contrast", "DISPLAY", 1},
+        {"PsychoV35 saturation", "DISPLAY", 1}, {"PsychoV35 bloom", "DISPLAY", 1}, {"PsychoV35 reset all", "DISPLAY", 1},
         {"Upscaler", "UPSCALING", 2}, {"DLSS model", "UPSCALING", 2}, {"FSR version", "UPSCALING", 2},
         {"Render resolution", "UPSCALING", 2},
         {"Window scaling filter", "UPSCALING", 2}, {"Sharpness", "UPSCALING", 2},
@@ -1014,9 +1075,9 @@ bool menu_refresh = false;
 int hover_tab = -1;
 int drag_row = -1;
 bool mouse_read = false;   // (the menu has read the mouse since it opened)
-bool is_slider(const Row& r) { return r.value == &opts.sharpness || r.value == &opts.up_sharpness || r.value == &opts.mouse_sens || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y || r.value == &opts.volume; }
+bool is_slider(const Row& r) { return (!strncmp(r.name, "PsychoV35 ", 10) && r.hi > 2) || r.value == &opts.sharpness || r.value == &opts.up_sharpness || r.value == &opts.mouse_sens || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y || r.value == &opts.volume; }
 /// (a scale: the arrows, a click and the wheel stop at its ends; Rumble strength would go from Off to its strongest)
-bool stops_at_ends(const Row& r) { return r.value == &opts.mouse_sens || r.value == &opts.rumble || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y || r.value == &opts.deadzone_l || r.value == &opts.deadzone_r || r.value == &opts.fov || r.value == &opts.volume; }
+bool stops_at_ends(const Row& r) { return (!strncmp(r.name, "PsychoV35 ", 10) && r.hi > 2) || r.value == &opts.mouse_sens || r.value == &opts.rumble || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y || r.value == &opts.deadzone_l || r.value == &opts.deadzone_r || r.value == &opts.fov || r.value == &opts.volume; }
 /// (the ini's Rumble strength on the menu's steps: 0 to 150, the nearest 25)
 int rumble_step(int v) { return (std::min(std::max(v, 0), 150) + 12) / 25 * 25; }
 std::string ini_path() {
@@ -1870,11 +1931,14 @@ int row_kind(const Row& r) {
     if (r.text == tx_onoff) return 1;
     if (is_slider(r) || stops_at_ends(r)) return 3;
     static const int* const few[] = {&opts.upscale, &opts.realtime, &opts.text_speed, &opts.audio_output, &opts.ultrawide,
-                                     &opts.robust, &opts.mouse_native, &opts.button_prompts};
+                                     &opts.robust, &opts.mouse_native, &opts.button_prompts, &opts.hdr_tonemap, &opts.pv35_midgray,
+                                     &opts.pv35_match_slope, &opts.pv35_color_space};
     for (const int* f : few)
         if (r.value == f && (r.hi - r.lo) / std::max(1, r.step) + 1 <= 4) return 2;
     return 0;
 }
+// (relink, after HeyListen 79a34381) the Graphics tab's PsychoV35 reset all: an action, not a page
+bool is_psychov35_reset_row(const Row& r) { return !r.value && r.tab == TAB_GRAPHICS && !strcmp(r.name, "PsychoV35 reset all"); }
 /// The tallest text of what a row does, over every row and every line its value can have: the box under the rows keeps that room
 int opt_help_most(float u) {
     HDC dc = CreateCompatibleDC(nullptr);
@@ -2020,8 +2084,18 @@ void paint_options(HDC dc, uint32_t w, uint32_t h) {
         const int kind = row_kind(r);
         opt_hit.kind[k] = kind, opt_hit.value_r[k] = vr, opt_hit.choices[k] = 0;
         if (kind == 4) {   // (a page)
-            cart::triangle(dc, vr - P(5), mid, P(10), 1, look.strip);
-            opt_hit.value_l[k] = vr - P(20);
+            if (is_psychov35_reset_row(r)) {   // (an action, not a page: PsychoV35's rows back to RenoDX's defaults)
+                SelectObject(dc, chip_b);
+                const char* what = "Reset";
+                const int pw = text_w(dc, what) + P(26), ph = P(24), px = vr - pw;
+                startup_gdi::round_rect(dc, px, mid - ph / 2, pw, ph, ph / 2, look.strip);
+                SetTextColor(dc, look.on);
+                TextOutA(dc, px + P(13), mid - text_h(dc) / 2, what, 5);
+                opt_hit.value_l[k] = px;
+            } else {
+                cart::triangle(dc, vr - P(5), mid, P(10), 1, look.strip);
+                opt_hit.value_l[k] = vr - P(20);
+            }
         } else if (kind == 1) {   // (a switch)
             const int sw = P(36), sh = P(20), sx = vr - sw, sy = mid - sh / 2;
             startup_gdi::round_rect(dc, sx, sy, sw, sh, sh / 2, *r.value ? look.strip : kOff);
@@ -3503,6 +3577,38 @@ int hdr_paper_white_nits() {
     static const int env = getenv("HOS_HDR_PAPER_WHITE") && *getenv("HOS_HDR_PAPER_WHITE") ? atoi(getenv("HOS_HDR_PAPER_WHITE")) : 0;
     return std::clamp(env > 0 ? env : opts.hdr_paper_white, 80, 500);
 }
+// (relink, after HeyListen ddb156df) the HDR tone mapper row (PsychoV35) is on: HDR output, and the row asked for PsychoV35
+// (vk_shader.cpp scene_tonemap_for passes the scene mapping and the HDR10 encoder to PsychoV35 then)
+bool scene_tonemap_on() { return hdr_output() && opts.hdr_tonemap == 1; }
+// (relink, after HeyListen 79a34381) PsychoV35's grading, as floats in its bank's order (ir_opt/psychov35.h, kSettingCount of them;
+// read by the scene each draw, vk_draw.cpp uniform_range)
+void psychov35_bank(float* out) {
+    namespace pv = Shader::Optimization::PsychoV35;
+    const Options& o = opts;
+    out[pv::kSettingHueClip] = o.pv35_hue_clip * 0.01f;
+    out[pv::kSettingHighlights] = o.pv35_highlights * 0.02f;
+    out[pv::kSettingShadows] = o.pv35_shadows * 0.02f;
+    out[pv::kSettingContrast] = o.pv35_contrast * 0.02f;
+    out[pv::kSettingPurity] = o.pv35_saturation * 0.02f;
+    out[pv::kSettingConeExponent] = (o.pv35_match_slope ? pv::kConeExponent : 1.0f) * (o.pv35_tone_slope * 0.02f);
+    out[pv::kSettingAnchorScale] = (o.pv35_midgray ? pv::kReferenceExposure : 1.0f) * (o.pv35_exposure * 0.01f);
+    // (the mod's Peak and Game brightness are the HDR rows': the peak brightness over the paper white)
+    const float white = (float)hdr_paper_white_nits();
+    out[pv::kSettingPeak] = std::max((float)hdr_peak_nits(), white) / white;
+    out[pv::kSettingBloom] = o.pv35_bloom * 0.02f;
+    // (the mod's UI Brightness: the scene in its units, the encoder scaling by it)
+    const float ui = (float)std::clamp(o.pv35_ui_white, 80, 500);
+    out[pv::kSettingSceneScale] = white / ui;
+    out[pv::kSettingColorSpace] = (float)std::clamp(o.pv35_color_space, 0, 2);
+    out[pv::kSettingOutputScale] = ui / 10000.0f;
+}
+// (relink, after HeyListen 79a34381) PsychoV35's grading back to RenoDX's defaults (the Options' own)
+void psychov35_reset() {
+    opts.pv35_exposure = 100, opts.pv35_highlights = 50, opts.pv35_shadows = 50, opts.pv35_contrast = 50;
+    opts.pv35_saturation = 50, opts.pv35_tone_slope = 50, opts.pv35_hue_clip = 50, opts.pv35_midgray = 1;
+    opts.pv35_match_slope = 1, opts.pv35_bloom = 50, opts.pv35_ui_white = 203, opts.pv35_color_space = 1;
+    save();
+}
 void menu_init() {
     static bool done;
     if (done) return;
@@ -4323,7 +4429,8 @@ void menu_tick() {
         if (press[7] && &r == &rows[kCheatsRow]) page = 2, changed = true;
         else if (press[7] && &r == &rows[kQuitRow]) {   // (Quit game: asked first, Back the default)
             if (app_window()) page = 5, ask_sel = 0, ask_quit = true, changed = true;
-        } else if (press[7] && !r.value && can_bind()) page = 1, csel = 0, ccol = 0, changed = true;
+        } else if (press[7] && is_psychov35_reset_row(r)) psychov35_reset(), changed = true;   // (relink: PsychoV35's rows to defaults)
+        else if (press[7] && !r.value && can_bind()) page = 1, csel = 0, ccol = 0, changed = true;
         if ((press[3] || press[4] || press[7]) && r.value) {   // (Enter, or the bottom face button, as Right)
             if (press[7]) press[4] = true;
             set_row(r, *r.value + (press[4] ? r.step : -r.step), press[4] ? 1 : -1);

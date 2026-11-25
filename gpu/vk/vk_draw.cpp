@@ -43,6 +43,8 @@
 #include "vk_jobs.h"
 #include "vk_mesh_split.h"
 #include "vk_shader.h"
+#include "vk_menu.h"                            // (relink: psychov35_bank, the renderer's PsychoV35 grading bank)
+#include "shader_recompiler/ir_opt/psychov35.h" // (PsychoV35's grading bank: uniform_range)
 #include "vk_texture.h"
 #include "movie_upscale_policy.h"
 #include "skip_code.h"
@@ -2933,6 +2935,16 @@ VkDescriptorBufferInfo uniform_range(const NvnState& s, const Stage& st, uint32_
         FINE_N(FC_BANK_NEW_BYTES, n);
         std::memcpy(cur->mapped + at, tmp.data(), n);
         c.prog = (const Program*)1, c.at = at, c.buf = cur->stream, c.size = n, c.bytes = tmp;
+        return {cur->stream, at, n};
+    }
+    if (index == Shader::Optimization::PsychoV35::kSettingsBank) {   // (relink, after HeyListen ddb156df) the renderer's own:
+        // PsychoV35's grading, as the menu has it (vk_menu.cpp psychov35_bank; ir_opt/psychov35.h)
+        constexpr uint64_t n = (Shader::Optimization::PsychoV35::kSettingCount * sizeof(float) + 15) & ~uint64_t{15};
+        const uint64_t at = stream_alloc(n, align);
+        if (at == UINT64_MAX) return bi;
+        float bank[n / sizeof(float)] = {};
+        psychov35_bank(bank);
+        std::memcpy(cur->mapped + at, bank, n);
         return {cur->stream, at, n};
     }
     if (index == 1) {

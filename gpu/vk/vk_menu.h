@@ -21,6 +21,9 @@ enum { HOS_OPT_LOW_CAP_MFPS = 14 };
 enum { HOS_OPT_HDR = 70, HOS_OPT_HDR_PEAK = 71, HOS_OPT_HDR_PAPER_WHITE = 72 };
 // (relink) the fullscreen key's virtual-key code, 0 none (host/display.c; the Gameplay tab's Fullscreen key row)
 enum { HOS_OPT_KEY_FULLSCREEN = 73 };
+// (relink, after HeyListen ddb156df) the HDR tone mapper row (PsychoV35) being on with native HDR, asked by the host
+// (host/nn_vi.c hos_scene_rgba16f: the scene buffer made RGBA16F)
+enum { HOS_OPT_HDR_TONEMAP = 74 };
 
 // (out of the box every feature is off: what the game does on its own. The ini beside the executable keeps a player's choices)
 struct Options {
@@ -58,6 +61,14 @@ struct Options {
     int fullscreen = 0;   // borderless, at the monitor's size: F11 is the same setting
     int hdr = 0;          // (relink) HDR output: the game's own HDR picture in HDR10, when Windows' HDR is on for the display;
                           // read once, at the start (vk_main.cpp hdr_output; RX_VK_HDR over it)
+    // (relink, after HeyListen ddb156df / 79a34381) the scene's tone mapper, and PsychoV35's grading (its bank each draw, so a
+    // change shows at once: psychov35_bank, ir_opt/psychov35.h). hdr_tonemap: 0 the game's (Vanilla), 1 PsychoV35. The grading
+    // sliders are the mod's, 0..100 by 0.02; midgray 0 Render, 1 Vanilla; match operator the game's tone slope; UI brightness
+    // the interface's nits in HDR (the mod's UI Brightness); color space the encoder's (0 Vanilla, 1 BT.709, 2 DCI-P3)
+    int hdr_tonemap = 0;
+    int pv35_exposure = 100, pv35_highlights = 50, pv35_shadows = 50, pv35_contrast = 50, pv35_saturation = 50;
+    int pv35_tone_slope = 50, pv35_hue_clip = 50, pv35_midgray = 1, pv35_match_slope = 1, pv35_bloom = 50;
+    int pv35_ui_white = 203, pv35_color_space = 1;
     // (relink) the menu's, the screenshot's and the fullscreen's keys, as indexes of vk_menu.cpp's kHotkeys (F1..F12, Insert, Pause,
     // Scroll Lock, None): Insert, F12 and F11 by default. F1 still opens the menu while no other of these keys is F1
     int key_menu = 12, key_shot = 11, key_full = 10;
@@ -112,6 +123,11 @@ bool hdr_output();
 int hdr_peak_nits();
 /// (relink, vk_menu.cpp) the paper white in nits: HOS_HDR_PAPER_WHITE, else hdr_paper_white of relink_options.ini (80 to 500)
 int hdr_paper_white_nits();
+/// (relink, after HeyListen ddb156df) the HDR tone mapper row (PsychoV35) is on with native HDR: the game's own HDR picture,
+/// so the scene mapping and the HDR10 encoder take PsychoV35 (vk_shader.cpp scene_tonemap_for)
+bool scene_tonemap_on();
+/// (relink, after HeyListen) PsychoV35's grading, as floats in its bank's order (ir_opt/psychov35.h, kSettingCount of them)
+void psychov35_bank(float* out);
 /// (relink, vk_menu.cpp) a hotkey row's value as a Windows virtual-key code (0: None)
 int hotkey_vk(int index);
 void menu_set_gpu_count(int count);
