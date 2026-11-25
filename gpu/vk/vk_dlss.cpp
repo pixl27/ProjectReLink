@@ -1594,7 +1594,11 @@ void dlss_probe() {
 void dlss_note_scene_draw(const Texture* color0, uint32_t width, uint32_t height, Texture* depth, uint64_t camera,
                           uint64_t camera_size) {
     if (!color0 || !depth || !camera || camera_size < 0x230 || width < 640 || height < 360) return;
-    if (color0->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 || !dlss_wanted() || is_plain(dlss_mode())) return;
+    // (relink, Part B) the linear scene buffer is B10G11R11, but RGBA16F while the PsychoV35 tone mapper is on
+    // (hos_scene_rgba16f, host/nn_vi.c): the scene's camera and depth are taken from it either way
+    const bool scene_fmt = color0->format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+                           (scene_tonemap_on() && color0->format == VK_FORMAT_R16G16B16A16_SFLOAT);
+    if (!scene_fmt || !dlss_wanted() || is_plain(dlss_mode())) return;
     State& s = st();
     std::lock_guard lk(s.mu);
     const uint64_t now = texture_frame_no();
@@ -1930,8 +1934,11 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
     if (!known) {   // (another network of the upscale's shape: only the scene into the picture, the rest untouched and unsaid)
         const Camera& c = s.cam;
         // (the gameplay networks' own formats: they sample the scene's B10G11R11 colour and write the B10G11R11 picture.
-        // Other cooperative-matrix networks of the same shape (one RGBA8 into A2B10G10R10, RGB9E5 into B10G11R11) are not it)
-        if (!in || !out || in->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 || out->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+        // Other cooperative-matrix networks of the same shape (one RGBA8 into A2B10G10R10, RGB9E5 into B10G11R11) are not it.
+        // Under PsychoV35 the scene input is RGBA16F, the picture output still B10G11R11)
+        const bool scene_in = in->format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+                              (scene_tonemap_on() && in->format == VK_FORMAT_R16G16B16A16_SFLOAT);
+        if (!in || !out || !scene_in || out->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
             (out->width >> out_level) <= in->width)
             return false;
         // (one in the gameplay networks' formats whose input is not this frame's scene: counted for the status line)

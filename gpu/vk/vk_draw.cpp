@@ -6975,8 +6975,10 @@ static void dlss_trace_draw(const NvnState& s, const Program& p, const DrawArgs&
 /// them. RX_VK_DLSS_ONE_JOINT=0: left out, as before
 static void dlss_rigid_check(const NvnState& s, const Program& p, const DrawArgs& d, const Targets& at);
 static void dlss_skin_check(const NvnState& s, const Program& p, const DrawArgs& d, const Targets& at) {
+    const bool scene_fmt = at.color_format[0] == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+                           (scene_tonemap_on() && at.color_format[0] == VK_FORMAT_R16G16B16A16_SFLOAT);
     if (d.mesh || !d.indexed || d.indirect || d.instances != 1 || !at.n || !at.color[0] || !at.depth || at.width < 640 ||
-        at.color_format[0] != VK_FORMAT_B10G11R11_UFLOAT_PACK32 || !dlss_wanted())
+        !scene_fmt || !dlss_wanted())
         return;
     if (s.nvattr < 7) return dlss_rigid_check(s, p, d, at);
     const auto attr = [&](int i) { return *reinterpret_cast<const nvn_va_st*>(&s.vattr[i]); };
@@ -7267,7 +7269,10 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     }
     const Targets at = bare_targets(s, targets(s));
     if (!at.width || !at.height) SKIP_HERE();
-    lod_scene_draw = at.n && at.color[0] && at.depth && at.width >= 640 && at.color_format[0] == VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    // (relink, Part B) the scene's linear colour buffer: RGBA16F while the PsychoV35 tone mapper is on (hos_scene_rgba16f)
+    lod_scene_draw = at.n && at.color[0] && at.depth && at.width >= 640 &&
+                     (at.color_format[0] == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+                      (scene_tonemap_on() && at.color_format[0] == VK_FORMAT_R16G16B16A16_SFLOAT));
     // (relink) the scene's camera and depth for NVIDIA DLSS (vk_dlss.cpp): the vertex stage's uniform buffer 3 (NVN's binding 0)
     if (at.n && at.color[0] && at.depth)
         dlss_note_scene_draw(at.color[0], at.width, at.height, at.depth, s.ubo[0][0].addr, s.ubo[0][0].size);
