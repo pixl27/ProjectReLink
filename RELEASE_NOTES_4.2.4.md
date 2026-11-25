@@ -10,4 +10,4 @@ The Windows x64 download includes the portable Red Tunic Builder and its depende
 
 In one paired, 90-present Hyrule Field camera turn on the Ryzen 5 5625U with 16 GB RAM and Radeon driver 26.5.2, the combined compute settings reduced p95 frame time from 294.1 ms to 218.4 ms and frames over 250 ms from six to four. A separate functional check covered Hyrule Field, the inventory, the item wheel and a settled Castle Town arrival. [Measured test runs](docs/tested-configurations.md)
 
-The Linux AppImage is available from [4.2.2](https://github.com/spacefarergames/RedTunic/releases/tag/v4.2.2).
+The 4.2.4 AppImage includes the Builder for x86-64 Linux with glibc 2.35 or newer. Verify it with `sha256sum --ignore-missing --check SHA256SUMS`, make it executable, and open it to build or update from your own supported game files. AppImageUpdate and Gear Lever can use the accompanying zsync file.

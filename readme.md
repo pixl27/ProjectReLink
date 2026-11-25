@@ -32,6 +32,8 @@ For development snapshots, use the source at the latest commit you want to test 
 
 Windows Vega gets the tested profile automatically. It keeps exact CPU ASTC decoding, retains expensive textures within a pressure-aware budget, and enables the measured compute and mesh optimizations. The item-wheel and inventory return holds the last complete gameplay frame briefly and fades back into live rendering. The Builder also verifies a reused archive's identity and detects incomplete replacements. See the [4.2.4 release notes](RELEASE_NOTES_4.2.4.md).
 
+The [4.2.4 Linux AppImage](https://github.com/spacefarergames/RedTunic/releases/tag/v4.2.4) includes the Builder and its tools for x86-64 Linux with glibc 2.35 or newer. It builds the game locally from your own supported dump.
+
 ## Changes in 4.2.2
 
 The renderer reads existing pipeline notes sequentially. Experimental switches add bounded CPU texture preparation, binding reuse, and a Windows Vega prefetch pause under memory pressure. Camera testing showed similar hitch counts, so the experiments are off by default. See the [4.2.2 release notes](RELEASE_NOTES_4.2.2.md).
@@ -116,8 +118,8 @@ The redistribution archive contains the Builder, source and dependencies. The ga
 
 ### On Linux
 
-1. Download `RedTunic-v4.2.2-x86_64.AppImage` and `SHA256SUMS` from the [Red Tunic 4.2.2 release](https://github.com/spacefarergames/RedTunic/releases/tag/v4.2.2).
-2. Verify the download with `sha256sum --ignore-missing --check SHA256SUMS`. Run `chmod +x RedTunic-v4.2.2-x86_64.AppImage`, then open it.
+1. Download `RedTunic-v4.2.4-x86_64.AppImage` and `SHA256SUMS` from the [Red Tunic 4.2.4 release](https://github.com/spacefarergames/RedTunic/releases/tag/v4.2.4).
+2. Verify the download with `sha256sum --ignore-missing --check SHA256SUMS`. Run `chmod +x RedTunic-v4.2.4-x86_64.AppImage`, then open it.
 3. Select your supported game dump and choose a separate game output folder. Open the same AppImage to play after the build finishes.
 
 Linux uses the host Vulkan driver. See [Build from source](#build-from-source) if you prefer to build the Builder locally. The [Steam Deck playbook](docs/steam-deck-playbook.md) covers the inherited handheld setup.
