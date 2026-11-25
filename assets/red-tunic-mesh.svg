@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <title>Red Tunic wireframe mesh</title>
+  <rect x="1" y="1" width="46" height="46" rx="10" fill="#36121c"/>
+  <path d="M9 32 19 11l17 3 4 16-17 8L9 32l14-11 13-7M19 11l4 10 17 9m-17 8V21"
+        fill="none" stroke="#ff867f" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/>
+  <path d="M9 32h0m10-21h0m17 3h0m4 16h0m-17 8h0m0-17h0"
+        fill="none" stroke="#ffe4da" stroke-linecap="round" stroke-width="4"/>
+</svg>

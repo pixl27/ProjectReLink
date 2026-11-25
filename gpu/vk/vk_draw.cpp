@@ -38,6 +38,8 @@
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 
 #include "vk_paths.h"
+#include "mesh_capture.h"
+#include "host_shaders/mesh_storage_compare_comp_spv.h"
 #include "vk_progress.h"   // (PrepareWork: prepare_run's count of the programs, each at its cost)
 #include "pipeline_cache_file.h"
 #include "vk_draw.h"
@@ -8725,6 +8727,286 @@ uint64_t fallback_buffer_address(VkBuffer buffer) {
     return vkGetBufferDeviceAddress(dev.device, &info);
 }
 
+bool geometry_capture_on() {
+    static const bool on = env_on("RX_VK_GEOMETRY_CAPTURE");
+    return on;
+}
+bool geometry_reuse_on() {
+    static const bool on = env_on("RX_VK_GEOMETRY_REUSE") && policy_rule::windows_vega_compat(dev.facts);
+    return on;
+}
+
+uint32_t geometry_dependencies(const Program& p, const DrawArgs& d) {
+    using namespace mesh_capture;
+    uint32_t flags = (p.fallback_task ? task : 0) | (d.indirect ? indirect : 0);
+    for (const Stage& st : p.stages) {
+        if (st.vk_stage != VK_SHADER_STAGE_COMPUTE_BIT) continue;
+        const auto& i = st.info;
+        if (!i.storage_buffers_descriptors.empty()) flags |= storage;
+        if (!i.image_descriptors.empty() || !i.image_buffer_descriptors.empty() ||
+            !i.texture_descriptors.empty() || !i.texture_buffer_descriptors.empty()) flags |= image;
+        if (i.uses_global_memory || i.num_global_tables) flags |= global;
+        if (i.stores_global_memory || i.uses_atomic_image_u32 ||
+            std::any_of(i.storage_buffers_descriptors.begin(), i.storage_buffers_descriptors.end(),
+                        [](const auto& buffer) { return buffer.is_written; })) flags |= mesh_capture::write;
+    }
+    return flags;
+}
+
+struct GeometryStorage {
+    struct Range {
+        VkDescriptorBufferInfo* binding = nullptr;
+        VkDescriptorBufferInfo original{};
+        uint32_t offset = 0;
+    };
+    static constexpr uint32_t capacity = 64u << 10;
+    std::array<Range, 4> ranges{};
+    uint32_t count = 0, used = 0;
+};
+
+struct GeometryStorageGpu {
+    struct Snapshot { VkBuffer buffer = VK_NULL_HANDLE; VmaAllocation memory = nullptr; uint64_t address = 0; };
+    Snapshot snapshots[2];
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    int next = 0;
+    bool failed = false;
+};
+TLS_OBJECT(geometry_storage_gpu, GeometryStorageGpu)
+
+bool geometry_storage_ready(GeometryStorageGpu& gpu) {
+    if (gpu.failed) return false;
+    if (gpu.pipeline) return true;
+    const auto fail = [&] {
+        for (auto& snapshot : gpu.snapshots)
+            if (snapshot.buffer) destroy_buffer(snapshot.buffer, snapshot.memory);
+        if (gpu.layout) vkDestroyPipelineLayout(dev.device, gpu.layout, nullptr);
+        gpu.failed = true;
+        return false;
+    };
+    constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    for (auto& snapshot : gpu.snapshots) {
+        void* mapped = nullptr;
+        if (!create_buffer(GeometryStorage::capacity + 16, usage, false, snapshot.buffer, snapshot.memory, &mapped)) return fail();
+        snapshot.address = fallback_buffer_address(snapshot.buffer);
+        if (!snapshot.address) return fail();
+    }
+    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, 64};
+    VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layout.pushConstantRangeCount = 1;
+    layout.pPushConstantRanges = &push;
+    if (vkCreatePipelineLayout(dev.device, &layout, nullptr, &gpu.layout) != VK_SUCCESS) return fail();
+    VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    const auto code = BUILTIN_SPV(MESH_STORAGE_COMPARE_COMP_SPV);
+    info.codeSize = code.size;
+    info.pCode = code.code;
+    VkShaderModule module = VK_NULL_HANDLE;
+    {
+        IntelDriverGate gate;
+        if (guarded_shader_module(&info, &module) != VK_SUCCESS) return fail();
+    }
+    VkComputePipelineCreateInfo pipeline{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    pipeline.layout = gpu.layout;
+    pipeline.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
+                      module, "main", nullptr};
+    const VkResult result = cached_compute(&pipeline, &gpu.pipeline);
+    vkDestroyShaderModule(dev.device, module, nullptr);
+    return result == VK_SUCCESS || fail();
+}
+
+// Snapshot the Vulkan resources (including earlier GPU writes). The mesh stage uses this same copy if it runs.
+void geometry_storage_record(VkCommandBuffer cmd, GeometryStorageGpu& gpu, const GeometryStorage& storage,
+                             const FallbackBuffers& f, int current, int previous) {
+    const auto& now = gpu.snapshots[current];
+    for (uint32_t i = 0; i < storage.count; ++i) {
+        const auto& range = storage.ranges[i];
+        const VkBufferCopy copy{range.original.offset, range.offset, range.original.range};
+        vkCmdCopyBuffer(cmd, range.original.buffer, now.buffer, 1, &copy);
+    }
+    if (previous < 0) return;
+    full_barrier(cmd);
+    struct Push {
+        uint64_t previous, current, records, args;
+        uint32_t offsets[4]{}, lengths[4]{};
+    } push{gpu.snapshots[previous].address, now.address, f.records_address, now.address + GeometryStorage::capacity};
+    static_assert(sizeof(Push) == 64);
+    for (uint32_t i = 0; i < storage.count; ++i) {
+        push.offsets[i] = storage.ranges[i].offset / 4;
+        push.lengths[i] = static_cast<uint32_t>(storage.ranges[i].original.range / 4);
+    }
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, gpu.pipeline);
+    vkCmdPushConstants(cmd, gpu.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+    vkCmdDispatch(cmd, 1, 1, 1);
+    // The fallback's pre-dispatch barrier also makes the comparison's writes visible.
+}
+
+bool geometry_inputs(const Program& p, const DrawArgs& d, uint32_t dependencies, mesh_capture::Inputs& inputs, GeometryStorage& storage) {
+    // The fallback's workgroups allocate output records atomically. With exactly one workgroup,
+    // its result does not depend on allocation order. Uniforms come from immutable CPU uploads.
+    if ((dependencies & ~mesh_capture::storage) || d.first_task || d.groups[0] != 1 || d.groups[1] != 1 || d.groups[2] != 1 ||
+        p.uses_render_area || Shader::Backend::SPIRV::MeshFallbackCounters() ||
+        !cur || !cur->mapped || par_active.load(std::memory_order_relaxed)) return false;
+    if (p.stages.empty() || p.stages.front().vk_stage != VK_SHADER_STAGE_COMPUTE_BIT ||
+        !p.stages.front().lane_free || p.stages.front().nvn_stage != 7) return false;
+    const auto& bindings = p.stages.front().info.constant_buffer_descriptors;
+    const auto& writes = dw().writes;
+    if (bindings.size() > writes.size()) return false;
+    for (size_t i = 0; i < bindings.size(); ++i) {
+        const auto& w = writes[i];
+        if (w.descriptorType != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER || !w.pBufferInfo ||
+            w.descriptorCount != bindings[i].count) return false;
+        for (uint32_t k = 0; k < w.descriptorCount; ++k) {
+            const auto& b = w.pBufferInfo[k];
+            if (!b.buffer || b.buffer != cur->stream || !b.range || b.offset > cur->used || b.range > cur->used - b.offset ||
+                !inputs.append({cur->mapped + b.offset, static_cast<size_t>(b.range)})) return false;
+        }
+    }
+    const auto& storage_descriptors = p.stages.front().info.storage_buffers_descriptors;
+    if (bindings.size() + storage_descriptors.size() > writes.size()) return false;
+    for (size_t i = 0; i < storage_descriptors.size(); ++i) {
+        const auto& desc = storage_descriptors[i];
+        const auto& w = writes[bindings.size() + i];
+        if (desc.is_written || (desc.cbuf_index == 0 && desc.cbuf_offset == 0xff0) ||
+            w.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER || !w.pBufferInfo ||
+            w.descriptorCount != desc.count || w.descriptorCount > storage.ranges.size() - storage.count) return false;
+        for (uint32_t k = 0; k < w.descriptorCount; ++k) {
+            const auto& b = w.pBufferInfo[k];
+            const uint64_t alignment = storage_binding_align();
+            const uint64_t offset = (storage.used + alignment - 1) & ~(alignment - 1);
+            if (!b.buffer || b.buffer == zero_buffer || !b.range || (b.offset & 3) || (b.range & 3) ||
+                offset >= GeometryStorage::capacity || b.range > GeometryStorage::capacity - offset) return false;
+            // w points into the current descriptor writer's mutable buffer-info array.
+            storage.ranges[storage.count++] = {const_cast<VkDescriptorBufferInfo*>(&b), b, static_cast<uint32_t>(offset)};
+            storage.used = static_cast<uint32_t>(offset + b.range);
+            if (!inputs.append({reinterpret_cast<const uint8_t*>(&b.range), sizeof(b.range)})) return false;
+        }
+    }
+    return true;
+}
+
+struct RecentGeometry {
+    const Program* program = nullptr;
+    VkBuffer records = VK_NULL_HANDLE;
+    uint64_t recording = 0;
+    int snapshot = -1;
+    mesh_capture::Inputs inputs;
+};
+TLS_OBJECT(recent_geometry, RecentGeometry)
+TLS_OBJECT(geometry_candidate, mesh_capture::Inputs)
+
+struct GeometryCapture {
+    std::mutex mutex;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VmaAllocation allocation = nullptr;
+    uint32_t* mapped = nullptr;
+    std::FILE* file = nullptr;
+    uint64_t value = 0, frame = 0, polled_frame = ~0ull;
+    uint64_t key = 0, variant = 0;
+    uint32_t flags = 0, words = 0, fit = 0, source_vertices = 0, written = 0, draws_this_frame = 0;
+    bool failed = false;
+};
+GeometryCapture geometry_capture;
+
+// Read only finished GPU work. This one-slot sample never waits on pending work or reads live guest memory.
+void geometry_capture_drain(GeometryCapture& capture) {
+    namespace spirv = Shader::Backend::SPIRV;
+    if (!capture.value || !vk_timeline_poll(capture.value)) return;
+    const uint64_t value = std::exchange(capture.value, 0);
+    invalidate_mapped(capture.allocation, mesh_capture::staging_words * sizeof(uint32_t));
+    const uint32_t* header = capture.mapped;
+    const bool task = (capture.flags & mesh_capture::task) != 0;
+    if (header[0] > capture.fit || (task && header[5] > spirv::MESH_FALLBACK_CAPACITY)) return;
+    const uint32_t vertices = mesh_capture::stored_vertices(header[0], capture.fit);
+    const uint32_t slots = task ? mesh_capture::stored_slots(header[5], spirv::MESH_FALLBACK_CAPACITY) : 0;
+    if (!capture.file) {
+        const auto path = log_path("mesh_geometry.rtm");
+        capture.file = fopen(path.c_str(), "wb");
+        if (!capture.file || fwrite("RTMESH01", 1, 8, capture.file) != 8) {
+            capture.failed = true;
+            return;
+        }
+        logf("vk: capturing mesh records and task visibility in %s", path.c_str());
+    }
+    const uint64_t identity[]{capture.frame, capture.key, capture.variant, value};
+    const uint32_t counts[]{capture.flags, capture.words, vertices, slots};
+    const auto put = [&](const void* data, size_t size, size_t count) {
+        if (!capture.failed && fwrite(data, size, count, capture.file) != count) capture.failed = true;
+    };
+    put(identity, sizeof(uint64_t), std::size(identity));
+    put(counts, sizeof(uint32_t), std::size(counts));
+    put(header, sizeof(uint32_t), mesh_capture::header_words);
+    const uint32_t* records = header + mesh_capture::header_words;
+    if (capture.flags & mesh_capture::soa) {
+        for (uint32_t word = 0; word < capture.words; ++word)
+            put(records + word * capture.source_vertices, sizeof(uint32_t), vertices);
+    } else {
+        put(records, sizeof(uint32_t), size_t(vertices) * capture.words);
+    }
+    put(header + mesh_capture::header_words + mesh_capture::max_words * mesh_capture::sample_vertices,
+        sizeof(uint32_t), slots);
+    if (fflush(capture.file)) capture.failed = true;
+    if (!capture.failed) ++capture.written;
+}
+
+void geometry_capture_draw(VkCommandBuffer cmd, const Program& p, const FallbackBuffers& f, uint32_t flags) {
+    namespace spirv = Shader::Backend::SPIRV;
+    if (!rec_value || par_active.load(std::memory_order_relaxed)) return;
+    std::lock_guard lk(geometry_capture.mutex);
+    auto& capture = geometry_capture;
+    const uint64_t frame = texture_frame_no();
+    if (capture.failed || capture.written >= 48) return;
+    if (capture.polled_frame != frame) {
+        capture.polled_frame = frame;
+        capture.draws_this_frame = 0;
+        geometry_capture_drain(capture);
+    }
+    // Sample later draws too. Every fourth sample keeps the first draw for comparisons over time.
+    const uint32_t selected = capture.written % 4 ? (capture.written * 7) % 32 : 0;
+    if (capture.value || capture.failed || capture.written >= 48 || (capture.written && frame < capture.frame + 8) ||
+        !p.fallback_record_words || p.fallback_record_words > mesh_capture::max_words || capture.draws_this_frame++ != selected)
+        return;
+    if (!capture.buffer && !create_buffer_cached(mesh_capture::staging_words * sizeof(uint32_t),
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT, capture.buffer, capture.allocation, (void**)&capture.mapped)) return;
+    if (!capture.mapped) return;
+    const bool soa = mesh_fallback_layout() == static_cast<uint32_t>(spirv::MeshFallbackLayout::Soa);
+    const uint32_t words = p.fallback_record_words;
+    const uint32_t fit = spirv::MeshFallbackFit(words);
+    const uint32_t vertices = std::min(fit, mesh_capture::sample_vertices);
+    const VkDeviceSize head = mesh_capture::header_words * sizeof(uint32_t);
+    std::array<VkBufferCopy, 1 + mesh_capture::max_words> copies{};
+    copies[0] = {0, 0, head};
+    if (soa) {
+        for (uint32_t word = 0; word < words; ++word)
+            copies[word + 1] = {head + VkDeviceSize(word) * fit * 4, head + VkDeviceSize(word) * vertices * 4, VkDeviceSize(vertices) * 4};
+    } else {
+        copies[1] = {head, head, VkDeviceSize(vertices) * words * 4};
+    }
+    vkCmdCopyBuffer(cmd, f.records, capture.buffer, soa ? 1 + words : 2, copies.data());
+    if (p.fallback_task && f.payload) {
+        const VkBufferCopy slots{0, head + VkDeviceSize(mesh_capture::max_words) * mesh_capture::sample_vertices * 4,
+                                 mesh_capture::sample_slots * sizeof(uint32_t)};
+        vkCmdCopyBuffer(cmd, f.payload, capture.buffer, 1, &slots);
+    }
+    VkMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    barrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+    barrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+    VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dependency.memoryBarrierCount = 1;
+    dependency.pMemoryBarriers = &barrier;
+    vkCmdPipelineBarrier2(cmd, &dependency);
+    capture.value = rec_value;
+    capture.frame = frame;
+    capture.key = p.key;
+    capture.variant = p.variant;
+    capture.flags = flags | (soa ? mesh_capture::soa : 0);
+    capture.words = words;
+    capture.fit = fit;
+    capture.source_vertices = vertices;
+}
+
 bool fallback_buffers_of(const Program& p, FallbackBuffers*& out) {
     if (!p.fallback_vertices_per_workgroup || !p.fallback_record_words) return false;
     const uint64_t capacity = Shader::Backend::SPIRV::MESH_FALLBACK_CAPACITY;
@@ -8756,7 +9038,8 @@ bool fallback_buffers_of(const Program& p, FallbackBuffers*& out) {
     void* mapped = nullptr;
     // (TRANSFER_SRC: the shared warp's and the pool's counters are copied out of the records, fallback_warp_counters)
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | (warp_counters ? VK_BUFFER_USAGE_TRANSFER_SRC_BIT : 0);
+                                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+                                     ((warp_counters || geometry_capture_on()) ? VK_BUFFER_USAGE_TRANSFER_SRC_BIT : 0);
     // (only the payload outgrown: the newest pair's records, which every program takes from, go with the bigger payload. Made
     // again, each growth left another records area on the thread for the session, that no draw used again)
     const bool shared = !sets.empty() && sets.back().records && sets.back().records_bytes >= records;
@@ -9032,6 +9315,45 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
     fallback_indirect_input = input_base ? input_base + input.offset : 0;
     fallback_payload_address = f->payload_address;
     fallback_records_address = f->records_address;
+    const bool capture = geometry_capture_on();
+    const bool reuse = geometry_reuse_on();
+    uint32_t dependencies = 0;
+    bool eligible = false;
+    GeometryStorage storage;
+    GeometryStorageGpu* storage_gpu = nullptr;
+    int current = -1, previous = -1;
+    if (capture || reuse) {
+        dependencies = geometry_dependencies(p, d);
+        auto& inputs = geometry_candidate();
+        inputs.size = 0;
+        eligible = geometry_inputs(p, d, dependencies, inputs, storage);
+        auto& recent = recent_geometry();
+        const bool same = reuse && eligible && recent.program == &p && recent.recording == cur->ub_snap_epoch &&
+                          recent.records == f->records && recent.inputs.same(inputs);
+        if (same && !storage.count) {
+            fallback_draw_records = f->records;
+            frame_overlap_op(true);
+            static std::atomic<uint64_t> hits{0};
+            const uint64_t count = ++hits;
+            if (count <= 4 || count % 1024 == 0)
+                logf("vk: mesh geometry reused in its recording (%llu so far)", (unsigned long long)count);
+            return true;
+        }
+        if (reuse && eligible && storage.count) {
+            auto& gpu = geometry_storage_gpu();
+            if (geometry_storage_ready(gpu)) {
+                storage_gpu = &gpu;
+                previous = same ? recent.snapshot : -1;
+                current = gpu.next;
+                gpu.next ^= 1;
+            } else {
+                eligible = false;
+            }
+        }
+        // The new dispatch can overwrite the scratch even if it fails after the first clear.
+        recent.program = nullptr;
+    }
+
     const uint32_t capacity = Shader::Backend::SPIRV::MESH_FALLBACK_CAPACITY;
     end_pass(cmd);
     // (RX_VK_PASS_TIMING: the fills, barriers and dispatches below as one span of their own, "fallback prog <key>", not glue
@@ -9047,10 +9369,13 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
     // the payload buffer: the mesh dispatch reads only the map entries and payloads its task wrote. Fills that do not overlap:
     // two over the same bytes have no order between them without a barrier)
     static_assert(Shader::Backend::SPIRV::MESH_FALLBACK_DISPATCH_WORD == 5 && Shader::Backend::SPIRV::MESH_FALLBACK_HEADER_WORDS == 8);
-    vkCmdFillBuffer(cmd, f->records, 0, 4, 0);    // (vertexCount)
-    vkCmdFillBuffer(cmd, f->records, 4, 4, 1);    // (instanceCount)
-    vkCmdFillBuffer(cmd, f->records, 8, 16, 0);   // (firstVertex, firstInstance, the allocator, the dispatch's x)
-    vkCmdFillBuffer(cmd, f->records, 24, 8, 1);   // (the dispatch's y and z)
+    if (storage_gpu) geometry_storage_record(cmd, *storage_gpu, storage, *f, current, previous);
+    if (previous < 0) {
+        vkCmdFillBuffer(cmd, f->records, 0, 4, 0);    // (vertexCount)
+        vkCmdFillBuffer(cmd, f->records, 4, 4, 1);    // (instanceCount)
+        vkCmdFillBuffer(cmd, f->records, 8, 16, 0);   // (firstVertex, firstInstance, the allocator, the dispatch's x)
+        vkCmdFillBuffer(cmd, f->records, 24, 8, 1);   // (the dispatch's y and z)
+    }
     // (the attribute regions' pool, mma_layout.h mesh_fallback_global_attributes: its ticket counter at 0 and every slot free for
     // the first generation. The draw before handed every slot back, but a wait that gave up may not have: each draw starts clean.
     // Here, between the barrier after the draw before and the one before this draw's stages: after the stages, with no barrier
@@ -9067,7 +9392,17 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
     }
     fallback_draw_records = f->records;
     full_barrier(cmd);
-    if (!bind_descriptors(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p)) return false;
+    if (storage_gpu) {
+        const VkBuffer snapshot = storage_gpu->snapshots[current].buffer;
+        for (uint32_t i = 0; i < storage.count; ++i) {
+            const auto& range = storage.ranges[i];
+            *range.binding = {snapshot, range.offset, range.original.range};
+        }
+    }
+    const bool descriptors_bound = bind_descriptors(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p);
+    if (storage_gpu)
+        for (uint32_t i = 0; i < storage.count; ++i) *storage.ranges[i].binding = storage.ranges[i].original;
+    if (!descriptors_bound) return false;
     push_constants(cmd, p, nullptr, d.first_task);
     size_t stages[2] = {p.stages.size(), p.stages.size()};
     for (size_t i = 0; i < p.stages.size(); i++) {
@@ -9083,6 +9418,12 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
             // (the mesh workgroups the task's started threads counted into the records' header, each its slot in the map:
             // direct or indirect, the CPU need not know the task count (DrawMeshTasksIndirect records none))
             vkCmdDispatchIndirect(cmd, f->records, (VkDeviceSize)Shader::Backend::SPIRV::MESH_FALLBACK_DISPATCH_WORD * 4);
+        } else if (previous >= 0) {
+            vkCmdDispatchIndirect(cmd, storage_gpu->snapshots[current].buffer, GeometryStorage::capacity);
+            static std::atomic<uint64_t> comparisons{0};
+            const uint64_t count = ++comparisons;
+            if (count <= 4 || count % 1024 == 0)
+                logf("vk: mesh geometry compared storage snapshots on the GPU (%llu so far)", (unsigned long long)count);
         } else if (d.indirect) {
             if (!indirect) {
                 static std::atomic<int> told{0};
@@ -9108,6 +9449,17 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
     }
     full_barrier(cmd);   // (the records and the draw's command, which the draw reads as indirect arguments)
     fallback_warp_counters(cmd, *f);
+    if (capture) geometry_capture_draw(cmd, p, *f, dependencies | (eligible ? mesh_capture::candidate : 0));
+    if (reuse && eligible) {
+        auto& recent = recent_geometry();
+        const auto& inputs = geometry_candidate();
+        recent.program = &p;
+        recent.records = f->records;
+        recent.recording = cur->ub_snap_epoch;
+        recent.snapshot = current;
+        recent.inputs.size = inputs.size;
+        std::memcpy(recent.inputs.bytes.data(), inputs.bytes.data(), inputs.size);
+    }
     return true;
 }
 } // namespace

@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | Red Tunic 4.2.4 development renderer SHA-256 F1C8A5CAF352146CA25835E866A81627A72618C03F8D5F0EF241D7EC35AD1484 with local v4.1.0 host | Windows 11 build 26300 | Radeon Vega 1002:15e7, driver 26.5.2 | Ryzen 5 5625U, 16 GB | 720p output, CPU ASTC, frame generation off, serial replay, geometry capture and reuse on | HyruleField_Adult lakeside checkpoint, 210-frame camera turn | Loaded all 2,316 existing program-cache keys and completed the turn. Captured 45 draws, all with storage-buffer dependencies. No reuse or storage comparison was recorded in play. A standalone test exercised both GPU branches. No FPS comparison was made. |

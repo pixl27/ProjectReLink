@@ -214,7 +214,7 @@ def host():
     draw = (ROOT / "gpu/vk/vk_draw.cpp").read_text(encoding="utf-8")
     buffers = block(draw, "bool fallback_buffers_of(")
     need(buffers, "MeshFallbackCounters() ? Shader::Backend::SPIRV::WARP_COUNTER_BYTES : 0", "the records buffer has no room for the counters")
-    need(buffers, "(warp_counters ? VK_BUFFER_USAGE_TRANSFER_SRC_BIT : 0)", "the counters cannot be copied out")
+    need(buffers, "((warp_counters || geometry_capture_on()) ? VK_BUFFER_USAGE_TRANSFER_SRC_BIT : 0)", "the counters cannot be copied out")
     record = block(draw, "bool fallback_record(")
     clear = record.index("vkCmdFillBuffer(cmd, f->records, Shader::Backend::SPIRV::MeshFallbackRecordsBytes()")
     first_send = record.index("send(stages[0]")

@@ -1,0 +1,43 @@
+#version 450
+#extension GL_EXT_buffer_reference : require
+
+// Keep the original fallback's scratch records on an exact storage match.
+// Otherwise clear its header and let its normal single-workgroup shader run.
+layout(local_size_x = 64) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Words { uint words[]; };
+layout(push_constant, std430) uniform Push {
+    Words previous;
+    Words current;
+    Words records;
+    Words dispatch_args;
+    uvec4 offsets;
+    uvec4 lengths;
+} pc;
+shared uint changed;
+
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    if (lane == 0) changed = 0;
+    barrier();
+    bool different = false;
+    for (uint range = 0; range < 4; ++range) {
+        for (uint i = lane; i < pc.lengths[range]; i += gl_WorkGroupSize.x) {
+            uint at = pc.offsets[range] + i;
+            different = different || pc.previous.words[at] != pc.current.words[at];
+        }
+    }
+    if (different) atomicOr(changed, 1);
+    barrier();
+    if (lane == 0) {
+        pc.dispatch_args.words[0] = changed;
+        pc.dispatch_args.words[1] = 1;
+        pc.dispatch_args.words[2] = 1;
+        if (changed != 0) {
+            pc.records.words[0] = 0;
+            pc.records.words[1] = 1;
+            for (uint i = 2; i < 6; ++i) pc.records.words[i] = 0;
+            pc.records.words[6] = 1;
+            pc.records.words[7] = 1;
+        }
+    }
+}

@@ -558,6 +558,7 @@ bool memory_gpu_writes_any();
 bool uniform_snapshot_on();
 /// (vk_replay.cpp) The GPU's progress on the recordings' timeline, and a wait for it to reach v
 uint64_t vk_timeline_completed();
+bool vk_timeline_poll(uint64_t value);  // (zero-timeout host wait for a diagnostic readback)
 /// A future submission completion covering images retired during replay; zero: no safe value.
 uint64_t vk_retirement_value();
 void vk_timeline_wait(uint64_t v);

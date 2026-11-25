@@ -1379,6 +1379,25 @@ The rules worth knowing (the script's notes have all of them):
   another tmpfs: two 5 GB test folders in `/tmp` once held 10 GB of memory and swap. A job's `TMPDIR` on a tmpfs moves to
   `~/.cache/hookshot-queue/tmp/<job>`.
 
+#### Capturing mesh fallback geometry and visibility
+
+Set `RX_VK_GEOMETRY_CAPTURE=1` for a local run through the compute mesh fallback. With serial replay,
+`logs/mesh_geometry.rtm` records up to 48 samples. Each holds the GPU's indirect vertex count, a prefix of the
+vertex records and, for task shaders, the mesh dispatch count and a prefix of the selected slot list. The renderer
+copies to a small readback buffer and polls the submission's timeline before reading. It starts a fresh capture file
+on the first completed sample of each run. Keep the file local.
+
+```
+python -I -B scripts/mesh_capture_report.py <game folder>/logs/mesh_geometry.rtm
+```
+
+Repeated samples show whether the captured part of a variant changes. They are diagnostic samples. On Windows Vega,
+`RX_VK_GEOMETRY_REUSE=1` can skip repeating a direct, taskless single-workgroup mesh dispatch in the same recording
+when its uniforms and up to four read-only storage ranges match. The storage ranges occupy at most 64 KiB including
+alignment. The GPU copies and compares those bytes after prior writes and skips the mesh dispatch only on an exact
+match. On a miss the mesh dispatch reads the same snapshot it compared. Task culling, indirect counts, texture access,
+global memory and storage writes continue through the live draw path.
+
 ## Draw statistics
 
 Set `RX_VK_DRAW_STATS=<directory>` and create `<directory>/draw_stats.now` during play to measure one future frame.

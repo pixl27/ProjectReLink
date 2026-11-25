@@ -59,6 +59,8 @@ static bool create_buffer(uint64_t size, VkBufferUsageFlags, bool, VkBuffer& buf
 [[maybe_unused]] static void destroy_buffer(VkBuffer, VmaAllocation) {}
 static uint64_t vkGetBufferDeviceAddress(int, const VkBufferDeviceAddressInfo* info) { return info->buffer << 32; }
 
+static bool geometry_capture_on() { return false; }
+
 #include "fallback_actual.inc"
 
 namespace {

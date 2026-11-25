@@ -662,6 +662,14 @@ void wait_lost(const char* what, uint64_t v) {
 }
 } // namespace
 uint64_t vk_timeline_completed() { return timeline ? completed() : 0; }
+bool vk_timeline_poll(uint64_t value) {
+    if (!timeline || !value) return false;
+    VkSemaphoreWaitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+    wait.semaphoreCount = 1;
+    wait.pSemaphores = &timeline;
+    wait.pValues = &value;
+    return vkWaitSemaphores(dev.device, &wait, 0) == VK_SUCCESS;
+}
 int64_t vk_value_submitted_ns(uint64_t v);
 void vk_timeline_wait(uint64_t v) {   // (at most 250 ms: a submission held back behind the caller's thread goes on without it)
     if (!timeline || completed() >= v) return;

@@ -561,6 +561,8 @@ SW(RX_VK_G3_MESHCOUNT, diag, bool, "off", "Copies the mesh draws' counts into a 
 SW(RX_VK_GAME_BARRIER_NARROW, attempt, bool, "off: the game's barriers are full barriers", "=1 makes the game's ORDER_FRAGMENTS (+ INVALIDATE_TEXTURE) barriers wait in the fragment stages only.")
 SW(RX_VK_GAME_ORDER, hw, bool, "on with NVIDIA's driver, off elsewhere", "1 orders passes and dispatches right after others by the game's own barriers instead of a full barrier each; 0 off everywhere.")
 SW(RX_VK_GATHER_OFFSET, hw, bool, "on for AMD (proprietary, open source, RADV), Intel (Windows, Mesa), Qualcomm and Turnip drivers; off elsewh...", "Forces the 1/512-texel nudge on texture gathers off (0) or on (non-zero), whatever the driver.")
+SW(RX_VK_GEOMETRY_CAPTURE, diag, bool, "off", "1 samples local mesh fallback geometry and task visibility with nonblocking GPU readback.")
+SW(RX_VK_GEOMETRY_REUSE, attempt, bool, "off", "1 allows exact same-recording reuse for eligible single-workgroup mesh fallback output on Windows Vega.")
 SW(RX_VK_GM_LOOP, hw, bool, "on for Intel's Mesa driver (ANV), off elsewhere; needs dynamic indexing of storage buffer arrays", "1 searches a global memory access's storage buffer tables in a loop, 0 writes them out entry by entry.")
 SW(RX_VK_GONE_RING, attempt, bool, "off", "=1 judges whether a texture was kept between two generations by the ring of destroyed textures' generations.")
 SW(RX_VK_GPL, attempt, bool, "off (no stage libraries)", "1 turns on graphics pipeline libraries where the device has them and the dynamic state they need.")

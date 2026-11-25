@@ -82,6 +82,9 @@ static uint64_t vkGetBufferDeviceAddress(int device, const VkBufferDeviceAddress
     return ++address_calls == zero_address ? 0 : info->buffer * 4096;
 }
 
+static bool capture_geometry;
+static bool geometry_capture_on() { return capture_geometry; }
+
 #include "fallback_actual.inc"
 
 // (the buffers are a recording thread's, not a program's (#1383): a failure is not remembered, the next draw tries again, and
@@ -172,6 +175,11 @@ static void run(const std::string& name) {
         require(!out->warp_counters_cleared, "a new records buffer's counters count as cleared");
         require(records_usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT, "the counters cannot be copied out of the records");
         require(out->payload_bytes == 44, "the shared warp changed the payload buffer");
+    } else if (name == "geometry_capture") {
+        capture_geometry = true;
+        require(fallback_buffers_of(p, out) && out && out->records_address, "initialization with geometry capture failed");
+        require(records_usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT, "geometry capture cannot copy the records");
+        require(out->records_bytes == 96 && out->payload_bytes == 44, "geometry capture changed scratch buffer layout");
     } else if (name == "invalid_program") {
         p.fallback_record_words = 0;
         require(!fallback_buffers_of(p, out), "invalid program was accepted");

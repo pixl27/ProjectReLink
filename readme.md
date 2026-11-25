@@ -6,6 +6,14 @@ Red Tunic is an unofficial native PC recompilation of the Nintendo Switch 2 rema
 
 [Project and source updates](https://github.com/spacefarergames/RedTunic) · [Releases](https://github.com/spacefarergames/RedTunic/releases) · [Technical documentation](docs/README.md) · [Brand artwork](assets/branding.md)
 
+## <img src="assets/red-tunic-mesh.svg" alt="" width="28"> Radeon Vega mesh reuse
+
+**Opt-in preview in the development source.** Red Tunic can capture mesh geometry and task visibility from live play.
+On Windows Vega, eligible mesh draws can reuse GPU-generated geometry when their uniforms and read-only
+storage buffers match byte for byte. The comparison stays on the GPU, and changed inputs generate fresh geometry.
+On our Ryzen 5 5625U, GPU tests passed for both exact matches and changed inputs. A camera-turn FPS gain in Hyrule Field is still unverified.
+See the [mesh capture and testing guide](docs/development.md#capturing-mesh-fallback-geometry-and-visibility).
+
 ![Red Tunic Vega path from native x64 through 720p Vulkan to 1080p output](assets/red-tunic-vega-path.svg)
 
 ## Built around integrated Radeon

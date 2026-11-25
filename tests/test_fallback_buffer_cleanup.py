@@ -11,7 +11,7 @@ RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ("initial_allocation_failure", "payload_allocation_failure", "records_address_zero",
          "records_only_address_zero", "payload_address_zero", "records_only_success", "task_success", "pool_records",
-         "warp_counters", "warp_counters_pool", "invalid_program", "program_isolation", "payload_growth_keeps_records",
+         "warp_counters", "warp_counters_pool", "geometry_capture", "invalid_program", "program_isolation", "payload_growth_keeps_records",
          "shared_records_payload_failure")
 
 

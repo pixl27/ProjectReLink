@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | Local v4.1.0 host with 4.2.4 dev renderer 27c59aca | Windows 11 build 26300 | Radeon Vega 1002:15e7, driver 26.5.2 | Ryzen 5 5625U, 16 GB | 720p output, CPU ASTC, frame generation off, serial replay, geometry capture and reuse on | HyruleField_Adult lakeside checkpoint, shared functional run and 210-frame right-stick input | 42 captures (41 nonempty), 3 shader variants with nonempty results, and one repeated variant with changing visibility counts. All 42 samples used storage buffers. No exact reuse hit was logged. Captured the scene after turning. No FPS numbers were taken. |
