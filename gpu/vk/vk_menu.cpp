@@ -700,6 +700,9 @@ Row rows[] = {
     {TAB_GRAPHICS, "PsychoV35 peak brightness", &opts.pv35_peak, 0, 10000, 1, tx_peak,
      "PsychoV35: how bright the highlights can go. Display: the display's own peak, as Windows reports it. A lower number "
      "rolls the highlights into a smaller range; a higher one stretches them.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 game brightness", &opts.pv35_white, 80, 500, 1, tx_nits,
+     "PsychoV35: the scene's white reference, where the tone curve sits. Lower makes the picture brighter and rolls the "
+     "highlights off sooner; higher keeps the scene dimmer with more headroom above it.", nullptr, false, true},
     {TAB_GRAPHICS, "PsychoV35 UI brightness", &opts.pv35_ui_white, 80, 500, 1, tx_nits,
      "PsychoV35: how bright the menus and the HUD's white is. The scene keeps the paper white.", nullptr, false, true},
     {TAB_GRAPHICS, "PsychoV35 color space", &opts.pv35_color_space, 0, 2, 1, tx_color_space,
@@ -1021,6 +1024,7 @@ const char* row_group(int i, int* place) {
         {"Handheld profile", "DISPLAY", 1}, {"Ultrawide", "DISPLAY", 1}, {"Field of view", "DISPLAY", 1},
         {"HDR tone mapper", "DISPLAY", 1},
         {"PsychoV35 peak brightness", "DISPLAY", 1},
+        {"PsychoV35 game brightness", "DISPLAY", 1},
         {"PsychoV35 UI brightness", "DISPLAY", 1}, {"PsychoV35 color space", "DISPLAY", 1}, {"PsychoV35 midgray", "DISPLAY", 1},
         {"PsychoV35 match tone slope", "DISPLAY", 1}, {"PsychoV35 tone slope", "DISPLAY", 1},
         {"PsychoV35 hue clip emulation", "DISPLAY", 1}, {"PsychoV35 exposure", "DISPLAY", 1},
@@ -3597,8 +3601,8 @@ void psychov35_bank(float* out) {
     out[pv::kSettingPurity] = o.pv35_saturation * 0.02f;
     out[pv::kSettingConeExponent] = (o.pv35_match_slope ? pv::kConeExponent : 1.0f) * (o.pv35_tone_slope * 0.02f);
     out[pv::kSettingAnchorScale] = (o.pv35_midgray ? pv::kReferenceExposure : 1.0f) * (o.pv35_exposure * 0.01f);
-    // (the mod's Peak and Game brightness are the HDR rows': the peak brightness over the paper white)
-    const float white = (float)hdr_paper_white_nits();
+    // (the mod's Peak and Game brightness are the HDR rows': the peak brightness over the game brightness)
+    const float white = (float)std::clamp(o.pv35_white, 80, 500);
     const float peak = o.pv35_peak > 0 ? (float)o.pv35_peak : (float)hdr_peak_nits();
     out[pv::kSettingPeak] = std::max(peak, white) / white;
     out[pv::kSettingBloom] = o.pv35_bloom * 0.02f;
@@ -3612,7 +3616,8 @@ void psychov35_bank(float* out) {
 void psychov35_reset() {
     opts.pv35_exposure = 100, opts.pv35_highlights = 50, opts.pv35_shadows = 50, opts.pv35_contrast = 50;
     opts.pv35_saturation = 50, opts.pv35_tone_slope = 50, opts.pv35_hue_clip = 50, opts.pv35_midgray = 1;
-    opts.pv35_match_slope = 1, opts.pv35_bloom = 50, opts.pv35_ui_white = 203, opts.pv35_color_space = 1, opts.pv35_peak = 0;
+    opts.pv35_match_slope = 1, opts.pv35_bloom = 50, opts.pv35_ui_white = 203, opts.pv35_color_space = 1, opts.pv35_peak = 0,
+    opts.pv35_white = 203;
     save();
 }
 void menu_init() {
