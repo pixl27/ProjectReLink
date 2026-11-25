@@ -4103,7 +4103,13 @@ void mirror_free(Pool& p) {
     pools_gen++;   // (a parallel replay thread's pool cache: looked up again)
 }
 void mirrors_give_back(uint64_t want_bytes) {   // (pools_mu held)
-    static const bool keep = getenv("RX_VK_MIRROR_KEEP") != nullptr;   // (A/B: mirrors kept, as before)
+    // (A/B: mirrors kept, as before.) (arc-fix) Kept by default on Intel, as retired imports are (retired_imports_give_back): on
+    // an Arc B580 (driver 101.9175) loading a save into Kokiri lost the device in about 5 of 6 tries with mirrors given back, the
+    // graphics queue's checkpoints idle between draws; with RX_VK_MIRROR_KEEP=1, or RX_VK_MIRROR=0, none in 3 of 3 (and 4 of 4).
+    // The mirrors' budget still bounds them (a pool past it stays in system memory). RX_VK_MIRROR_KEEP=0: given back, as on the others
+    static const bool keep = getenv("RX_VK_MIRROR_KEEP") ? getenv("RX_VK_MIRROR_KEEP")[0] != '0' : dev.props.vendorID == 0x8086;
+    static bool told;
+    if (!told) told = true, logf("vk: mirrors given back: %s", keep ? "no, kept (Intel's default; RX_VK_MIRROR_KEEP=0: given back)" : "yes");
     if (keep) return;
     for (auto& nh : retired_pools) {
         Pool& p = nh.mapped();
