@@ -37,6 +37,7 @@ struct DrawArgs { uint32_t first_task = 0; int groups[3]{1, 1, 1}; };
 struct Buffer { int buffer = 1; size_t offset = 0, range = 4; };
 using VkDescriptorBufferInfo = Buffer;
 constexpr int zero_buffer = 3;
+int mesh_conv_buf = 0;
 uint64_t storage_binding_align() { return 16; }
 struct Writer {
     struct Write { int descriptorType = 2; uint32_t descriptorCount = 1; const Buffer* pBufferInfo; };
@@ -113,6 +114,12 @@ int main() {
     assert(!eligible(different));
     descriptors[0].is_written = false;
     assert(!eligible(different, storage_flag | mesh_capture::global));
+    draw.groups[0] = 0;
+    assert(!eligible(different, storage_flag | mesh_capture::indirect));
+    mesh_conv_buf = 4;
+    assert(eligible(different, storage_flag | mesh_capture::indirect));
+    assert(!eligible(different, storage_flag | mesh_capture::indirect | mesh_capture::task));
+    draw.groups[0] = 1;
     par_active = true;
     assert(!geometry_inputs(program, draw, 0, different, storage));
 }

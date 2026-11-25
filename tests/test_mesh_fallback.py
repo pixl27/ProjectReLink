@@ -198,7 +198,8 @@ def main():
     reset = record[record.index("end_pass(cmd);"):record.index("vkCmdFillBuffer(cmd, f->records")]
     if "full_barrier(cmd);" not in reset:
         raise SystemExit("a fallback draw resets the shared records before the last draw has read them")
-    if "vkCmdFillBuffer(cmd, f->records, 4, 4, 1);" not in record:
+    if ("constexpr uint32_t empty_header[]{0, 1, 0, 0, 0, 0, 1, 1};" not in record or
+            "vkCmdUpdateBuffer(cmd, f->records, 0, sizeof(empty_header), empty_header);" not in record):
         raise SystemExit("the draw's instance count is not set to one")
     if "VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT" not in block(draw, "bool fallback_buffers_of(const Program& p, FallbackBuffers*& out) {"):
         raise SystemExit("the records buffer cannot be read as indirect arguments")

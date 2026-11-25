@@ -12,10 +12,13 @@ layout(push_constant, std430) uniform Push {
     Words dispatch_args;
     uvec4 offsets;
     uvec4 lengths;
+    uint indirect;
 } pc;
 shared uint changed;
 
 void main() {
+    // Indirect arguments are stored at the end of the 64 KiB input snapshot.
+    const uint args_offset = 16384;
     uint lane = gl_LocalInvocationIndex;
     if (lane == 0) changed = 0;
     barrier();
@@ -29,10 +32,20 @@ void main() {
     if (different) atomicOr(changed, 1);
     barrier();
     if (lane == 0) {
-        pc.dispatch_args.words[0] = changed;
-        pc.dispatch_args.words[1] = 1;
-        pc.dispatch_args.words[2] = 1;
-        if (changed != 0) {
+        uvec3 groups = uvec3(1);
+        bool rebuild = changed != 0;
+        if (pc.indirect != 0) {
+            groups = uvec3(pc.current.words[args_offset], pc.current.words[args_offset + 1],
+                           pc.current.words[args_offset + 2]);
+            // Reuse only if both indirect calls dispatched one workgroup. Other counts use the live result.
+            rebuild = rebuild || any(notEqual(groups, uvec3(1))) ||
+                      pc.previous.words[args_offset] != 1 || pc.previous.words[args_offset + 1] != 1 ||
+                      pc.previous.words[args_offset + 2] != 1;
+        }
+        pc.dispatch_args.words[0] = rebuild ? groups.x : 0;
+        pc.dispatch_args.words[1] = groups.y;
+        pc.dispatch_args.words[2] = groups.z;
+        if (rebuild) {
             pc.records.words[0] = 0;
             pc.records.words[1] = 1;
             for (uint i = 2; i < 6; ++i) pc.records.words[i] = 0;

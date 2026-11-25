@@ -1392,11 +1392,11 @@ python -I -B scripts/mesh_capture_report.py <game folder>/logs/mesh_geometry.rtm
 ```
 
 Repeated samples show whether the captured part of a variant changes. They are diagnostic samples. On Windows Vega,
-`RX_VK_GEOMETRY_REUSE=1` can skip repeating a direct, taskless single-workgroup mesh dispatch in the same recording
-when its uniforms and up to four read-only storage ranges match. The storage ranges occupy at most 64 KiB including
-alignment. The GPU copies and compares those bytes after prior writes and skips the mesh dispatch only on an exact
-match. On a miss the mesh dispatch reads the same snapshot it compared. Task culling, indirect counts, texture access,
-global memory and storage writes continue through the live draw path.
+`RX_VK_GEOMETRY_REUSE=1` can skip repeating a taskless single-workgroup mesh dispatch in the same recording when its
+uniforms and up to four read-only storage ranges match. The storage ranges occupy at most 64 KiB including alignment.
+The GPU copies and compares those bytes after prior writes. When a draw uses GPU-generated dispatch arguments, both
+dispatches must ask for exactly one workgroup. A miss uses the current snapshot and dispatch arguments. Task culling,
+subgroup-dependent shaders, texture access, global memory and storage writes continue through the live draw path.
 
 ## Draw statistics
 

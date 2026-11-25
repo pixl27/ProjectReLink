@@ -8524,7 +8524,8 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
             // ring prevents a variable-size native draw from overwriting y or z.
             if (!mesh_single_ring) {
                 void* mapped = nullptr;
-                if (create_buffer(kMeshSingleRing, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                if (create_buffer(kMeshSingleRing, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                                             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                   true, mesh_single_ring, mesh_single_mem, &mapped)) {
                     std::fill_n(static_cast<uint32_t*>(mapped), kMeshSingleRing / sizeof(uint32_t), 1u);
                     flush_mapped_range(mesh_single_mem, 0, kMeshSingleRing);
@@ -8535,7 +8536,8 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
         VkBuffer& ring = fixed_yz ? mesh_single_ring : mesh_ring;
         if (!ring) {
             void* unused = nullptr;
-            if (!create_buffer(kMeshRing, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, false, ring,
+            if (!create_buffer(kMeshRing, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                                             VK_BUFFER_USAGE_TRANSFER_SRC_BIT, false, ring,
                                mesh_ring_mem, &unused))
                 return false;
         }
@@ -8760,6 +8762,7 @@ struct GeometryStorage {
         uint32_t offset = 0;
     };
     static constexpr uint32_t capacity = 64u << 10;
+    static constexpr uint32_t input_args = capacity, output_args = capacity + 16, snapshot_bytes = capacity + 32;
     std::array<Range, 4> ranges{};
     uint32_t count = 0, used = 0;
 };
@@ -8788,11 +8791,11 @@ bool geometry_storage_ready(GeometryStorageGpu& gpu) {
                                          VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
     for (auto& snapshot : gpu.snapshots) {
         void* mapped = nullptr;
-        if (!create_buffer(GeometryStorage::capacity + 16, usage, false, snapshot.buffer, snapshot.memory, &mapped)) return fail();
+        if (!create_buffer(GeometryStorage::snapshot_bytes, usage, false, snapshot.buffer, snapshot.memory, &mapped)) return fail();
         snapshot.address = fallback_buffer_address(snapshot.buffer);
         if (!snapshot.address) return fail();
     }
-    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, 64};
+    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, 68};
     VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout.pushConstantRangeCount = 1;
     layout.pPushConstantRanges = &push;
@@ -8817,26 +8820,33 @@ bool geometry_storage_ready(GeometryStorageGpu& gpu) {
 
 // Snapshot the Vulkan resources (including earlier GPU writes). The mesh stage uses this same copy if it runs.
 void geometry_storage_record(VkCommandBuffer cmd, GeometryStorageGpu& gpu, const GeometryStorage& storage,
-                             const FallbackBuffers& f, int current, int previous) {
+                             const FallbackBuffers& f, int current, int previous, bool indirect) {
     const auto& now = gpu.snapshots[current];
     for (uint32_t i = 0; i < storage.count; ++i) {
         const auto& range = storage.ranges[i];
         const VkBufferCopy copy{range.original.offset, range.offset, range.original.range};
         vkCmdCopyBuffer(cmd, range.original.buffer, now.buffer, 1, &copy);
     }
+    if (indirect) {
+        const VkBufferCopy copy{mesh_conv_off, GeometryStorage::input_args, sizeof(VkDispatchIndirectCommand)};
+        vkCmdCopyBuffer(cmd, mesh_conv_buf, now.buffer, 1, &copy);
+    }
     if (previous < 0) return;
     full_barrier(cmd);
     struct Push {
         uint64_t previous, current, records, args;
         uint32_t offsets[4]{}, lengths[4]{};
-    } push{gpu.snapshots[previous].address, now.address, f.records_address, now.address + GeometryStorage::capacity};
-    static_assert(sizeof(Push) == 64);
+        uint32_t indirect = 0;
+    } push{gpu.snapshots[previous].address, now.address, f.records_address, now.address + GeometryStorage::output_args};
+    constexpr uint32_t push_bytes = offsetof(Push, indirect) + sizeof(uint32_t);
+    static_assert(push_bytes == 68);
+    push.indirect = indirect;
     for (uint32_t i = 0; i < storage.count; ++i) {
         push.offsets[i] = storage.ranges[i].offset / 4;
         push.lengths[i] = static_cast<uint32_t>(storage.ranges[i].original.range / 4);
     }
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, gpu.pipeline);
-    vkCmdPushConstants(cmd, gpu.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+    vkCmdPushConstants(cmd, gpu.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, push_bytes, &push);
     vkCmdDispatch(cmd, 1, 1, 1);
     // The fallback's pre-dispatch barrier also makes the comparison's writes visible.
 }
@@ -8844,7 +8854,9 @@ void geometry_storage_record(VkCommandBuffer cmd, GeometryStorageGpu& gpu, const
 bool geometry_inputs(const Program& p, const DrawArgs& d, uint32_t dependencies, mesh_capture::Inputs& inputs, GeometryStorage& storage) {
     // The fallback's workgroups allocate output records atomically. With exactly one workgroup,
     // its result does not depend on allocation order. Uniforms come from immutable CPU uploads.
-    if ((dependencies & ~mesh_capture::storage) || d.first_task || d.groups[0] != 1 || d.groups[1] != 1 || d.groups[2] != 1 ||
+    const bool indirect = (dependencies & mesh_capture::indirect) != 0;
+    if ((dependencies & ~(mesh_capture::storage | mesh_capture::indirect)) || d.first_task ||
+        (indirect ? !mesh_conv_buf : (d.groups[0] != 1 || d.groups[1] != 1 || d.groups[2] != 1)) ||
         p.uses_render_area || Shader::Backend::SPIRV::MeshFallbackCounters() ||
         !cur || !cur->mapped || par_active.load(std::memory_order_relaxed)) return false;
     if (p.stages.empty() || p.stages.front().vk_stage != VK_SHADER_STAGE_COMPUTE_BIT ||
@@ -8890,6 +8902,7 @@ struct RecentGeometry {
     VkBuffer records = VK_NULL_HANDLE;
     uint64_t recording = 0;
     int snapshot = -1;
+    bool indirect = false;
     mesh_capture::Inputs inputs;
 };
 TLS_OBJECT(recent_geometry, RecentGeometry)
@@ -9329,8 +9342,9 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
         eligible = geometry_inputs(p, d, dependencies, inputs, storage);
         auto& recent = recent_geometry();
         const bool same = reuse && eligible && recent.program == &p && recent.recording == cur->ub_snap_epoch &&
-                          recent.records == f->records && recent.inputs.same(inputs);
-        if (same && !storage.count) {
+                          recent.records == f->records && recent.indirect == bool(d.indirect) &&
+                          recent.inputs.same(inputs);
+        if (same && !storage.count && !d.indirect) {
             fallback_draw_records = f->records;
             frame_overlap_op(true);
             static std::atomic<uint64_t> hits{0};
@@ -9339,7 +9353,7 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
                 logf("vk: mesh geometry reused in its recording (%llu so far)", (unsigned long long)count);
             return true;
         }
-        if (reuse && eligible && storage.count) {
+        if (reuse && eligible && (storage.count || d.indirect)) {
             auto& gpu = geometry_storage_gpu();
             if (geometry_storage_ready(gpu)) {
                 storage_gpu = &gpu;
@@ -9364,17 +9378,19 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
     // (the shared pair: the last fallback draw on it, of any program of this thread, has read it before it is reset)
     full_barrier(cmd);
     const uint32_t groups{(uint32_t)std::clamp(d.groups[0], 0, (int)capacity)};
-    // (the records' header: the draw's command with no vertices and one instance, the allocator at 0, and the mesh dispatch
-    // with no workgroups, its y and z 1. The records past it need nothing: the draw reaches only those taken this time; nor
-    // the payload buffer: the mesh dispatch reads only the map entries and payloads its task wrote. Fills that do not overlap:
-    // two over the same bytes have no order between them without a barrier)
+    // The four draw words, the record allocator and the mesh dispatch's x/y/z.
     static_assert(Shader::Backend::SPIRV::MESH_FALLBACK_DISPATCH_WORD == 5 && Shader::Backend::SPIRV::MESH_FALLBACK_HEADER_WORDS == 8);
-    if (storage_gpu) geometry_storage_record(cmd, *storage_gpu, storage, *f, current, previous);
+    if (storage_gpu) {
+        geometry_storage_record(cmd, *storage_gpu, storage, *f, current, previous, d.indirect != 0);
+        static std::atomic<uint64_t> snapshots{0};
+        const uint64_t count = ++snapshots;
+        if (count <= 4)
+            logf("vk: mesh geometry recorded a %s snapshot (%u storage ranges, %u bytes)",
+                 d.indirect ? "GPU-counted" : "direct", storage.count, storage.used);
+    }
     if (previous < 0) {
-        vkCmdFillBuffer(cmd, f->records, 0, 4, 0);    // (vertexCount)
-        vkCmdFillBuffer(cmd, f->records, 4, 4, 1);    // (instanceCount)
-        vkCmdFillBuffer(cmd, f->records, 8, 16, 0);   // (firstVertex, firstInstance, the allocator, the dispatch's x)
-        vkCmdFillBuffer(cmd, f->records, 24, 8, 1);   // (the dispatch's y and z)
+        constexpr uint32_t empty_header[]{0, 1, 0, 0, 0, 0, 1, 1};
+        vkCmdUpdateBuffer(cmd, f->records, 0, sizeof(empty_header), empty_header);
     }
     // (the attribute regions' pool, mma_layout.h mesh_fallback_global_attributes: its ticket counter at 0 and every slot free for
     // the first generation. The draw before handed every slot back, but a wait that gave up may not have: each draw starts clean.
@@ -9419,7 +9435,7 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
             // direct or indirect, the CPU need not know the task count (DrawMeshTasksIndirect records none))
             vkCmdDispatchIndirect(cmd, f->records, (VkDeviceSize)Shader::Backend::SPIRV::MESH_FALLBACK_DISPATCH_WORD * 4);
         } else if (previous >= 0) {
-            vkCmdDispatchIndirect(cmd, storage_gpu->snapshots[current].buffer, GeometryStorage::capacity);
+            vkCmdDispatchIndirect(cmd, storage_gpu->snapshots[current].buffer, GeometryStorage::output_args);
             static std::atomic<uint64_t> comparisons{0};
             const uint64_t count = ++comparisons;
             if (count <= 4 || count % 1024 == 0)
@@ -9430,7 +9446,8 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
                 if (told++ < 2) logf("vk: fallback: an indirect mesh draw with no converted arguments is left out");
                 return false;
             }
-            vkCmdDispatchIndirect(cmd, mesh_conv_buf, mesh_conv_off);
+            if (storage_gpu) vkCmdDispatchIndirect(cmd, storage_gpu->snapshots[current].buffer, GeometryStorage::input_args);
+            else vkCmdDispatchIndirect(cmd, mesh_conv_buf, mesh_conv_off);
         } else {
             const uint32_t most{p.fallback_task ? (uint32_t)std::max(1u, capacity / std::max(1u, p.fallback_task_threads))
                                                 : groups};
@@ -9457,6 +9474,7 @@ bool fallback_record(VkCommandBuffer cmd, Program& p, const DrawArgs& d) {
         recent.records = f->records;
         recent.recording = cur->ub_snap_epoch;
         recent.snapshot = current;
+        recent.indirect = d.indirect != 0;
         recent.inputs.size = inputs.size;
         std::memcpy(recent.inputs.bytes.data(), inputs.bytes.data(), inputs.size);
     }

@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | Indirect mesh storage comparison shader from Red Tunic development source | Windows 11 build 26300 | Radeon Vega 1002:15e7, driver 26.5.2 | Ryzen 5 5625U, 16 GB | Vulkan 1.3, device buffer addresses, authored data | Standalone GPU fixture | Nine cases passed. Indirect matches with one group skipped dispatch. A changed storage range or changed dispatch count refreshed the output header and used the current count. Covered zero groups, two groups, an earlier GPU write and alignment padding. |
