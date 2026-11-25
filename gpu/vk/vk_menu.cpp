@@ -116,7 +116,7 @@ const char* tx_nits(int v) {
     snprintf(b, sizeof b, "%d nits", v);
     return b;
 }
-const char* tx_peak(int v) { return v == 0 ? "Display" : tx_nits(v); }
+const char* tx_tuning(int v) { return v ? "Show" : "Hidden"; }
 const char* tx_fps_counter(int v) { return v >= 2 ? "Detailed" : v ? "On" : "Off"; }
 const char* tx_menu_look(int v) { return v ? "Dark" : "Light"; }
 // (relink) Motion controls: the choice, and whether a connected controller has a gyroscope (host/pad_sdl.c). Either can be
@@ -697,14 +697,18 @@ Row rows[] = {
      "mapper, the same mid grey with highlights that roll off into the peak and keep their colour. Every Upscaler takes its "
      "scene: DLSS, DLAA, FSR and the game's own.",
      nullptr, false, true},
-    {TAB_GRAPHICS, "PsychoV35 peak brightness", &opts.pv35_peak, 0, 10000, 1, tx_peak,
-     "PsychoV35: how bright the highlights can go. Display: the display's own peak, as Windows reports it. A lower number "
-     "rolls the highlights into a smaller range; a higher one stretches them.", nullptr, false, true},
+    {TAB_GRAPHICS, "PsychoV35 peak brightness", &opts.pv35_peak, 100, 10000, 1, tx_nits,
+     "PsychoV35: how bright the highlights can go. A lower number rolls the highlights into a smaller range; a higher "
+     "one stretches them.", nullptr, false, true},
     {TAB_GRAPHICS, "PsychoV35 game brightness", &opts.pv35_white, 80, 500, 1, tx_nits,
      "PsychoV35: the scene's white reference, where the tone curve sits. Lower makes the picture brighter and rolls the "
      "highlights off sooner; higher keeps the scene dimmer with more headroom above it.", nullptr, false, true},
     {TAB_GRAPHICS, "PsychoV35 UI brightness", &opts.pv35_ui_white, 80, 500, 1, tx_nits,
      "PsychoV35: how bright the menus and the HUD's white is. The scene keeps the paper white.", nullptr, false, true},
+    {TAB_GRAPHICS, "HDR tuning", &opts.hdr_tuning_open, 0, 1, 1, tx_tuning,
+     "The fine PsychoV35 sliders (colour space, midgrey, tone slope, hue clip, exposure, highlights, shadows, contrast, "
+     "saturation, bloom). Hidden leaves them out so the display rows stay together; Show puts them back.", nullptr, false,
+     true},
     {TAB_GRAPHICS, "PsychoV35 color space", &opts.pv35_color_space, 0, 2, 1, tx_color_space,
      "PsychoV35: the picture's colours on the display. BT.709: as made, RenoDX's default; Vanilla: through the game's own "
      "matrix; DCI-P3: read as P3, more vivid.",
@@ -998,6 +1002,14 @@ std::string restart_line(HDC dc, int width) {
     return line;
 }
 
+// (relink) the PsychoV35 rows that collapse under the HDR tuning toggle: everything but the three brightness rows (peak,
+// game, UI) and the toggle itself. By name, so the set is one table, not four pointers.
+bool is_psychov35_tuning_slider(const Row& r) {
+    if (r.tab != TAB_GRAPHICS || strncmp(r.name, "PsychoV35 ", 10)) return false;
+    return strcmp(r.name, "PsychoV35 peak brightness") && strcmp(r.name, "PsychoV35 game brightness") &&
+           strcmp(r.name, "PsychoV35 UI brightness");
+}
+
 /// A row on its tab: the Cheats one only with cheats on, the DLSS model only in a build with DLSS (the Upscaler in every one)
 bool row_shown(int i) {
     // (relink, after HeyListen ddb156df / 79a34381) the HDR tone mapper with HDR on, PsychoV35's rows with it on PsychoV35
@@ -1008,7 +1020,11 @@ bool row_shown(int i) {
            (rows[i].value != &opts.fg_kind || dlss_built()) &&   // (relink: the Frame generator row in a build with DLSS)
            // (relink, 0.7.9.3: one Sharpness row: DLSS's, DLAA's and FSR's own value while one of them is chosen)
            (rows[i].value != &opts.sharpness || !up_sharpened()) && (rows[i].value != &opts.up_sharpness || up_sharpened()) &&
-           (rows[i].value != &opts.hdr_tonemap || hdr_on) && (!pv35 || (hdr_on && opts.hdr_tonemap == 1));
+           (rows[i].value != &opts.hdr_tonemap || hdr_on) && (!pv35 || (hdr_on && opts.hdr_tonemap == 1)) &&
+           // (relink, after 79a34381) the fine PsychoV35 sliders collapse behind HDR tuning; the brightness rows and the
+           // toggle stay visible together with the display rows
+           (rows[i].value != &opts.hdr_tuning_open || (hdr_on && opts.hdr_tonemap == 1)) &&
+           (!is_psychov35_tuning_slider(rows[i]) || opts.hdr_tuning_open != 0);
 }
 int tab_row_count(int t) {
     int c = 0;
@@ -1025,7 +1041,8 @@ const char* row_group(int i, int* place) {
         {"HDR tone mapper", "DISPLAY", 1},
         {"PsychoV35 peak brightness", "DISPLAY", 1},
         {"PsychoV35 game brightness", "DISPLAY", 1},
-        {"PsychoV35 UI brightness", "DISPLAY", 1}, {"PsychoV35 color space", "DISPLAY", 1}, {"PsychoV35 midgray", "DISPLAY", 1},
+        {"PsychoV35 UI brightness", "DISPLAY", 1}, {"HDR tuning", "DISPLAY", 1},
+        {"PsychoV35 color space", "DISPLAY", 1}, {"PsychoV35 midgray", "DISPLAY", 1},
         {"PsychoV35 match tone slope", "DISPLAY", 1}, {"PsychoV35 tone slope", "DISPLAY", 1},
         {"PsychoV35 hue clip emulation", "DISPLAY", 1}, {"PsychoV35 exposure", "DISPLAY", 1},
         {"PsychoV35 highlights", "DISPLAY", 1}, {"PsychoV35 shadows", "DISPLAY", 1}, {"PsychoV35 contrast", "DISPLAY", 1},
@@ -1083,6 +1100,7 @@ bool menu_refresh = false;
 // the tab, -1 none)
 int hover_tab = -1;
 int drag_row = -1;
+int drag_l = 0, drag_r = 1;   // (relink) a slider's track ends, fixed when the drag began: the drawn track moves as the
 bool mouse_read = false;   // (the menu has read the mouse since it opened)
 bool is_slider(const Row& r) { return (!strncmp(r.name, "PsychoV35 ", 10) && r.hi > 2) || r.value == &opts.sharpness || r.value == &opts.up_sharpness || r.value == &opts.mouse_sens || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y || r.value == &opts.volume; }
 /// (a scale: the arrows, a click and the wheel stop at its ends; Rumble strength would go from Off to its strongest)
@@ -1941,7 +1959,7 @@ int row_kind(const Row& r) {
     if (is_slider(r) || stops_at_ends(r)) return 3;
     static const int* const few[] = {&opts.upscale, &opts.realtime, &opts.text_speed, &opts.audio_output, &opts.ultrawide,
                                      &opts.robust, &opts.mouse_native, &opts.button_prompts, &opts.hdr_tonemap, &opts.pv35_midgray,
-                                     &opts.pv35_match_slope, &opts.pv35_color_space};
+                                     &opts.pv35_match_slope, &opts.pv35_color_space, &opts.hdr_tuning_open};
     for (const int* f : few)
         if (r.value == f && (r.hi - r.lo) / std::max(1, r.step) + 1 <= 4) return 2;
     return 0;
@@ -3603,7 +3621,7 @@ void psychov35_bank(float* out) {
     out[pv::kSettingAnchorScale] = (o.pv35_midgray ? pv::kReferenceExposure : 1.0f) * (o.pv35_exposure * 0.01f);
     // (the mod's Peak and Game brightness are the HDR rows': the peak brightness over the game brightness)
     const float white = (float)std::clamp(o.pv35_white, 80, 500);
-    const float peak = o.pv35_peak > 0 ? (float)o.pv35_peak : (float)hdr_peak_nits();
+    const float peak = (float)std::clamp(o.pv35_peak, 100, 10000);
     out[pv::kSettingPeak] = std::max(peak, white) / white;
     out[pv::kSettingBloom] = o.pv35_bloom * 0.02f;
     // (the mod's UI Brightness: the scene in its units, the encoder scaling by it)
@@ -3616,7 +3634,7 @@ void psychov35_bank(float* out) {
 void psychov35_reset() {
     opts.pv35_exposure = 100, opts.pv35_highlights = 50, opts.pv35_shadows = 50, opts.pv35_contrast = 50;
     opts.pv35_saturation = 50, opts.pv35_tone_slope = 50, opts.pv35_hue_clip = 50, opts.pv35_midgray = 1;
-    opts.pv35_match_slope = 1, opts.pv35_bloom = 50, opts.pv35_ui_white = 203, opts.pv35_color_space = 1, opts.pv35_peak = 0,
+    opts.pv35_match_slope = 1, opts.pv35_bloom = 50, opts.pv35_ui_white = 203, opts.pv35_color_space = 1, opts.pv35_peak = 1000,
     opts.pv35_white = 203;
     save();
 }
@@ -4373,6 +4391,7 @@ void menu_tick() {
                 if (mx >= oh.value_l[k] && mx < oh.value_r[k] + grab) side = mx < (oh.value_l[k] + oh.value_r[k]) / 2 ? -1 : 1;
                 for (int i = 0; oh.kind[k] == 2 && i < oh.choices[k]; i++)
                     if (mx >= oh.choice_l[k][i] && mx < oh.choice_r[k][i]) choice = i;
+                // (relink) a generous strip around the track (but not the number right of it) so a drag is easy to begin
                 if (oh.kind[k] == 3 && mx >= oh.track_l[k] - grab && mx < oh.track_r[k] + grab) {
                     on_track = true;
                     permille = std::clamp((mx - oh.track_l[k]) * 1000 / std::max(1, oh.track_r[k] - oh.track_l[k]), 0, 1000);
@@ -4391,7 +4410,7 @@ void menu_tick() {
                     drag_row = -1;
                     save();
                 } else {
-                    const int p = std::clamp((mx - oh.track_l[drag_row]) * 1000 / std::max(1, oh.track_r[drag_row] - oh.track_l[drag_row]), 0, 1000);
+                    const int p = std::clamp((mx - drag_l) * 1000 / std::max(1, drag_r - drag_l), 0, 1000);
                     const int v = menu_hit::slider_value(p, d.lo, d.hi, d.step);
                     if (v != *d.value) set_row(d, v, v > *d.value ? 1 : -1, false), changed = true;
                 }
@@ -4408,7 +4427,7 @@ void menu_tick() {
                         if (v != *d.value) set_row(d, v, v > *d.value ? 1 : -1);
                         changed = true;
                     } else if (on_track) {           // (a slider's track: there, and held it follows the cursor)
-                        drag_row = over_row;
+                        drag_row = over_row, drag_l = oh.track_l[over_row], drag_r = oh.track_r[over_row];
                         const int v = menu_hit::slider_value(permille, d.lo, d.hi, d.step);
                         if (v != *d.value) set_row(d, v, v > *d.value ? 1 : -1, false);
                         changed = true;
