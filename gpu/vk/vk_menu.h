@@ -69,6 +69,7 @@ struct Options {
     int pv35_exposure = 100, pv35_highlights = 50, pv35_shadows = 50, pv35_contrast = 50, pv35_saturation = 50;
     int pv35_tone_slope = 50, pv35_hue_clip = 50, pv35_midgray = 1, pv35_match_slope = 1, pv35_bloom = 50;
     int pv35_ui_white = 203, pv35_color_space = 1;
+    int pv35_peak = 0;      // (relink) the peak brightness in nits, 0 = the display's own (hdr_peak_nits, DXGI); the mod's Peak
     // (relink) the menu's, the screenshot's and the fullscreen's keys, as indexes of vk_menu.cpp's kHotkeys (F1..F12, Insert, Pause,
     // Scroll Lock, None): Insert, F12 and F11 by default. F1 still opens the menu while no other of these keys is F1
     int key_menu = 12, key_shot = 11, key_full = 10;
