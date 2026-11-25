@@ -37,6 +37,7 @@
 #include "crt_policy.h"
 #include "vk_gprof.h"
 #include "vk_texture.h"
+#include "menu_fade.h"
 #include "vk_wheel.h"   // (hookshot: the item wheel's picture, laid over its backdrop)
 #include <sirit/sirit.h>   // (hookshot: the item wheel's passes, built at run time)
 
@@ -1154,7 +1155,14 @@ std::vector<uint32_t> wheel_shader(int kind) {
     m.AddLabel(leave);
     m.OpReturn();
     m.AddLabel(body);
-    if (kind == 2) {   // (the picture over the image: premultiplied, src + dst * (1 - src.a))
+    if (kind == 3) {
+        const Id src = m.OpImageFetch(vec4, m.OpImage(sampled, m.OpLoad(sampled_t, in)), g, spv::ImageOperandsMask::Lod, c0);
+        const Id img = m.OpLoad(storage, out);
+        const Id dst = m.OpImageRead(vec4, img, g);
+        const Id alpha = m.OpFMul(f32, m.OpConvertSToF(f32, m.OpCompositeExtract(i32, offset, 0U)), m.Constant(f32, 0.001f));
+        const Id factor = m.OpCompositeConstruct(vec4, alpha, alpha, alpha, alpha);
+        m.OpImageWrite(img, g, m.OpFMix(vec4, dst, src, factor));
+    } else if (kind == 2) {   // (the picture over the image: premultiplied, src + dst * (1 - src.a))
         const Id src = m.OpImageFetch(vec4, m.OpImage(sampled, m.OpLoad(sampled_t, in)), g, spv::ImageOperandsMask::Lod, c0);
         const Id at = m.OpIAdd(ivec2, g, offset);
         const Id img = m.OpLoad(storage, out);
@@ -2169,6 +2177,79 @@ bool framegen_wheel_backdrop(VkCommandBuffer cmd, VkImage dst, VkFormat format, 
     return true;
 }
 
+
+bool menu_fade_wanted() {
+    static const bool on = env_on("RX_VK_MENU_FADE");
+    return on;
+}
+
+void menu_fade_present(VkCommandBuffer cmd, VkImage image, VkImageView storage, uint32_t w, uint32_t h,
+                       bool menu, bool world, bool enabled) {
+    static menu_fade::Transition transition;
+    static Img snapshot;
+    static Pipe blend;
+    static VkSampler sampler = VK_NULL_HANDLE;
+    static uint32_t width = 0, height = 0;
+    static bool attempted = false;
+    if (!enabled || !image || !storage || !w || !h || uint64_t(w) * h > 2560ull * 1440) {
+        transition = {};
+        return;
+    }
+    // Only the replay queue reads the snapshot. Keep one allocation and
+    // invalidate it after a size change until the original size returns.
+    if (snapshot.image && (w != width || h != height)) {
+        transition = {};
+        return;
+    }
+    const int64_t now = now_ns();
+    const bool was_armed = transition.armed;
+    const auto choice = transition.step(now, menu, world);
+    if (transition.armed && !was_armed) logf("vk: menu fade: held the last gameplay frame");
+    if (choice.action == menu_fade::Action::Native) return;
+    if (!attempted && choice.action == menu_fade::Action::Capture) {
+        attempted = true;
+        if (!dev.push_descriptor || !vkCmdPushDescriptorSetKHR) return;
+        std::vector<uint32_t> code;
+        try {
+            code = wheel_shader(3);
+        } catch (const std::exception& e) {
+            logf("vk: menu fade: shader generation failed: %s", e.what());
+            return;
+        }
+        VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        si.magFilter = si.minFilter = VK_FILTER_NEAREST;
+        si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        if (vkCreateSampler(dev.device, &si, nullptr, &sampler) != VK_SUCCESS) return;
+        if (!make_pipe(blend, code.data(), code.size() * sizeof(uint32_t),
+                       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE}, 16) ||
+            !make_img(snapshot, w, h, VK_FORMAT_R8G8B8A8_UNORM,
+                      VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) {
+            drop_pipe(blend);
+            vkDestroySampler(dev.device, sampler, nullptr);
+            sampler = VK_NULL_HANDLE;
+            return;
+        }
+        to_general(cmd, snapshot.image);
+        width = w, height = h;
+        logf("vk: menu fade: GPU snapshot %ux%u", w, h);
+    }
+    if (!snapshot.image) return;
+    full_barrier(cmd);
+    if (choice.action == menu_fade::Action::Blend && choice.opacity < 1000) {
+        const uint32_t args[4] = {choice.opacity, 0, w, h};
+        pass(cmd, blend, {{snapshot.view, sampler}, {storage, VK_NULL_HANDLE}}, w, h, args, sizeof args);
+        descriptors_disturbed();
+        return;
+    }
+    if (choice.action == menu_fade::Action::Blend) logf("vk: menu fade: blending into gameplay");
+    const bool capture = choice.action == menu_fade::Action::Capture;
+    if (capture) transition.captured_at = now;
+    const VkImageSubresourceLayers layer{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    const VkImageCopy region{layer, {}, layer, {}, {w, h, 1}};
+    vkCmdCopyImage(cmd, capture ? image : snapshot.image, VK_IMAGE_LAYOUT_GENERAL,
+                   capture ? snapshot.image : image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+    full_barrier(cmd);
+}
 
 /// (RX_VK_FG_LATENCY_LOG) Before the swapchain is destroyed: the log's waits for its presents end first. Every time, also
 /// before the log's thread has started: its first present's id may be queued for a chain retired meanwhile

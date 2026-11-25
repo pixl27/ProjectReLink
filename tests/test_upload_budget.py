@@ -42,7 +42,7 @@ FIXTURE = r"""
 #include <unordered_map>
 #include <vector>
 struct Texture {
-    bool uploaded = false, astc = true, gpu_written = false;
+    bool uploaded = false, astc = true, gpu_written = false, mip_stream_repair = false;
     uint32_t id = 1, width = 64, height = 64, layers = 1;
     int nvn_format = 0x7b;
     uint64_t defer_frame = 0, defer_seen = 0;
@@ -96,6 +96,9 @@ int main(int argc, char** argv) {
         expect(other, false, "a thread that uploaded nothing this present, the sum at 200 ms");
         expect(held(45, 45, false), false, "an uncompressed texture");
         expect(held(45, 45, true, true), false, "an ASTC texture uploaded before");
+        Texture repair;
+        repair.mip_stream_repair = true;
+        expect(upload_defer(repair), false, "a rejected mip preview takes the normal upload now");
         Texture w;
         tl_upload_frame = frame_no, tl_upload_ns = 50000000;
         upload_defer(w), upload_defer(w);   // (two lookups in one present: one texture, held back since this present)

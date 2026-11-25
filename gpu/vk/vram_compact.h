@@ -22,7 +22,7 @@ inline uint64_t vega_retention_floor(uint64_t resident, uint64_t physical_free, 
                                      uint64_t commit_reserve) {
     constexpr uint64_t physical_reserve = 1024ull << 20;
     constexpr uint64_t margin = 256ull << 20;
-    constexpr uint64_t cap = 768ull << 20;
+    constexpr uint64_t cap = 1280ull << 20;
     commit_reserve = std::max<uint64_t>(commit_reserve, 2560ull << 20);
     if (physical_free <= physical_reserve || commit_free <= commit_reserve) return 0;
     const uint64_t commit_room = commit_free - commit_reserve;

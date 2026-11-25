@@ -36,6 +36,13 @@ class MissingNupTests(unittest.TestCase):
         (self.out / "user/save").mkdir(parents=True)
         (self.out / "user/save/sentinel").write_bytes(b"authored save sentinel")
         (self.out / ".hookshot_romfs").write_text("previous authored package\n", encoding="utf-8")
+        for names, is_file in make_game.ROMFS_NEEDED:
+            path = self.out / "romfs" / names[0]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if is_file is os.path.isfile:
+                path.write_bytes(b"authored required file")
+            else:
+                path.mkdir(exist_ok=True)
         self.before = self.files()
         self.events = []
 
@@ -124,7 +131,7 @@ class MissingNupTests(unittest.TestCase):
     def test_existing_package_still_reuses_matching_cache(self):
         self.package = self.root / "existing cached game [1].nup"
         self.package.write_bytes(b"authored package sentinel")
-        stamp = "unpacked by this builder: %s %d\n" % (self.package.name, self.package.stat().st_size)
+        stamp = make_game.package_stamp(self.package, self.package.stat()) + "\n"
         (self.out / ".hookshot_romfs").write_text(stamp, encoding="utf-8")
         self.before = self.files()
         code, text = self.invoke()

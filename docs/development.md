@@ -60,6 +60,43 @@ caught even if the producer is paused long enough for every already-published co
 
 The dump can also come from `OOT_DUMP` (its folder) or `OOT_EXEFS`; `OOT_WORK` moves the work folder.
 
+### Rekarina setup and texture conversion
+
+The Builder reuses a completed archive extraction when the archive's file identity
+still matches. Retrying a build avoids reopening the archive to hash it. A replacement
+with the same name and size is checked and unpacked before it can replace the local
+files. Selecting an archive again after a build made with the older stamp format
+refreshes the extraction once. Updating directly from the game folder still uses its
+existing files. If the Builder stopped during file replacement, selecting the
+source again lets it complete the extraction before an update can use it.
+
+On discrete GPUs with GPU ASTC conversion active, `RX_VK_ASTC_BATCH=1` tests converting
+two complete mips at a time through the existing BC encoder. Each mip has its own
+scratch layer and output range. This cuts the number of synchronization points and copy
+commands for those uploads. The default path remains one mip at a time. AMD Vega, AMD
+GCN, integrated GPUs, and texture arrays bypass the experiment.
+
+The setup approach is adapted from [Rekarina 1.2.10](https://git.rekarina.dev/rekarina/rekarina/src/commit/ff6548e80e17f79b95eda0fae1e11ec9ee9ff9bf/installer/steps.py).
+Red Tunic already translates the game to native x86-64 code and renders through
+Vulkan. Rekarina's disk cache and GPU replay code use its own file formats and
+resource tracking.
+
+### Texture and shader-cache tuning for Windows Vega
+
+The renderer can retain up to 1,280 MiB of already-resident textures on Windows
+Vega. The previous shared-memory floor capped retention at 768 MiB. Available
+physical RAM and commit headroom limit the floor at runtime. The driver-refusal
+and commit-limit rules still cut the texture budget under pressure.
+
+The load-at-create trial indexed 37,690 cached pipeline notes with startup
+preparation skipped. The combined trial with the higher texture floor increased
+the inventory-exit hitch on Vega. The default startup policy remains the prior
+one. The two recorder trials also increased maximum camera-turn hitch time.
+Removing first-draw upload deferral increased the inventory-exit hitch in both
+attempts. See the [test runs](tested-configurations.md).
+[Longshot cache indexing](https://git.magicbean.dev/MagicBeanDev/Longshot/commit/f751d13c)
+and [Longshot recorder](https://git.magicbean.dev/MagicBeanDev/Longshot/commit/1b0a17a8).
+
 ### Windows object-cache reuse across source worktrees
 
 A source worktree may share the original checkout's compiler through `HOOKSHOT_MINGW`.
@@ -286,6 +323,24 @@ was ever listed there and no live texture's storage lies there, the call is fini
 (`invalidate_quick`, `vk_replay.cpp`, read without a lock from marks that are set and never cleared: `gpu/vk/page_marks.h`).
 `RX_VK_INVALIDATE_QUICK=0` gives the core up for every call, as before. The line `vk: invalidates since the last readbacks
 line` comes after each `readbacks of GPU results` line and counts the calls that kept the core and the ones that gave it up.
+
+`RX_VK_MENU_FADE=1` enables the inventory and item wheel exit fade for SDR Vulkan output without frame generation.
+The renderer keeps one recent gameplay frame in a GPU image (up to 14.1 MiB). When the menu closes, it can hold that
+frame for up to 1.5 seconds while waiting for the gameplay render pass, then fade into the new frame over 240 ms.
+The game's own menu backdrop and UI remain visible while the menu is open. The fade is off by default.
+
+`RX_VK_EXPOSURE_METER_PART=1` is an experimental exposure readback setting. When exact writer-part readbacks are
+available, the two identified exposure programs register their exact 0x1040-byte storage binding before replay
+records the writer. A matched direct dispatch resets the four sums on the GPU. Ordinary readback synchronization
+and shader cache identity are preserved. The log counts matched GPU resets.
+
+On Windows Vega, `RX_VK_MESH_CONVERT_SCOPED=1` uses a separate ring of single indirect compute arguments with
+Y and Z initialized to one. Each conversion copies the GPU-produced X value and orders just the relevant buffer
+ranges. This uses the existing compacted task payloads and indirect draw count.
+
+`RX_VK_CS_MODULE_DROP=1` releases the Vulkan compute shader module after a complete pipeline is available,
+including pipelines made at startup or on a worker. A pipeline made quickly and awaiting optimization keeps its
+module for that pending build. The log counts modules released by this switch.
 
 Native HDR PsychoV35 automatically enables the compatible RGBA16F scene path for DLSS/DLAA, AMD FSR 4 (and its Native AA), Intel XeSS (and its Native AA), and FSR 3.1 on the shared chain.
 `RX_VK_PSYCHOV35_DLSS=0` disables that route for troubleshooting; unset, empty or nonzero enables it. The value is read
@@ -803,6 +858,7 @@ Pipeline-cache file ownership, temporary storage and failure behavior are descri
 | `RX_VK_TEX_AHEAD=1`, `RX_VK_TEX_AHEAD_MS=<n>` | Textures prepared ahead of their first draw (off by default: measured on a Steam Deck only). The renderer makes and uploads a texture at the first draw that samples it, so after a save is loaded its area's textures all come in the first frames after the loading screen. With `=1`, a block-compressed texture first drawn within 90 s of the game making it is remembered, with where the game put it, in the game folder's `cache/hookshot_textures_drawn.bin` (at most 32,768 entries, then the list starts again); the next time the game makes it there, it is made and uploaded during a light frame (under 200 draws: a loading screen, a menu), up to `<n>` ms a frame (12), and never within 256 MB of the texture cache's budget. The first load of a save only fills the list; the loads after it have fewer long frames on arrival. It does nothing at an area change in play, where the game makes no texture again. The log's `vk: textures ahead:` lines count what was prepared and what a draw still uploaded first. Rules and reasons: `gpu/vk/texture_ahead.h` |
 | `RX_VK_ASTC_PREFETCH=1` | With texture prefetch and CPU ASTC on Windows Vega, one low-priority worker prepares the largest mip of up to three learned 2D materials. Demand uploads use a result only if its encoded blocks match byte for byte. A miss uses the normal decoder. |
 | `RX_VK_TEX_AHEAD_PRESSURE=1` | Pauses Windows Vega texture prefetch below 1.5 GiB of available RAM or 2.5 GiB of commit headroom. It resumes above 2.5 GiB of available RAM and 4 GiB of commit headroom. Demand uploads keep running. |
+| `RX_VK_MIP_STREAM=1` | Experimental Windows Vega setting for CPU-decoded ASTC. An eligible 2D material has its lower mips uploaded first. A filtered copy of mip 1 fills the original top level while a low-priority CPU worker decodes the exact top mip. The replay publishes at most one finished mip per present and checks the texture identity and encoded bytes before replacing the preview. New previews pause below 1 GiB of available RAM or 1.5 GiB of commit headroom. They resume at 1.5 GiB of available RAM and 2.5 GiB of commit headroom. The path uses at most four jobs and leaves texture dimensions and Vulkan descriptors intact. |
 | `RX_VK_BINDING_REUSE=1` | Retains sampled views across a few unrelated texture evictions and samplers across unrelated sampler registrations. A texture or sampler change, retirement, or sampler setting change forces the relevant lookup again. |
 | `RX_VK_AUTO_PRESET=0`, `RX_VK_AUTO_PRESET_VRAM_MB=<MB>` | A first start keeps the defaults instead of starting on the Quality preset Auto (this PC) (`gpu/vk/auto_settings.h`); the card's video memory taken as that many MB, to see what Auto chooses for a smaller or larger card |
 | `RX_VK_AUTO_TUNE=0` | Auto (this PC) keeps its Render resolution instead of measuring the GPU in play and stepping it: down while frames are missed with the GPU over 90% busy, up while the cap holds with it under half busy (`auto_settings.h` `tune`) |

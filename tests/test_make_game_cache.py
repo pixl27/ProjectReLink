@@ -53,6 +53,7 @@ def game_files(romfs, heapdef=HEAPDEF):
     (romfs / "Pack").mkdir(parents=True, exist_ok=True)
     (romfs / "Pack" / "ZsDic.pack.zs").write_bytes(b"\x28\xb5\x2f\xfd" + b"authored dictionary stand-in")
     (romfs / "System" / "Resource").mkdir(parents=True, exist_ok=True)
+    (romfs / "System" / "Resource" / make_game.ROMFS_TABLE).write_bytes(b"\x28\xb5\x2f\xfd" + b"authored resource table")
     if heapdef:
         (romfs / heapdef).parent.mkdir(parents=True, exist_ok=True)
         (romfs / heapdef).write_bytes(b"\x28\xb5\x2f\xfd" + b"authored heap definition stand-in")
@@ -94,7 +95,7 @@ class NupCacheTests(unittest.TestCase):
         self.assertTrue(self.work.resolve().is_relative_to(self.root))
 
     def stamp(self, nup):
-        return "unpacked by this builder: %s %d" % (nup.name, nup.stat().st_size)
+        return make_game.package_stamp(nup, nup.stat())
 
     def cache(self):
         return {path.relative_to(self.out).as_posix(): path.read_bytes()
@@ -122,8 +123,8 @@ class NupCacheTests(unittest.TestCase):
                 if part == "romfs":
                     reading_assets.set()
                     self.assertTrue(translating.wait(5), "the asset reader must run beside translation")
-                    if replace_package:
-                        nup.write_bytes(b"a different package")
+                if replace_package:
+                    nup.write_bytes(b"a different package")
                 if failure:
                     (target / "romfs").mkdir()
                     (target / "romfs" / "asset.txt.part").write_bytes(b"incomplete authored asset")
@@ -175,6 +176,8 @@ class NupCacheTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(make_game, "check_windows_sdk"))
             stack.enter_context(mock.patch.object(make_game, "stop_stray_compilers"))   # (Windows: powershell, taskkill)
             stack.enter_context(mock.patch.object(make_game, "drop_stale_objects"))
+            # Branding is written independently of extraction reuse.
+            stack.enter_context(mock.patch.object(make_game, "game_name"))
             stack.enter_context(mock.patch.object(make_game, "no_throttle"))
             stack.enter_context(mock.patch("ctypes.WinDLL", create=True))
             # (the hot list, link order, PGO profile and chunk boundaries come from <checkout>/work: an empty one here. The lift's
@@ -328,6 +331,35 @@ class NupCacheTests(unittest.TestCase):
         self.assertEqual(self.marker.read_text(), self.stamp(self.new_nup) + "\n")
         self.assertEqual((self.out / "user/save/sentinel.txt").read_bytes(), b"authored save sentinel")
         self.assertEqual((self.out / "hookshot_options.ini").read_bytes(), b"authored options sentinel")
+
+    def test_different_archive_with_same_name_and_size_is_read(self):
+        other = self.root / "replacement"
+        other.mkdir()
+        package = other / self.old_nup.name
+        package.write_bytes(b"x" * self.old_nup.stat().st_size)
+        with self.assertRaises(Prepared):
+            self.run_to_lift(package)
+        self.assertEqual(self.extractions, [package])
+        self.assertEqual((self.out / "romfs/asset.txt").read_bytes(), b"new authored assets")
+
+    def test_changed_package_during_sequential_unpack_is_not_published(self):
+        before = self.cache()
+        with self.assertRaises(SystemExit):
+            self.run_to_lift(self.new_nup, replace_package=True)
+        self.assertIn("changed during extraction", self.output)
+        self.assertEqual(self.cache(), before)
+
+    def test_update_refuses_partly_published_extraction_until_archive_retry(self):
+        pending = self.out / ".hookshot_romfs_pending"
+        pending.write_text(self.stamp(self.old_nup) + "\n")
+        with self.assertRaises(SystemExit):
+            self.run_to_lift(None, update=True)
+        self.assertIn("interrupted while replacing the game files", self.output)
+        self.assertEqual(self.extractions, [])
+        with self.assertRaises(Prepared):
+            self.run_to_lift(self.old_nup)
+        self.assertEqual(self.extractions, [self.old_nup])
+        self.assertFalse(pending.exists())
 
     def test_same_source_reuses_the_cache(self):
         before = self.cache()
@@ -517,7 +549,7 @@ class NupCacheTests(unittest.TestCase):
         (packed / "romfs.bin").write_bytes(b"authored packed stand-in")
         empty.mkdir()
         self.game_files(half)
-        (half / "System" / "Resource").rmdir()
+        shutil.rmtree(half / "System" / "Resource")
         self.game_files(no_heap, heapdef=None)
         for romfs, said, packed_copy in ((packed, "no Pack/ZsDic.pack.zs", True), (empty, "no Pack/ZsDic.pack.zs", False),
                                          (half, "no System/Resource", False), (no_heap, "no " + HEAPDEF, False)):

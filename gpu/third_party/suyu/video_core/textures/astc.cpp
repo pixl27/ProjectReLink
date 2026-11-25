@@ -8,6 +8,7 @@
 // <http://gamma.cs.unc.edu/FasTC/>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cassert>
 #include <cstring>
@@ -1179,95 +1180,38 @@ static inline u32 hash52(u32 p) {
     return p;
 }
 
-static u32 SelectPartition(s32 seed, s32 x, s32 y, s32 z, s32 partitionCount, s32 smallBlock) {
-    if (1 == partitionCount)
-        return 0;
+// The hash and coefficients depend only on the block's partition seed.
+// Build them once, then evaluate the 2D scores at each texel.
+struct Partition2D {
+    std::array<u32, 4> x_coeff{}, y_coeff{}, bias{};
+    u32 count;
 
-    if (smallBlock) {
-        x <<= 1;
-        y <<= 1;
-        z <<= 1;
+    Partition2D(u32 seed, u32 partition_count, bool small_block) : count(partition_count) {
+        if (count == 1) return;
+        seed += (count - 1) * 1024;
+        const u32 hash = hash52(seed);
+        const u32 shift_x = (seed & 1) ? ((seed & 2) ? 4 : 5) : (count == 3 ? 6 : 5);
+        const u32 shift_y = (seed & 1) ? (count == 3 ? 6 : 5) : ((seed & 2) ? 4 : 5);
+        for (u32 i = 0; i < count; ++i) {
+            const u32 x = (hash >> (8 * i)) & 0xF;
+            const u32 y = (hash >> (8 * i + 4)) & 0xF;
+            x_coeff[i] = ((x * x) >> shift_x) << small_block;
+            y_coeff[i] = ((y * y) >> shift_y) << small_block;
+            bias[i] = hash >> (14 - 4 * i);
+        }
     }
 
-    seed += (partitionCount - 1) * 1024;
-
-    u32 rnum = hash52(static_cast<u32>(seed));
-    u8 seed1 = static_cast<u8>(rnum & 0xF);
-    u8 seed2 = static_cast<u8>((rnum >> 4) & 0xF);
-    u8 seed3 = static_cast<u8>((rnum >> 8) & 0xF);
-    u8 seed4 = static_cast<u8>((rnum >> 12) & 0xF);
-    u8 seed5 = static_cast<u8>((rnum >> 16) & 0xF);
-    u8 seed6 = static_cast<u8>((rnum >> 20) & 0xF);
-    u8 seed7 = static_cast<u8>((rnum >> 24) & 0xF);
-    u8 seed8 = static_cast<u8>((rnum >> 28) & 0xF);
-    u8 seed9 = static_cast<u8>((rnum >> 18) & 0xF);
-    u8 seed10 = static_cast<u8>((rnum >> 22) & 0xF);
-    u8 seed11 = static_cast<u8>((rnum >> 26) & 0xF);
-    u8 seed12 = static_cast<u8>(((rnum >> 30) | (rnum << 2)) & 0xF);
-
-    seed1 = static_cast<u8>(seed1 * seed1);
-    seed2 = static_cast<u8>(seed2 * seed2);
-    seed3 = static_cast<u8>(seed3 * seed3);
-    seed4 = static_cast<u8>(seed4 * seed4);
-    seed5 = static_cast<u8>(seed5 * seed5);
-    seed6 = static_cast<u8>(seed6 * seed6);
-    seed7 = static_cast<u8>(seed7 * seed7);
-    seed8 = static_cast<u8>(seed8 * seed8);
-    seed9 = static_cast<u8>(seed9 * seed9);
-    seed10 = static_cast<u8>(seed10 * seed10);
-    seed11 = static_cast<u8>(seed11 * seed11);
-    seed12 = static_cast<u8>(seed12 * seed12);
-
-    s32 sh1, sh2, sh3;
-    if (seed & 1) {
-        sh1 = (seed & 2) ? 4 : 5;
-        sh2 = (partitionCount == 3) ? 6 : 5;
-    } else {
-        sh1 = (partitionCount == 3) ? 6 : 5;
-        sh2 = (seed & 2) ? 4 : 5;
+    u32 at(u32 x, u32 y) const {
+        if (count == 1) return 0;
+        u32 winner = 0;
+        u32 best = (x_coeff[0] * x + y_coeff[0] * y + bias[0]) & 0x3F;
+        for (u32 i = 1; i < count; ++i) {
+            const u32 score = (x_coeff[i] * x + y_coeff[i] * y + bias[i]) & 0x3F;
+            if (score > best) best = score, winner = i;
+        }
+        return winner;
     }
-    sh3 = (seed & 0x10) ? sh1 : sh2;
-
-    seed1 = static_cast<u8>(seed1 >> sh1);
-    seed2 = static_cast<u8>(seed2 >> sh2);
-    seed3 = static_cast<u8>(seed3 >> sh1);
-    seed4 = static_cast<u8>(seed4 >> sh2);
-    seed5 = static_cast<u8>(seed5 >> sh1);
-    seed6 = static_cast<u8>(seed6 >> sh2);
-    seed7 = static_cast<u8>(seed7 >> sh1);
-    seed8 = static_cast<u8>(seed8 >> sh2);
-    seed9 = static_cast<u8>(seed9 >> sh3);
-    seed10 = static_cast<u8>(seed10 >> sh3);
-    seed11 = static_cast<u8>(seed11 >> sh3);
-    seed12 = static_cast<u8>(seed12 >> sh3);
-
-    s32 a = seed1 * x + seed2 * y + seed11 * z + (rnum >> 14);
-    s32 b = seed3 * x + seed4 * y + seed12 * z + (rnum >> 10);
-    s32 c = seed5 * x + seed6 * y + seed9 * z + (rnum >> 6);
-    s32 d = seed7 * x + seed8 * y + seed10 * z + (rnum >> 2);
-
-    a &= 0x3F;
-    b &= 0x3F;
-    c &= 0x3F;
-    d &= 0x3F;
-
-    if (partitionCount < 4)
-        d = 0;
-    if (partitionCount < 3)
-        c = 0;
-
-    if (a >= b && a >= c && a >= d)
-        return 0;
-    else if (b >= c && b >= d)
-        return 1;
-    else if (c >= d)
-        return 2;
-    return 3;
-}
-
-static inline u32 Select2DPartition(s32 seed, s32 x, s32 y, s32 partitionCount, s32 smallBlock) {
-    return SelectPartition(seed, x, y, 0, partitionCount, smallBlock);
-}
+};
 
 static constexpr bool IsHDRColorEndpointMode(u32 cem) {
     switch (cem) {
@@ -1932,32 +1876,36 @@ static void DecompressBlock(std::span<const u8, 16> inBuf, const u32 blockWidth,
     u32 weights[2][144];
     UnquantizeTexelWeights(weights, texelWeightValues, weightParams, blockWidth, blockHeight);
 
-    // Now that we have endpoints and weights, we can interpolate and generate
-    // the proper decoding...
+    // Expand each endpoint and select the weight plane once per channel.
+    // Only the weight and the partition vary across texels.
+    bool is_hdr[4][4];
+    u32 low[4][4], high[4][4], planes[4];
+    for (u32 c = 0; c < 4; ++c)
+        planes[c] = weightParams.m_bDualPlane && (((planeIdx + 1) & 3) == c);
+    for (u32 part = 0; part < nPartitions; ++part) {
+        const u32 mode = colorEndpointMode[part];
+        for (u32 c = 0; c < 4; ++c) {
+            const u32 c0 = endpoints[part][0].Component(c);
+            const u32 c1 = endpoints[part][1].Component(c);
+            const bool hdr = IsHDRColorEndpointMode(mode) && !(mode == 14 && c == 0);
+            is_hdr[part][c] = hdr;
+            low[part][c] = hdr ? c0 << 4 : ReplicateByteTo16(c0);
+            high[part][c] = hdr ? c1 << 4 : ReplicateByteTo16(c1);
+        }
+    }
+
+    const Partition2D partitions(partitionIndex, nPartitions, blockHeight * blockWidth < 32);
     for (u32 j = 0; j < blockHeight; j++)
         for (u32 i = 0; i < blockWidth; i++) {
-            u32 partition = Select2DPartition(partitionIndex, i, j, nPartitions,
-                                              (blockHeight * blockWidth) < 32);
+            const u32 partition = partitions.at(i, j);
             assert(partition < nPartitions);
 
             Pixel p;
             for (u32 c = 0; c < 4; c++) {
-                u32 C0 = endpoints[partition][0].Component(c);
-                u32 C1 = endpoints[partition][1].Component(c);
+                const u32 weight = weights[planes[c]][j * blockWidth + i];
+                const u32 C = (low[partition][c] * (64 - weight) + high[partition][c] * weight + 32) / 64;
 
-                u32 plane = 0;
-                if (weightParams.m_bDualPlane && (((planeIdx + 1) & 3) == c)) {
-                    plane = 1;
-                }
-                u32 weight = weights[plane][j * blockWidth + i];
-
-                const bool is_hdr = IsHDRColorEndpointMode(colorEndpointMode[partition]) &&
-                                    !(colorEndpointMode[partition] == 14 && c == 0);
-
-                if (is_hdr) {
-                    C0 <<= 4;
-                    C1 <<= 4;
-                    const u32 C = (C0 * (64 - weight) + C1 * weight + 32) / 64;
+                if (is_hdr[partition][c]) {
                     const u32 E = (C & 0xF800) >> 11;
                     const u32 M = C & 0x7FF;
                     u32 Mt;
@@ -1972,9 +1920,6 @@ static void DecompressBlock(std::span<const u8, 16> inBuf, const u32 blockWidth,
                     const u16 half_bits = (Cf >= 0x7C00) ? u16{0x7BFF} : static_cast<u16>(Cf);
                     p.Component(c) = HalfToClampedByte(half_bits);
                 } else {
-                    C0 = ReplicateByteTo16(C0);
-                    C1 = ReplicateByteTo16(C1);
-                    const u32 C = (C0 * (64 - weight) + C1 * weight + 32) / 64;
                     p.Component(c) = static_cast<u16>((255u * C + 32768u) >> 16);
                 }
             }

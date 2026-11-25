@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | Red Tunic 4.2.2 renderer SHA-256 32498f25308fea4ce21fdf6d6a856422b51a6d94dac74717484851b45e390f7b | Windows 11 build 26300, 1280x720 window | Radeon Vega 1002:15e7, 26.5.2 | Ryzen 5 5625U, 16 GB | CPU ASTC, SDR, mip streaming off, all three compute switches on | HyruleField_Adult camera turn and menu, Market_Adult arrival event and settled gameplay | The arrival event completed and the Market presented after at least 28 frames of gameplay. The Hyrule Field, menu and Market captures were populated. No renderer-reported white or dark frames or device loss. This was a shared functional check. |

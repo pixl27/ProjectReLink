@@ -4902,7 +4902,17 @@ bool null_tex_wanted(const Stage& st, const Shader::TextureDescriptor& d) {
     default: return (kinds & 8) != 0;
     }
 }
+// Project ReLink 54af18c identified the two exposure accumulation programs.
+bool exposure_meter_program(uint64_t key) {
+    return key == 0x435a0138b9013040ULL || key == 0x592079442d7129daULL;
+}
+thread_local BufferRef exposure_meter_target;
+thread_local uint32_t exposure_meter_bindings = 0;
+
 void build_descriptors(const NvnState& s, const Program& p) {
+    static const bool exposure_part = env_on("RX_VK_EXPOSURE_METER_PART");
+    const bool track_exposure = exposure_part && p.compute && exposure_meter_program(p.key) && readback_early_on();
+    if (track_exposure) exposure_meter_target = {}, exposure_meter_bindings = 0;
 #ifdef TRACY_ENABLE
     HT_SCOPE_DRAW("build_descriptors");
 #endif
@@ -5050,7 +5060,17 @@ void build_descriptors(const NvnState& s, const Program& p) {
                 // (hookshot) a storage buffer table's entries (count > 1, Info::global_tables): the ones past the table's
                 // end are whatever the constant buffer holds there, bound only when they look like a buffer
                 const bool plausible = d.count == 1 || (size && size <= (256ull << 20) && host->gpu_guest(base));
+                constexpr uint64_t exposure_bytes = 0x1040;
+                const bool meter = track_exposure && addr && addr == base && size == exposure_bytes &&
+                                   d.count == 1 && d.is_written && !bare && !wide_n;
+                if (meter)
+                    if (const uint64_t guest = host->gpu_guest(addr))
+                        memory_rb_waited(guest, exposure_bytes);  // prime the existing exact writer-part tracking
                 BufferRef b = addr && plausible ? gpu_buffer_bind(base, n, d.is_written && !bare) : BufferRef{};
+                if (meter && b && b.size >= exposure_bytes) {
+                    exposure_meter_target = b;
+                    ++exposure_meter_bindings;
+                }
                 // (AyyBeeDee20738, PR 138) a table entry's region that does not fit its pool this moment bound nothing, and the next
                 // frame bound it again: its reads flipped between the data and 0, the picture between bright and dark. Smaller,
                 // down to 1 MB, rather than nothing (and past what is bound the shaders' search now goes on to the page table)
@@ -5275,8 +5295,10 @@ void build_descriptors(const NvnState& s, const Program& p) {
                     view = prev_view, tex = prev_tex;
                 } else {
                     upload_defer_ok = st.vk_stage != VK_SHADER_STAGE_COMPUTE_BIT;   // (a draw's: its new ASTC textures may wait a frame)
+                    mip_stream_draw = s.rt.depth && st.vk_stage == VK_SHADER_STAGE_FRAGMENT_BIT && vt == VK_IMAGE_VIEW_TYPE_2D &&
+                                      !is_table && !d.is_integer && !d.is_depth && d.type_fixed;
                     view = handle ? texture_view_of(handle, vt, ViewUse::Sample, VK_FORMAT_UNDEFINED, &tex) : VK_NULL_HANDLE;
-                    upload_defer_ok = false;
+                    mip_stream_draw = upload_defer_ok = false;
                     // (Lichii bd0171f7) A depth-compare sample of a colour texture is undefined and differs between vendors: a
                     // handle read from memory (an unused or stale table entry) that names one binds nothing
                     if (is_table && view && tex && d.is_depth && !is_depth_format(tex->format)) {
@@ -7452,6 +7474,7 @@ extern int64_t presents_now;   // (vk_replay.cpp)
 // The last present whose frame drew the world (its lighting composite, 1a7482c0). A pause menu, the map, a loading screen or a
 // movie draws none: then ultrawide's sides are blurred or black (vk_framegen.cpp wide_sides)
 std::atomic<int64_t> world_drawn_at{0};
+std::atomic<int64_t> menu_fade_world_at{-1}, menu_fade_pause_at{-1};
 // The last present whose frame drew the item wheel's background (02ff9920: the last frame of play, blurred, over the whole picture;
 // drawn behind the wheel only, not the pause menu or the map): no sides of ours then (vk_framegen.cpp wide_sides)
 std::atomic<int64_t> wheel_drawn_at{0};
@@ -8464,6 +8487,10 @@ VkBuffer mesh_ring = VK_NULL_HANDLE;
 VmaAllocation mesh_ring_mem = nullptr;
 std::mutex mesh_ring_mu;
 uint64_t mesh_ring_at = 0;
+constexpr uint64_t kMeshSingleRing = 1ull << 20;
+VkBuffer mesh_single_ring = VK_NULL_HANDLE;
+VmaAllocation mesh_single_mem = nullptr;
+uint64_t mesh_single_at = 0;
 VkBuffer mesh_dbg = VK_NULL_HANDLE;   // (RX_VK_G3_MESHCOUNT)
 VmaAllocation mesh_dbg_mem = nullptr;
 void* mesh_dbg_ptr = nullptr;
@@ -8482,19 +8509,41 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
     const uint32_t stride = d.stride > 0 ? (uint32_t)d.stride : 8;
     const BufferRef args = gpu_buffer_bind(d.indirect, (uint64_t)(n - 1) * stride + 4 * (word + 1), false);
     if (!args) return false;
+    static const bool scoped_on = env_on("RX_VK_MESH_CONVERT_SCOPED");
+    static const bool trace_counts = env_on("RX_VK_G3_MESHCOUNT");
+    const bool scoped = !dev.mesh_shader && scoped_on && !trace_counts && policy_rule::windows_vega_compat(dev.facts);
+    VkBuffer converted;
     uint64_t off;
+    bool fixed_yz = false;
     {
         std::lock_guard lk(mesh_ring_mu);
-        if (!mesh_ring) {
+        if (scoped) {
+            // Each slot is permanently {x, 1, 1, padding}. Keeping a separate
+            // ring prevents a variable-size native draw from overwriting y or z.
+            if (!mesh_single_ring) {
+                void* mapped = nullptr;
+                if (create_buffer(kMeshSingleRing, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                                  true, mesh_single_ring, mesh_single_mem, &mapped)) {
+                    std::fill_n(static_cast<uint32_t*>(mapped), kMeshSingleRing / sizeof(uint32_t), 1u);
+                    flush_mapped_range(mesh_single_mem, 0, kMeshSingleRing);
+                }
+            }
+            fixed_yz = mesh_single_ring != VK_NULL_HANDLE;
+        }
+        VkBuffer& ring = fixed_yz ? mesh_single_ring : mesh_ring;
+        if (!ring) {
             void* unused = nullptr;
-            if (!create_buffer(kMeshRing, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, false, mesh_ring,
+            if (!create_buffer(kMeshRing, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, false, ring,
                                mesh_ring_mem, &unused))
                 return false;
         }
+        uint64_t& at = fixed_yz ? mesh_single_at : mesh_ring_at;
+        const uint64_t capacity = fixed_yz ? kMeshSingleRing : kMeshRing;
         const uint64_t bytes = ((uint64_t)n * 12 + 15) & ~15ull;
-        if (mesh_ring_at + bytes > kMeshRing) mesh_ring_at = 0;   // (4 MB: frames of draws before it comes round)
-        off = mesh_ring_at;
-        mesh_ring_at += bytes;
+        if (at + bytes > capacity) at = 0;
+        off = at;
+        at += bytes;
+        converted = ring;
     }
     end_pass(cmd);
     GprofSpan gp(cmd, "meshconv (an indirect mesh draw's arguments -> {count, 1, 1}, with its barriers)");   // (RX_VK_PASS_TIMING)
@@ -8505,12 +8554,12 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
     mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, mb.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
     // Vega's fallback consumes one indirect record. Keep the dependency on
     // the source count and scratch slot without making other buffers visible.
-    static const bool scoped_on = env_on("RX_VK_MESH_CONVERT_SCOPED");
-    static const bool trace_counts = env_on("RX_VK_G3_MESHCOUNT");
-    const bool scoped = !dev.mesh_shader && scoped_on && !trace_counts && policy_rule::windows_vega_compat(dev.facts);
     VkBufferMemoryBarrier2 buffers[2]{{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2},
                                      {VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2}};
     if (scoped) {
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true, std::memory_order_relaxed))
+            logf("vk: Vega indirect mesh conversion: scoped barriers, fixed y/z %s", fixed_yz ? "active" : "allocation unavailable");
         for (auto& barrier : buffers) {
             barrier.srcStageMask = mb.srcStageMask;
             barrier.dstStageMask = mb.dstStageMask;
@@ -8521,7 +8570,7 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
         buffers[0].buffer = args.buffer, buffers[0].offset = args.offset + 4 * word, buffers[0].size = 4;
         buffers[1].srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
         buffers[1].dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        buffers[1].buffer = mesh_ring, buffers[1].offset = off, buffers[1].size = 12;
+        buffers[1].buffer = converted, buffers[1].offset = off, buffers[1].size = 12;
         di.memoryBarrierCount = 0;
         di.bufferMemoryBarrierCount = 2;
         di.pBufferMemoryBarriers = buffers;
@@ -8532,9 +8581,9 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
     std::vector<VkBufferCopy> list;
     if (n == 1) {
         // The fill writes y and z and the copy writes x. Both become visible at the indirect-read barrier below.
-        vkCmdFillBuffer(cmd, mesh_ring, off + 4, 8, 1u);
+        if (!fixed_yz) vkCmdFillBuffer(cmd, converted, off + 4, 8, 1u);
     } else {
-        vkCmdFillBuffer(cmd, mesh_ring, off, (uint64_t)n * 12, 1u);
+        vkCmdFillBuffer(cmd, converted, off, (uint64_t)n * 12, 1u);
         mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
         mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
         mb.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
@@ -8544,7 +8593,7 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
             list[i] = {first.srcOffset + (uint64_t)i * stride, off + (uint64_t)i * 12, 4};
         regions = list.data();
     }
-    vkCmdCopyBuffer(cmd, args.buffer, mesh_ring, n, regions);
+    vkCmdCopyBuffer(cmd, args.buffer, converted, n, regions);
     {   // (diagnosis, default off) RX_VK_G3_MESHCOUNT=1: the same counts into a host-visible twin of the ring, for mesh_count_note
         if (trace_counts) {
             if (!mesh_dbg && !create_buffer(kMeshRing, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, mesh_dbg, mesh_dbg_mem, &mesh_dbg_ptr)) mesh_dbg = VK_NULL_HANDLE;
@@ -8562,7 +8611,7 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
         di.pBufferMemoryBarriers = &buffers[1];
     }
     vkCmdPipelineBarrier2(cmd, &di);
-    mesh_conv_buf = mesh_ring, mesh_conv_off = off;
+    mesh_conv_buf = converted, mesh_conv_off = off;
     return true;
 }
 /// (RX_VK_G3_MESHCOUNT=1, diagnosis) an indirect mesh draw of program key put its record at ring offset off: 2000 draws on, the count the GPU
@@ -9613,6 +9662,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     // draw out below: the world is drawn, it is no menu. vk_framegen.cpp wide_sides)
     if (cp->key == 0x1a7482c0ec9991eaULL) world_drawn_at.store(presents_now, std::memory_order_relaxed);
     if (cp->key == 0x02ff9920c2571cc2ULL) wheel_drawn_at.store(presents_now, std::memory_order_relaxed);
+    if (cp->key == 0xbecef27180cc822fULL) menu_fade_pause_at.store(presents_now, std::memory_order_relaxed);
     if (skip_live(cp->key)) return;   // (EvilOOT, RX_VK_SKIP_FILE)
     {   // (hookshot, RX_VK_SKIP_PROG=<key prefix,...>: draws too, their native code keys logged once; =-: none)
         // (OoT's 53509044401d78d2, by default only while its targets have no view: 128 draws, once while an area loads, that render
@@ -10531,6 +10581,8 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         occ.issue();
         vkCmdDraw(cmd, (uint32_t)d.count, (uint32_t)std::max(1, d.instances), (uint32_t)d.first, (uint32_t)d.base_instance);
     }
+    // Mark recorded gameplay draws, so an awaited PSO cannot make an empty frame look ready.
+    if (cp->key == 0x1a7482c0ec9991eaULL) menu_fade_world_at.store(presents_now, std::memory_order_relaxed);
     st_draws++, ps.draws++;
 }
 
@@ -11210,7 +11262,9 @@ void cs_module_release(Program& p) {
         return;
     vkDestroyShaderModule(dev.device, p.stages[0].module, nullptr);
     p.stages[0].module = VK_NULL_HANDLE;
-    cs_modules_dropped++;
+    const int64_t total = ++cs_modules_dropped;
+    if (total <= 4 || total % 128 == 0)
+        logf("vk: compute modules: %lld released after pipeline creation", (long long)total);
 }
 
 bool precompile_wanted() {
@@ -12526,6 +12580,7 @@ void precompile_run(void (*progress)(size_t done, size_t total)) {
                 if (!pre->abandoned) {
                     std::atomic_ref<VkPipeline>(p.compute_pipeline).store(made, std::memory_order_release);
                     if (made && quick) p.optimize_owed.store(true, std::memory_order_release);
+                    else if (made) cs_module_release(p);
                 } else if (made) vkDestroyPipeline(dev.device, made, nullptr);   // (the game went on: it builds its own)
             } else if (i < computes.size() + fallbacks.size()) {
                 // (a program a draw is already building is left to it: compute_state, as in fallback_pipelines_ready)
@@ -13418,6 +13473,7 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
                         st_pipelines++;
                         // (from a cache: the play caches say which, create_cached; before play, the start's, as below)
                         made_how->store(use_counters.made_how ? use_counters.made_how : 2, std::memory_order_relaxed);
+                        cs_module_release(q);
                         q.compute_state.store(2, std::memory_order_release);
                         return;
                     }
@@ -13437,6 +13493,7 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
                 } else {
                     std::atomic_ref<VkPipeline>(q.compute_pipeline).store(made, std::memory_order_release);
                     if (quick) jobs_push_serial([job] { compute_optimize(const_cast<Program&>(*job)); });
+                    else cs_module_release(q);
                 }
                 const int64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
                 if (ms >= 200)
@@ -13454,6 +13511,7 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
             if (cached) {
                 std::atomic_ref<VkPipeline>(p.compute_pipeline).store(cached, std::memory_order_release);
                 st_pipelines++;
+                cs_module_release(p);
                 p.compute_state.store(2, std::memory_order_release);
             } else {
                 auto failed = [job]() noexcept {
@@ -13516,6 +13574,8 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
     dclock.t_pipe = slow_dispatch_timing() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     end_pass(cmd);
     grid_patch_want = indirect, grid_patch_at = UINT64_MAX;
+    exposure_meter_target = {};
+    exposure_meter_bindings = 0;
     build_descriptors(s, p);
     grid_patch_want = false;
     dclock.t_desc = slow_dispatch_timing() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -13663,6 +13723,18 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
             }
             vkCmdDispatchIndirect(cmd, args.buffer, args.offset);
         } else {
+            // The game's exposure writer accumulates four sums. Clear only an
+            // unambiguous binding of that known meter, then keep the exact wait.
+            if (x && y && z && exposure_meter_bindings == 1 && exposure_meter_target &&
+                !(exposure_meter_target.offset & 3)) {
+                full_barrier(cmd, "exposure meter before clear");
+                vkCmdFillBuffer(cmd, exposure_meter_target.buffer, exposure_meter_target.offset, 16, 0);
+                full_barrier(cmd, "exposure meter before accumulation");
+                static std::atomic<uint64_t> resets{0};
+                const uint64_t n = ++resets;
+                if (n <= 4 || n % 300 == 0)
+                    logf("vk: exposure meter: %llu GPU resets with exact writer-part tracking", (unsigned long long)n);
+            }
             vkCmdDispatch(cmd, x, y, z);
         }
         last_dispatch_cmd = cmd, last_dispatch_epoch = work_epoch.load(std::memory_order_relaxed);

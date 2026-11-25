@@ -55,6 +55,8 @@ struct Texture {
     nvn_texlayout L{};
     int nvn_format = 0;       // the format it was made for
     // contents
+    bool mip_stream_repair = false;    // a rejected pending mip must take the normal upload path
+    uint64_t mip_stream_ticket = 0;  // the pending exact mip, if the image currently holds a preview
     bool uploaded = false;    // from guest memory, as of upload_gen
     uint32_t upload_gen = 0;
     uint64_t retry_frame = 0;   // (hookshot) an image whose upload failed: tried again from this frame (vk_texture.cpp)
@@ -146,6 +148,8 @@ Texture* texture_touch(Texture* tex, bool for_sampling);
 /// texture_touch without the lock where it has nothing more to do (its contents up to date for this submission):
 /// false when the full texture_touch is needed
 bool texture_touch_quick(Texture* tex, bool for_sampling);
+extern thread_local bool mip_stream_draw;
+void texture_mip_stream_run();
 /// Whether texture_written and texture_rendered would change nothing this frame (a parallel replay: no lock then)
 bool texture_marked(const Texture* tex);
 /// The parallel replay's segment this thread records (its order in the submission; uploads and mirror syncs a later

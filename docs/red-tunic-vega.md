@@ -4,10 +4,12 @@ Red Tunic tunes its native Vulkan renderer for Windows PCs with integrated Radeo
 
 ## Rendering and texture streaming
 
-- With **Auto (this PC)** and a 1920 × 1080 output, the two-thirds render scale gives a 1280 × 720 scene before the game's upscaler.
+- On a new 4.2.4 Windows install, the Builder applies the reference settings when Windows reports a single Radeon adapter with PCI ID `1002:15E7`. The profile uses 1280 × 720 output, a fixed two-thirds 3D render scale, and reduced grass, foliage and shadow distances. For a 1280 × 720 3D scene, set output to 1920 × 1080 and keep the two-thirds scale.
+- Existing options take precedence when updating. PCs with a different GPU use their existing hardware defaults.
 - The renderer uses the compute fallback for task and mesh shaders on Vega. Cached graphics programs load synchronously on the tested Windows adapter to preserve rendering correctness.
 - The CPU decodes ASTC to RGBA8. Both serial and parallel paths use the same block decoder. A cache hit requires the same encoded bytes and decode dimensions.
 - The Vega texture retention rule considers available physical memory, commit headroom and driver allocation pressure. The decode cache holds up to 64 MiB of pixel data plus compressed keys.
+- The profile enables scoped compute barriers for indirect mesh conversion, GPU clears for recognized exposure counters, and cleanup of compute shader modules once their pipelines are ready. It also enables the menu return fade. Coarse mip streaming remains experimental.
 
 ## Compare performance
 

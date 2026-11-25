@@ -2699,6 +2699,14 @@ def package_identity(st):
     return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
 
 
+def package_stamp(path, st):
+    """Rekarina's setup skips extraction only for the same input. Keep a local
+    identity for the archive without rereading gigabytes on every Builder retry.
+    Older name-and-size stamps require one checked extraction when selecting an archive.
+    """
+    return json.dumps([os.path.basename(path), *package_identity(st)], ensure_ascii=True)
+
+
 @contextlib.contextmanager
 def clean_incomplete_unpack(game):
     try:
@@ -2737,9 +2745,11 @@ INSTALLED_NOTE = ".hookshot_installed.json"   # (in the game folder: what the fi
 
 def file_sha1(path):
     h = hashlib.sha1(usedforsecurity=False)
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
+    # Reuse the read buffer when checking large build outputs, as in Rekarina setup.
+    with open(path, "rb", buffering=0) as f:
+        block = memoryview(bytearray(1 << 20))
+        while n := f.readinto(block):
+            h.update(block[:n])
     return h.hexdigest()
 
 
@@ -2929,7 +2939,11 @@ def main(a=None):
     say("stage", "read", "Reading your game files")
     clear_folder(exefs)
     kept = os.path.join(out, ".hookshot_exefs")   # (the game's code as read, kept in the folder: what an update builds from again)
+    pending_unpack = os.path.join(out, ".hookshot_romfs_pending")
     if a.update:
+        if os.path.lexists(pending_unpack):
+            fail("A previous extraction was interrupted while replacing the game files. "
+                 "Select your original archive or extracted game folders in Red Tunic Builder to resume.")
         if not os.path.isdir(kept) or not os.path.isdir(romfs):
             fail("This game folder has no copy of the game files to update from: it was built before updates came in. Choose your game files "
                  "in Hookshot Builder and build into the same folder once; updates after that work by themselves.")
@@ -2943,16 +2957,16 @@ def main(a=None):
         # they lay, so a folder they left held broken game data, and the game crashed at start over its empty dictionaries)
         game = os.path.join(out, ".game")
         good = os.path.join(out, ".hookshot_romfs")
-        check_cache_paths(out, (game, good, kept, romfs))
+        check_cache_paths(out, (game, good, kept, romfs, pending_unpack))
         # (an update of the builder over the same .nup: nothing to read again, only what the build needs. Issues 21 and 28)
         try:
             st = os.stat(a.nup)
         except OSError as e:
             fail("Could not access your .nup file %s: %s. Check that the file is still there, reconnect its drive if needed, "
                  "or choose the file again in Hookshot Builder." % (a.nup, e))
-        stamp = "unpacked by this builder: %s %d" % (os.path.basename(a.nup), st.st_size)
+        stamp = package_stamp(a.nup, st)
         same = False
-        if os.path.exists(good) and os.path.isdir(romfs) and os.path.isdir(kept):
+        if not os.path.exists(pending_unpack) and os.path.exists(good) and os.path.isdir(romfs) and os.path.isdir(kept):
             same = read_stamp(good).strip() == stamp
         if same:
             print("the game was read from this .nup before: reading it again is skipped", flush=True)
@@ -2960,8 +2974,6 @@ def main(a=None):
             shutil.copytree(kept, exefs)
         else:
             shutil.rmtree(game, ignore_errors=True)
-            with contextlib.suppress(FileNotFoundError):   # (a new unpack is checked again)
-                os.remove(os.path.join(out, ".hookshot_romfs_checked"))
             # Keep the last usable cache until the new package has been read and validated.
             staged_exefs = os.path.join(game, "exefs")
             # (a .nup alone: nxar.py reads a .nx archive whole)
@@ -2971,10 +2983,9 @@ def main(a=None):
             def read_assets():
                 with clean_incomplete_unpack(game):
                     run(extract + (["--only", "romfs"] if overlap else []))
-                    if overlap:
-                        if package_identity(os.stat(a.nup)) != package_identity(st):
-                            fail("The game package changed during extraction. Start the build again with the complete package.")
-                    else:
+                    if package_identity(os.stat(a.nup)) != package_identity(st):
+                        fail("The game package changed during extraction. Start the build again with the complete package.")
+                    if not overlap:
                         check_modules(staged_exefs)
                         check_supported_build(staged_exefs)
                     staged_romfs = os.path.join(game, "romfs")
@@ -2986,6 +2997,12 @@ def main(a=None):
                         fail(why)
                     if overlap and (os.path.lexists(romfs) or os.path.lexists(kept)):
                         fail("Another build populated this game folder while its assets were being extracted.")
+                # An interrupted replacement must not advertise the old archive
+                # while the ROMFS and ExeFS are between versions.
+                write_stamp(pending_unpack, stamp + "\n")
+                for marker in (good, os.path.join(out, ".hookshot_romfs_checked")):
+                    with contextlib.suppress(FileNotFoundError):
+                        os.remove(marker)
                 if not overlap and os.path.exists(romfs):
                     shutil.rmtree(romfs)
                 shutil.move(staged_romfs, romfs)
@@ -2995,7 +3012,8 @@ def main(a=None):
                 shutil.rmtree(game, ignore_errors=True)
                 shutil.rmtree(kept, ignore_errors=True)
                 shutil.copytree(exefs, kept)
-                write_stamp(good, stamp + chr(10))
+                write_stamp(good, stamp + "\n")
+                os.remove(pending_unpack)
 
             if overlap:
                 with clean_incomplete_unpack(game):
@@ -3033,6 +3051,8 @@ def main(a=None):
         shutil.copytree(exefs, kept)
         with contextlib.suppress(FileNotFoundError):   # (the copies are this dump's now, not the .nup's that stamp names)
             os.remove(os.path.join(out, ".hookshot_romfs"))
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(pending_unpack)
     check_supported_build(exefs)
     game_name(out, work)
 

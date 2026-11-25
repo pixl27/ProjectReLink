@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | Local 4.1.0 host and Red Tunic 4.2.2 candidate renderer, same DLL as the on run | Windows 11 build 26300, 1280x720 window | Radeon Vega 1002:15e7, driver 26.5.2 | Ryzen 5 5625U, 16 GB | CPU ASTC, frame generation off, isolated warmed cache, RX_VK_MIP_STREAM=0 | HyruleField_Adult lakeside checkpoint, scripted 90-present right-stick turn | Mean 131.3 ms, median 106.8 ms, p95 275.8 ms, maximum 762.7 ms. Six frames over 250 ms and one over 500 ms. Heading 173.2 to 8.2 degrees, versus 173.2 to 8.6 with streaming enabled. |

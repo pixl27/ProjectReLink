@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/red-tunic.png" alt="Red Tunic logo" width="200"></p>
 
-# Red Tunic 4.2.2
+# Red Tunic 4.2.4
 
 Red Tunic is an unofficial native PC recompilation of the Nintendo Switch 2 remake of *The Legend of Zelda: Ocarina of Time*. It builds locally from your own copy of the game. Red Tunic is based on Hookshot and focuses on integrated AMD Radeon graphics, starting with the Ryzen 5 5625U with 16 GB of shared memory.
 
@@ -10,7 +10,7 @@ Red Tunic is an unofficial native PC recompilation of the Nintendo Switch 2 rema
 
 ## Built around integrated Radeon
 
-Red Tunic's reference system is a Ryzen 5 5625U with Radeon Vega and 16 GB of shared RAM. Its Windows Vega path keeps the 720p internal preset and focuses on texture correctness, predictable memory use and fewer long upload stalls. Read the [Vega rendering guide](docs/red-tunic-vega.md) and [measured test runs](docs/tested-configurations.md).
+Red Tunic's reference system is a Ryzen 5 5625U with Radeon Vega and 16 GB of shared RAM. On new installs with the tested Windows Vega adapter, the Builder applies the 720p output profile and the texture and pacing settings automatically. Read the [Vega rendering guide](docs/red-tunic-vega.md) and [measured test runs](docs/tested-configurations.md).
 
 ## Builder preview
 
@@ -27,6 +27,10 @@ Get new Windows Builder archives from [Red Tunic Releases](https://github.com/sp
 ### Latest development build
 
 For development snapshots, use the source at the latest commit you want to test and record its commit ID with your results.
+
+## Changes in 4.2.4
+
+Windows Vega gets the tested profile automatically. It keeps exact CPU ASTC decoding, retains expensive textures within a pressure-aware budget, and enables the measured compute and mesh optimizations. The item-wheel and inventory return holds the last complete gameplay frame briefly and fades back into live rendering. The Builder also verifies a reused archive's identity and detects incomplete replacements. See the [4.2.4 release notes](RELEASE_NOTES_4.2.4.md).
 
 ## Changes in 4.2.2
 
@@ -102,15 +106,17 @@ Clone the [Red Tunic source](https://github.com/spacefarergames/RedTunic), then 
 
 ### On Windows
 
-1. Download `RedTunic-v4.2.2-Windows-x64.zip` and its SHA-256 file from [Red Tunic Releases](https://github.com/spacefarergames/RedTunic/releases). Use `Get-FileHash .\RedTunic-v4.2.2-Windows-x64.zip -Algorithm SHA256` to verify the archive.
+1. Download `RedTunic-v4.2.4-Windows-x64.zip` and its SHA-256 file from [Red Tunic 4.2.4](https://github.com/spacefarergames/RedTunic/releases/tag/v4.2.4). Use `Get-FileHash .\RedTunic-v4.2.4-Windows-x64.zip -Algorithm SHA256` to verify the archive.
 2. Extract the entire archive into a short path such as `C:\RedTunicBuilder` and open `HookshotBuilder.exe`. The archive includes the Windows build tools and the Builder runtime.
 3. Select your own supported `.nup` or extracted game folders, choose a separate game output folder, and build. Open the generated `hookshot.exe` in that folder to play.
+
+The Builder sets the Vega profile when Windows reports a single Radeon adapter with PCI ID `1002:15E7`. Existing options keep the values you already chose.
 
 The redistribution archive contains the Builder, source and dependencies. The game executable, game data, keys, local saves and compiled caches are produced or supplied locally.
 
 ### On Linux
 
-1. Download `RedTunic-v4.2.2-x86_64.AppImage` and `SHA256SUMS` from [Red Tunic Releases](https://github.com/spacefarergames/RedTunic/releases).
+1. Download `RedTunic-v4.2.2-x86_64.AppImage` and `SHA256SUMS` from the [Red Tunic 4.2.2 release](https://github.com/spacefarergames/RedTunic/releases/tag/v4.2.2).
 2. Verify the download with `sha256sum --ignore-missing --check SHA256SUMS`. Run `chmod +x RedTunic-v4.2.2-x86_64.AppImage`, then open it.
 3. Select your supported game dump and choose a separate game output folder. Open the same AppImage to play after the build finishes.
 

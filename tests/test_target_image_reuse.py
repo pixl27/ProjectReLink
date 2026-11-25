@@ -88,7 +88,7 @@ def main():
         cpp.write_text(fixture, encoding="utf-8")
         subprocess.run([a.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror",
                         "-Wno-missing-field-initializers", "-D_CRT_SECURE_NO_WARNINGS",
-                        "-pthread", "-I" + str(a.headers),
+                        "-pthread", "-I" + str(a.headers), "-I" + str(a.source / "gpu/vk"),
                         str(cpp), "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
     print("a released target's image is the pool's for the next frame: reused, not made")

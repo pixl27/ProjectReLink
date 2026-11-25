@@ -2,11 +2,13 @@
 
 Decoded ASTC is encoded to BC3 through a 2048 x 2048 scratch image and its output buffer, kept once made. A run is one layer
 (RX_VK_BC_LAYERS=<n>: up to 8), but the scratch was made with 8 layers whatever the runs used: 160 MB held, 20 of them ever
-written. The scratch, the second one and both users (an upload's runs, a copy into a BC3 texture) now ask bc_layers().
+written. Both scratch images allocate enough for a run. Enabling the experiment adds a second scratch layer when needed
+without changing the run length of the legacy array path.
 
 The two loops that fill it are also run, cut out of the source into tests/bc_scratch_batches_test.cpp with a spy in place
-of Vulkan: no run is larger than the scratch, each starts at its first layer, and a request larger than the scratch (a
+of Vulkan: no array run is larger than the scratch, each starts at its first layer, and a request larger than the scratch (a
 copy of 9 layers, an array's dirty layers with gaps) comes out whole and in order as several runs.
+The mip batch is checked for the selected encoder, offset units, copy regions and barriers.
 
 python -I -B tests/test_bc_scratch_layers.py [--cxx g++]
 """
@@ -26,12 +28,12 @@ FIXTURE = r"""
 #include <cstdio>
 #include <cstdlib>
 constexpr uint32_t kBcDim = 2048, kBcLayers = 8;
-static bool astc_batch_on() { return false; }   // (main's batched transcode, off by default: RX_VK_ASTC_BATCH)
+static bool astc_batch_on() { return std::getenv("RX_VK_ASTC_BATCH") != nullptr; }
 #include "bc_layers.inc"
 int main() {
     const uint32_t n = bc_layers();
     const uint64_t image = (uint64_t)kBcDim * kBcDim * 4 * n, out = (uint64_t)(kBcDim / 4) * (kBcDim / 4) * n * 16;
-    std::printf("%u %llu\n", n, (unsigned long long)((image + out) >> 20));
+    std::printf("%u %u %llu\n", bc_array_layers(), n, (unsigned long long)((image + out) >> 20));
     return 0;
 }
 """
@@ -65,28 +67,36 @@ def main():
     layout = block(tex, "bool bc_scratch_layout(")
     need(layout.count("0, 1, 0, bc_layers()};") == 2 and "kBcLayers" not in layout, "a scratch's first layout names layers it does not have")
     upload = block(tex, "bool upload_astc_gpu(")
-    need("const uint32_t run = bc_layers();" in upload and "k1 - k0 < run" in upload, "an upload's run is not the scratch's layers")
+    need("const uint32_t run = bc_array_layers();" in upload and "k1 - k0 < run" in upload, "an upload's run is not the scratch's layers")
     copy = block(tex, "bool texture_copy_into_bc(")
-    need("l0 += bc_layers()" in copy and "std::min(bc_layers(), layers - l0)" in copy and "kBcLayers" not in copy,
+    need("l0 += bc_array_layers()" in copy and "std::min(bc_array_layers(), layers - l0)" in copy and "kBcLayers" not in copy,
          "a copy into a BC3 texture writes scratch layers that are not there")
     with tempfile.TemporaryDirectory(prefix="bc-layers-") as temp:
-        (Path(temp) / "bc_layers.inc").write_text(block(tex, "uint32_t bc_layers() {"), encoding="utf-8")
+        batch_layers = next(line for line in tex.splitlines() if line.startswith("constexpr uint32_t kBcBatchLayers"))
+        (Path(temp) / "bc_layers.inc").write_text(
+            "\n".join((batch_layers, block(tex, "uint32_t bc_array_layers() {"), block(tex, "uint32_t bc_layers() {"))),
+            encoding="utf-8")
         src = Path(temp) / "bc_layers.cpp"
         exe = Path(temp) / "bc_layers.exe"   # (the name llvm-mingw writes on Windows; any name runs on Linux)
         src.write_text(FIXTURE, encoding="utf-8")
         subprocess.run([a_cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror", "-I", temp, str(src), "-o", str(exe)], check=True)
-        for value, want in ((None, "1 20"), ("1", "1 20"), ("4", "4 80"), ("8", "8 160"), ("99", "8 160"), ("0", "1 20")):
-            env = {k: v for k, v in os.environ.items() if k != "RX_VK_BC_LAYERS"}
+        for value, batch, want in ((None, False, "1 1 20"), ("1", False, "1 1 20"), ("4", False, "4 4 80"),
+                                   ("8", False, "8 8 160"), ("99", False, "8 8 160"), ("0", False, "1 1 20"),
+                                   (None, True, "1 2 40"), ("4", True, "4 4 80")):
+            env = {k: v for k, v in os.environ.items() if k not in ("RX_VK_BC_LAYERS", "RX_VK_ASTC_BATCH")}
             if value is not None:
                 env["RX_VK_BC_LAYERS"] = value
+            if batch:
+                env["RX_VK_ASTC_BATCH"] = "1"
             got = subprocess.run([str(exe)], text=True, capture_output=True, timeout=20, env=env, check=True).stdout.strip()
-            need(got == want, f"RX_VK_BC_LAYERS={value}: {got} (layers, MB), wanted {want}")
+            need(got == want, f"RX_VK_BC_LAYERS={value}, batch={batch}: {got} (run, capacity, MB), wanted {want}")
         # (the production loops, run: texture_copy_into_bc whole, and the lines of upload_astc_gpu that form a run)
         a = upload.index("size_t k1 = k0 + 1;")
         b = upload.index("const uint32_t n = (uint32_t)(k1 - k0);", a) + len("const uint32_t n = (uint32_t)(k1 - k0);")
         fixture = (ROOT / "tests/bc_scratch_batches_test.cpp").read_text(encoding="utf-8")
         need(fixture.count("/* COPY */") == 1 and fixture.count("/* RUN */") == 1, "the batches fixture lost a mark")
-        fixture = fixture.replace("/* COPY */", copy).replace("/* RUN */", upload[a:b])
+        batch = block(tex[tex.index("bool upload_astc_gpu("):], "void astc_bc_batched(")
+        fixture = fixture.replace("/* COPY */", copy).replace("/* RUN */", upload[a:b]).replace("/* MIPS */", batch)
         src = Path(temp) / "bc_scratch_batches.cpp"
         exe = Path(temp) / "bc_scratch_batches.exe"
         src.write_text(fixture, encoding="utf-8")

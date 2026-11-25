@@ -128,9 +128,14 @@ struct Desc {
     bool is_written;
     uint32_t cbuf_index, cbuf_offset;
 };
+static BufferRef exposure_meter_target;
+static uint32_t exposure_meter_bindings = 0;
+static void memory_rb_waited(uint64_t, uint64_t) {}
 BufferRef bind_storage(const Desc& d, uint64_t addr, uint64_t size, uint64_t* base_out) {
     static const uint64_t bare_read = 64ull << 20;   // (the device's reach)
     const uint64_t salign = 16;                      // (minStorageBufferOffsetAlignment)
+    // This fixture exercises mirror refresh with the optional GPU meter disabled.
+    const bool track_exposure = false;
     bool bare = false;
 // (the memory ledger's scope, RX_VK_LEDGER: nothing here)
 enum { kUseStorage = 8 };

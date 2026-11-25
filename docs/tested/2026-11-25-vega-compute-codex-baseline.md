@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | Red Tunic 4.2.2 renderer SHA-256 32498f25308fea4ce21fdf6d6a856422b51a6d94dac74717484851b45e390f7b | Windows 11 build 26300, 1280x720 window | Radeon Vega 1002:15e7, 26.5.2 | Ryzen 5 5625U, 16 GB | CPU ASTC, SDR, mip streaming off, three compute switches off | HyruleField_Adult lakeside checkpoint and 90-present right-stick turn, inventory, item wheel, teleport to Market_Adult | Mean 120.2 ms, median 80.9 ms, p95 294.1 ms, maximum 745.1 ms, six frames over 250 ms. Private commit 12257 to 11659 MiB, resident 2591 to 3057 MiB. Hyrule Field and menus presented. The Market capture caught the dark transition while loading. |

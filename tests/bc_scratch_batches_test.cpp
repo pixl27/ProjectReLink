@@ -1,6 +1,6 @@
 // The two production loops that fill the BC3 scratch, run with a spy in place of Vulkan (tests/test_bc_scratch_layers.py
 // cuts them out of gpu/vk/vk_texture.cpp into the marks below): texture_copy_into_bc() whole, and the lines of
-// upload_astc_gpu() that form a run. The scratch has bc_layers() layers: no run may be larger, each must start at the
+// upload_astc_gpu() that form a run. The scratch has bc_array_layers() layers: no run may be larger, each must start at the
 // scratch's first layer, and a request larger than the scratch must come out whole, in order, as several runs.
 #include <algorithm>
 #include <cstdint>
@@ -51,12 +51,13 @@ struct Texture {
 
 constexpr uint32_t kBcDim = 2048;
 static uint32_t capacity = 1;
-uint32_t bc_layers() { return capacity; }
+uint32_t bc_array_layers() { return capacity; }
 static int dummy;
 static VkImage bc_scratch = &dummy;
 bool bc_ready() { return true; }
 bool bc_scratch_layout(VkCommandBuffer, bool) { return true; }
-void full_barrier(VkCommandBuffer) {}
+static unsigned barriers;
+void full_barrier(VkCommandBuffer) { ++barriers; }
 template <class... A> void logf(const char*, A...) {}
 
 struct Run { uint32_t src_layer, n, dst_layer, scratch_first; bool to_scratch, resized, encoded; };
@@ -115,6 +116,73 @@ static bool copy_ok(uint32_t cap, uint32_t layers, bool resized, std::vector<uin
     return done == layers && i == want.size();
 }
 
+// The actual mip batch with a spy for its decoder, encoder and copy commands.
+struct AstcPush {};
+struct AstcPiece { uint32_t level, iw, ih; uint64_t from; AstcPush pc; uint32_t gx, gy; };
+struct Staging { int buffer; uint64_t offset; };
+struct VkDescriptorBufferInfo { int handle; uint64_t offset, size; };
+struct VkDescriptorImageInfo { void* sampler; int view, layout; };
+struct VkWriteDescriptorSet {
+    int kind, dstBinding = 0, descriptorCount = 0, descriptorType = 0;
+    const VkDescriptorImageInfo* pImageInfo = nullptr;
+    const VkDescriptorBufferInfo* pBufferInfo = nullptr;
+};
+struct VkBufferImageCopy {
+    uint64_t bufferOffset;
+    uint32_t rowLength, imageHeight;
+    VkImageSubresourceLayers imageSubresource;
+    VkOffset3D imageOffset;
+    VkExtent3D imageExtent;
+};
+struct BcPush { uint32_t blocks_x, blocks_y, width, height, bc3, out_offset; };
+enum {
+    astc_pipe = 1, bc_pipe, bc7_pipe, astc_layout, bc_layout, bc_out,
+    VK_PIPELINE_BIND_POINT_COMPUTE, VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_COMPUTE_BIT,
+};
+constexpr auto VK_NULL_HANDLE = nullptr;
+constexpr uint64_t VK_WHOLE_SIZE = ~uint64_t{};
+constexpr uint32_t kBcBatchLayers = 2;
+constexpr int bc_layer_views[] = {11, 12};
+static std::vector<int> pipelines;
+static std::vector<BcPush> encodes;
+static std::vector<std::vector<VkBufferImageCopy>> copies;
+uint32_t bc_mode(VkFormat format) { return (uint32_t)format; }
+void vkCmdBindPipeline(VkCommandBuffer, int, int pipeline) { pipelines.push_back(pipeline); }
+void vkCmdPushDescriptorSetKHR(VkCommandBuffer, int, int, int, int, const VkWriteDescriptorSet*) {}
+void vkCmdPushConstants(VkCommandBuffer, int layout, int, uint32_t, size_t, const void* data) {
+    if (layout == bc_layout) encodes.push_back(*static_cast<const BcPush*>(data));
+}
+void vkCmdDispatch(VkCommandBuffer, uint32_t, uint32_t, uint32_t) {}
+void descriptors_disturbed() {}
+void vkCmdCopyBufferToImage(VkCommandBuffer, int, VkImage, int, uint32_t n, const VkBufferImageCopy* regions) {
+    copies.emplace_back(regions, regions + n);
+}
+
+/* MIPS */
+
+static bool mips_ok(uint32_t mode) {
+    Texture tex;
+    tex.format = (VkFormat)mode;
+    const std::vector<AstcPiece> pieces{
+        {0, 9, 7, 0, {}, 1, 1}, {1, 4, 3, 512, {}, 1, 1}, {2, 2, 1, 1024, {}, 1, 1},
+    };
+    const uint32_t second = 6u * (mode == 1 ? 8u : 16u);
+    const int encoder = mode == 7 ? bc7_pipe : bc_pipe;
+    barriers = 0;
+    pipelines.clear();
+    encodes.clear();
+    copies.clear();
+    astc_bc_batched(nullptr, tex, pieces, 1536, {42, 0});
+    return barriers == 6 && pipelines == std::vector<int>{astc_pipe, encoder, astc_pipe, encoder} &&
+           encodes.size() == 3 && encodes[0].bc3 == (mode != 1) && encodes[0].out_offset == 0 &&
+           encodes[1].out_offset == (mode == 7 ? second : second / 8) && encodes[2].out_offset == 0 &&
+           copies.size() == 2 && copies[0].size() == 2 && copies[1].size() == 1 &&
+           copies[0][0].bufferOffset == 0 && copies[0][1].bufferOffset == second && copies[1][0].bufferOffset == 0 &&
+           copies[0][0].imageSubresource.mipLevel == 0 && copies[0][1].imageSubresource.mipLevel == 1 &&
+           copies[1][0].imageSubresource.mipLevel == 2;
+}
+
 int main() {
     check(copy_ok(1, 9, false, {1, 1, 1, 1, 1, 1, 1, 1, 1}), "a copy of 9 layers into a one-layer scratch: 9 runs of one, in order");
     check(copy_ok(4, 9, false, {4, 4, 1}), "into a 4-layer scratch: 4, 4 and a last run of 1");
@@ -141,6 +209,9 @@ int main() {
     check(upload_runs(dirty) == Runs{{0, 3}, {3, 2}, {5, 1}}, "into an 8-layer scratch: the gaps alone end the runs");
     capacity = 4;
     check(upload_runs({7, 8, 9, 10, 11, 12, 13, 14, 15}) == Runs{{0, 4}, {4, 4}, {8, 1}}, "9 layers in a row into a 4-layer scratch: 4, 4 and 1");
+    check(mips_ok(1), "BC1: pairs of mips go to distinct output ranges with BC1 offsets");
+    check(mips_ok(3), "BC3: pairs of mips go to distinct output ranges with BC3 offsets");
+    check(mips_ok(7), "BC7: pairs of mips go to distinct output ranges with BC7 offsets");
     if (failures) return 1;
     std::printf("PASS: no run is larger than the scratch, and a larger request comes out whole\n");
     return 0;

@@ -2,6 +2,7 @@
 // the GPU done with it, is the pool's as it is evicted, so a target of the same create info made in the next frame takes
 // it; the eviction skips those in flight, so destroy_later is only handed images the GPU is done with)
 #include <vulkan/vulkan.h>
+#include "target_pool.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -14,13 +15,16 @@
 #include <unordered_map>
 #include <vector>
 
+namespace mkwvk { namespace {
 // ---- the fixture's stubs: the GPU, the allocator, and the clock ----
 using VmaAllocation = void*;
 struct Device {
     VkDevice device = reinterpret_cast<VkDevice>(1);
 };
 Device dev;
-uint64_t frame_no = 0, total_bytes = 0, destroy_gen = 0;
+uint64_t frame_no = 0, total_bytes = 0, destroy_gen = 0, rec_value = 0;
+bool vram_usage(uint64_t*, uint64_t*) { return false; }
+template <class... Args> void logf(const char*, Args...) {}
 int destroyed_images = 0, destroyed_views = 0;
 void destroy_image(VkImage, VmaAllocation) {
     destroyed_images++;
@@ -30,7 +34,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyImageView(VkDevice, VkImageView, 
 }
 // (the real Texture is larger; destroy_later reads these)
 struct Texture {
-    uint64_t last_value = 0;
+    uint64_t last_value = 0, defer_frame = 0;
     VkImage image = VK_NULL_HANDLE;
     VmaAllocation allocation = nullptr;
     std::vector<VkDeviceMemory> sparse_chunks;
@@ -45,6 +49,9 @@ struct Texture {
     };
     std::vector<BlockAttachment> block_attachments;
 };
+
+void destroy_gen_bump(Texture*) {}
+void defer_note_done(Texture&, bool) {}
 
 /* DEAD */
 std::deque<Dead> dead;
@@ -84,7 +91,7 @@ static Texture target(uint64_t key, VkImage image, VmaAllocation allocation, VkI
     return t;
 }
 
-int main() {
+int run() {
     {   // a released target the GPU is done with: the next frame's target of its shape takes its image, not a new one
         const uint64_t key = key_for(3840, 2160);
         CHECK(key == key_for(3840, 2160));   // (the same create info, the same key: same size and format)
@@ -106,11 +113,16 @@ int main() {
         CHECK(taken_image == image);
         CHECK(taken_allocation == allocation);
         CHECK(taken_views.size() == 1 && taken_views.begin()->second == view);
-        CHECK(st_pool_reused == 1 && st_pool_destroyed == 0);
+        CHECK(st_pool_reused == 1 && st_pool_destroyed == 0 && st_pool_made == 0);
         CHECK(destroyed_images == 0 && destroyed_views == 0);
         CHECK(pool_n == 0 && pool_bytes == 0);
         CHECK(total_bytes == 0);
     }
+    CHECK(destroy_gen == 1);
     std::printf("target image reuse: %d failure(s)\n", fails);
     return fails ? 1 : 0;
 }
+
+}}  // namespace mkwvk
+
+int main() { return mkwvk::run(); }

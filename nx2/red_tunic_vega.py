@@ -11,13 +11,16 @@ ENV = {
     "RX_VK_SHARPEN_FP16": "1", "RX_VK_ASTC_CPU": "1", "RX_VK_ASYNC_LOAD": "0",
     "RX_VK_HASH_MEMO": "1", "RX_VK_ASYNC_IMPORT": "1",
     "RX_VK_VEGA_ASTC_GPU": "0", "RX_VK_VEGA_ASTC_RETAIN": "1",
+    "RX_VK_MENU_FADE": "1", "RX_VK_MIP_STREAM": "0",
+    "RX_VK_EXPOSURE_METER_PART": "1", "RX_VK_MESH_CONVERT_SCOPED": "1",
+    "RX_VK_CS_MODULE_DROP": "1",
 }
 
 GRAPHICS = {
-    "quality_preset": "0", "ultrawide": "1", "output_res": "1920x1080",
+    "quality_preset": "0", "ultrawide": "1", "output_res": "1280x720",
     "handheld_profile": "1", "dlss": "6", "dlss_model": "0", "dlss_pre_bloom": "0",
-    "resolution": "4", "sharpness": "20", "frame_generation": "0",
-    "frame_generation_by": "1", "frame_rate_cap": "7",
+    "resolution": "3", "sharpness": "20", "frame_generation": "0",
+    "frame_generation_by": "0", "frame_rate_cap": "0",
     "nvidia_reflex": "0", "amd_anti-lag_2": "0", "fullscreen": "0", "vsync": "0",
     "upscaling": "0", "crt_filter": "0", "crt_lines": "0", "ultrawide_menus": "1",
     "hud_layout": "0", "hdr": "0", "hdr_paper_white": "200",
@@ -25,6 +28,9 @@ GRAPHICS = {
     "texture_detail": "3", "anisotropic_filtering": "4", "shadow_resolution": "1",
     "foliage_distance": "25", "object_detail": "100", "grass_density": "25",
     "shadow_distance": "25", "contact_shadows": "1", "base_quality": "1",
+    "frame_pacing": "1", "threaded_rendering": "2", "descriptor_reuse": "1",
+    "sampler_cache": "0", "robust_buffers": "0", "present_queue": "0",
+    "astc_as_rgba8": "0", "memory_budget": "1",
 }
 
 

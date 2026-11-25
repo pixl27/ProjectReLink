@@ -90,6 +90,8 @@
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
 namespace mkwvk {
+
+thread_local bool mip_stream_draw = false;
 extern std::atomic<uint64_t> texture_pool_oom;
 extern std::atomic<int> vram_alloc_failures;   // (vk_vma.cpp)
 namespace {
@@ -1046,18 +1048,24 @@ VkDescriptorSetLayout bc_set = VK_NULL_HANDLE;
 VkPipelineLayout bc_layout = VK_NULL_HANDLE;
 VkPipeline bc_pipe = VK_NULL_HANDLE;
 // and this engine's BC1 / BC7 encoder (shaders/astc_bc_encode.comp), same layout: what decoded ASTC is kept as
-VkPipeline bc17_pipe = VK_NULL_HANDLE;
 VkPipeline bc7_pipe = VK_NULL_HANDLE;
 bool bc7_ok = true;   // (false once BC7 is unsupported or its pipeline could not be made: BC3 from then on)
 constexpr uint32_t kBcDim = 2048, kBcLayers = 8;   // the scratch: the largest level a BC texture may have
-/// The scratch's layers, which are the layers one run decodes and encodes: 1, or RX_VK_BC_LAYERS=<n> up to kBcLayers
-/// (upload_astc_gpu says why one). It had kBcLayers whatever the runs used: 140 of its 160 MB held and never written.
-/// (hookshot: the batched transcode, RX_VK_ASTC_BATCH=1, puts up to kBcLayers pieces in the scratch at once: all of them then)
-bool astc_batch_on();
-uint32_t bc_layers() {
-    static const uint32_t n = astc_batch_on() ? kBcLayers
-                            : getenv("RX_VK_BC_LAYERS") ? std::clamp<uint32_t>((uint32_t)atoi(getenv("RX_VK_BC_LAYERS")), 1u, kBcLayers) : 1u;
+/// Legacy array run length and the scratch capacity are separate. Opting in to
+/// batching mip levels must not change the array path or its AMD workarounds.
+uint32_t bc_array_layers() {
+    static const uint32_t n = getenv("RX_VK_BC_LAYERS")
+        ? std::clamp<uint32_t>((uint32_t)atoi(getenv("RX_VK_BC_LAYERS")), 1u, kBcLayers) : 1u;
     return n;
+}
+constexpr uint32_t kBcBatchLayers = 2;
+bool astc_batch_on() {
+    static const bool on = env_on("RX_VK_ASTC_BATCH");
+    return on && dev.facts.discrete() && dev.facts.arch() != GpuArch::AmdVega &&
+           dev.facts.arch() != GpuArch::AmdGcn;
+}
+uint32_t bc_layers() {
+    return std::max(bc_array_layers(), astc_batch_on() ? kBcBatchLayers : 1u);
 }
 /// (hookshot) RX_VK_ASTC_BC7=1: big ASTC textures as BC7 instead of BC3. Both are 8 bits a texel; BC7's mode 6 keeps
 /// the colours' gradients and alpha much better (the encoder is host_shaders/bc7_encoder.comp).
@@ -1594,24 +1602,12 @@ VkImageView astc_level_view(Texture* tex, uint32_t level, uint32_t layer) {
     });
 }
 
-/// RX_VK_ASTC_BATCH (on; =0: one piece at a time, as before): an ASTC texture kept as BC1 / BC7 is decoded, encoded and copied up to kBcLayers (level, layer)
-/// pieces at a time, each piece in a scratch layer of its own and a part of the encoder's buffer of its own, with three full
-/// barriers a group instead of three a piece. The same dispatches with the same inputs as one piece at a time (the decoder
-/// writes layer 0 of a one-layer view, the encoder reads it there and writes at an offset): the same blocks. A 512 x 512
-/// texture of 10 levels drained the GPU 30 times; walking in the Market, 30-60 of them a frame waited the game's next frame.
-bool astc_batch_on() {
-    static const bool v = env_on("RX_VK_ASTC_BATCH");   // (off by default here: =1 on)
-    return v;
-}
-/// A (level, layer) piece of a batched transcode: where its ASTC blocks are in the staged bytes, the decoder's constants, the
-/// level's size
-struct AstcPiece { uint32_t level, layer, iw, ih; uint64_t from; AstcPush pc; uint32_t gx, gy; };
-std::vector<AstcPiece> astc_pieces(const Texture& tex, const std::vector<uint32_t>& layers, uint64_t tail, uint64_t tail0,
-                                   uint64_t align);
-struct BcCacheEntry;
-void astc_bc_batched(VkCommandBuffer cmd, Texture& tex, const std::vector<AstcPiece>& pieces, uint64_t staged, const Staging& s,
-                     BcCacheEntry* store);
+/// A mip of a complete, single-layer ASTC image in the staged buffer.
+struct AstcPiece { uint32_t level, iw, ih; uint64_t from; AstcPush pc; uint32_t gx, gy; };
+std::vector<AstcPiece> astc_pieces(const Texture& tex, uint64_t tail, uint64_t tail0, uint64_t align);
+void astc_bc_batched(VkCommandBuffer cmd, Texture& tex, const std::vector<AstcPiece>& pieces, uint64_t staged, const Staging& s);
 
+// Dormant cache bookkeeping for a future content-keyed BC cache. The mip batch does not retain encoded buffers.
 // ---- RX_VK_BC_CACHE_MB=<MB> (1024 by default; 0: off): the BC blocks of transcoded ASTC textures kept in system memory, by their ASTC bytes ----
 // The textures over the budget are evicted once unused for 60 frames, and walking brings them back: 82% of the Market walk's
 // ASTC transcodes were of storage transcoded before, 1.2-1.8 ms of GPU each on an RTX 3050. A transcode (batched path) also
@@ -1851,6 +1847,17 @@ bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty, bool hyb
             astc_fail = "no memory for the BC3 scratch";
             return false;
         }
+        if (astc_batch_on() && !hybrid && !dirty && !tex.uploaded && !tex.gpu_written && !tex.sparse &&
+            !tex.bc_resized && tex.layers == 1 && tex.levels > 1 && layer_size <= total &&
+            (bc7_enabled() ? bc_mode(tex.format) == 7 : bc_mode(tex.format) != 7) &&
+            bc_layer_views[0] && bc_layer_views[1]) {
+            const auto pieces = astc_pieces(tex, tail, tail0, align);
+            if (pieces.size() == tex.levels) {
+                astc_bc_batched(cmd, tex, pieces, staged, s);
+                st_astc++;
+                return true;
+            }
+        }
         for (uint32_t level = 0; level < tex.levels; level++) {
             const LevelGeo g = level_geo(tex, level);
             const uint64_t off = g.offset - tail0;
@@ -1872,7 +1879,7 @@ bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty, bool hyb
                 // smaller levels, and Hyrule Field's ground, which samples the terrain's material arrays (1365 x 1365 x 90, ASTC
                 // 8x8) at those levels from a distance, had its tiles outlined in dark lines (RX 6600: none with one layer a run,
                 // nor with the arrays kept as RGBA8). RX_VK_BC_LAYERS=<n>: up to n a run, the scratch's layers: bc_layers)
-                const uint32_t run = bc_layers();
+                const uint32_t run = bc_array_layers();
                 while (k1 < layers.size() && k1 - k0 < run && layers[k1] == layers[k1 - 1] + 1) k1++;
                 const uint32_t n = (uint32_t)(k1 - k0);
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, astc_pipe);
@@ -1933,13 +1940,17 @@ bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty, bool hyb
     return true;
 }
 
-std::vector<AstcPiece> astc_pieces(const Texture& tex, const std::vector<uint32_t>& layers, uint64_t tail, uint64_t tail0,
-                                   uint64_t align) {
+std::vector<AstcPiece> astc_pieces(const Texture& tex, uint64_t tail, uint64_t tail0, uint64_t align) {
     std::vector<AstcPiece> pieces;
+    pieces.reserve(tex.levels);
     for (uint32_t level = 0; level < tex.levels; level++) {
         const LevelGeo g = level_geo(tex, level);
         const uint64_t off = g.offset - tail0;
-        if (g.offset < tail0 || off >= tail || (off % align)) continue;
+        if (g.offset < tail0 || off >= tail || off % align || g.swizzled > tail - off ||
+            tail - off > dev.props.limits.maxStorageBufferRange ||
+            g.w > kBcDim || g.h > kBcDim ||
+            g.w != std::max(1u, tex.width >> level) || g.h != std::max(1u, tex.height >> level))
+            return {};
         AstcPiece pc0{};
         pc0.level = level;
         pc0.iw = std::max(1u, tex.width >> level), pc0.ih = std::max(1u, tex.height >> level);
@@ -1953,31 +1964,17 @@ std::vector<AstcPiece> astc_pieces(const Texture& tex, const std::vector<uint32_
         pc.block_height_mask = (1u << g.tile_h) - 1;
         pc.native_tiling = 1;
         pc0.gx = (g.tw + 7) / 8, pc0.gy = (g.th + 7) / 8;
-        for (size_t k = 0; k < layers.size(); k++) {
-            AstcPiece p = pc0;
-            p.layer = layers[k];
-            p.from = k * tail + off;
-            pieces.push_back(p);
-        }
+        pc0.from = off;
+        pieces.push_back(pc0);
     }
     return pieces;
 }
 
-void astc_bc_batched(VkCommandBuffer cmd, Texture& tex, const std::vector<AstcPiece>& pieces, uint64_t staged, const Staging& s,
-                     BcCacheEntry* store) {
+void astc_bc_batched(VkCommandBuffer cmd, Texture& tex, const std::vector<AstcPiece>& pieces, uint64_t staged, const Staging& s) {
     const uint32_t mode = bc_mode(tex.format);
     const uint64_t block_bytes = mode == 1 ? 8 : 16;
-    const uint64_t out_cap = (uint64_t)(kBcDim / 4) * (kBcDim / 4) * kBcLayers * 16;
-    uint64_t stored = 0;   // (where the group's blocks go in the cache entry)
     for (size_t i0 = 0; i0 < pieces.size();) {
-        // (a group: up to kBcLayers pieces whose blocks fit the encoder's buffer together)
-        size_t i1 = i0;
-        uint64_t used = 0;
-        while (i1 < pieces.size() && i1 - i0 < kBcLayers) {
-            const uint64_t b = (uint64_t)((pieces[i1].iw + 3) / 4) * ((pieces[i1].ih + 3) / 4) * block_bytes;
-            if (i1 > i0 && used + b > out_cap) break;
-            used += b, i1++;
-        }
+        const size_t i1 = std::min(i0 + kBcBatchLayers, pieces.size());
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, astc_pipe);
         for (size_t i = i0; i < i1; i++) {
             const AstcPiece& p = pieces[i];
@@ -1993,10 +1990,10 @@ void astc_bc_batched(VkCommandBuffer cmd, Texture& tex, const std::vector<AstcPi
             vkCmdDispatch(cmd, p.gx, p.gy, 1);
         }
         full_barrier(cmd);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, bc17_pipe);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, mode == 7 ? bc7_pipe : bc_pipe);
         descriptors_disturbed();
-        std::vector<VkDeviceSize> at(i1 - i0);
-        uint64_t blocks = 0;
+        VkBufferImageCopy regions[kBcBatchLayers]{};
+        uint32_t byte_offset = 0;
         for (size_t i = i0; i < i1; i++) {
             const AstcPiece& p = pieces[i];
             VkDescriptorImageInfo ii{VK_NULL_HANDLE, bc_layer_views[i - i0], VK_IMAGE_LAYOUT_GENERAL};
@@ -2007,23 +2004,17 @@ void astc_bc_batched(VkCommandBuffer cmd, Texture& tex, const std::vector<AstcPi
             wr[1].dstBinding = 1, wr[1].descriptorCount = 1, wr[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             wr[1].pBufferInfo = &bi;
             vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, bc_layout, 0, 2, wr);
-            const BcPush pc{(p.iw + 3) / 4, (p.ih + 3) / 4, p.iw, p.ih, mode, (uint32_t)blocks};
+            // BC1/BC3 take an offset in 8-byte units. BC7 takes bytes.
+            const BcPush pc{(p.iw + 3) / 4, (p.ih + 3) / 4, p.iw, p.ih,
+                            mode != 1, mode == 7 ? byte_offset : byte_offset / 8};
             vkCmdPushConstants(cmd, bc_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
             vkCmdDispatch(cmd, (pc.blocks_x + 7) / 8, (pc.blocks_y + 7) / 8, 1);
-            at[i - i0] = blocks * block_bytes;
-            blocks += (uint64_t)pc.blocks_x * pc.blocks_y;
+            regions[i - i0] = {byte_offset, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, p.level, 0, 1},
+                               {0, 0, 0}, {p.iw, p.ih, 1}};
+            byte_offset += pc.blocks_x * pc.blocks_y * (uint32_t)block_bytes;
         }
         full_barrier(cmd);
-        for (size_t i = i0; i < i1; i++) {
-            const AstcPiece& p = pieces[i];
-            const VkBufferImageCopy c{at[i - i0], 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, p.level, p.layer, 1}, {0, 0, 0}, {p.iw, p.ih, 1}};
-            vkCmdCopyBufferToImage(cmd, bc_out, tex.image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
-        }
-        if (store && blocks) {   // (and into the cache entry, in the pieces' order)
-            const VkBufferCopy bcp{0, stored, blocks * block_bytes};
-            vkCmdCopyBuffer(cmd, bc_out, store->buf, 1, &bcp);
-            stored += blocks * block_bytes;
-        }
+        vkCmdCopyBufferToImage(cmd, bc_out, tex.image, VK_IMAGE_LAYOUT_GENERAL, (uint32_t)(i1 - i0), regions);
         full_barrier(cmd);   // (the scratch and the buffer are the next group's)
         i0 = i1;
     }
@@ -2498,6 +2489,7 @@ void upload_frame_report() {
 bool upload_inner(Texture& tex, const Ranges* dirty);
 // (hookshot, smoothness: textures prepared ahead, further down) a first upload a draw asked for is remembered
 std::atomic<bool> ahead_memory_pressure{false};
+std::atomic<bool> mip_stream_memory_pressure{false};
 struct AstcAheadJob {
     uint64_t address = 0;
     LevelGeo geo{};
@@ -2561,7 +2553,10 @@ bool upload(Texture& tex, const Ranges* dirty) {
     const int kind = tex.uploaded ? UK_AGAIN : tex.astc ? UK_ASTC_NEW : UK_OTHER_NEW;
     tl_first_upload = !tex.uploaded;
     tl_reupload = tex.uploaded;
+    const uint64_t pending_mip = tex.mip_stream_ticket;
+    if (pending_mip) dirty = nullptr;  // a write must replace every level of the approximate image
     const bool ok = upload_inner(tex, dirty);
+    if (ok && pending_mip) tex.mip_stream_ticket = 0;
     tl_first_upload = tl_reupload = false;
     const int64_t ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
     if (ok && tex.astc && !dirty)
@@ -2946,6 +2941,242 @@ void astc_ahead_worker(AstcAheadQueue& q) {
     }
 }
 
+bool mip_stream_on() {
+    static const bool on = env_on("RX_VK_MIP_STREAM");
+    return on && policy_rule::windows_vega_compat(dev.facts) && astc_on_cpu();
+}
+
+struct MipStreamJob {
+    uint64_t ticket = 0, gpu = 0;
+    uint32_t texture_id = 0, bw = 0, bh = 0, decode_us = 0;
+    LevelGeo level{};
+    enum State { queued, decoding, ready, failed } state = queued;
+    std::vector<uint8_t> encoded, rgba;
+};
+struct MipStreamQueue {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::array<std::shared_ptr<MipStreamJob>, 4> jobs;
+    uint64_t next_ticket = 0, previews = 0, promoted = 0;
+    uint64_t preview_frame = ~0ull, promoted_frame = ~0ull;
+    uint32_t frame_previews = 0;
+    bool started = false;
+};
+MipStreamQueue& mip_stream_queue() {
+    static auto* queue = new MipStreamQueue;
+    return *queue;
+}
+
+void decode_stream_mip(const LevelGeo& g, uint32_t bw, uint32_t bh, std::span<const uint8_t> encoded,
+                       std::span<uint8_t> rgba, std::vector<uint8_t>& blocks) {
+    blocks.resize((uint64_t)g.tw * g.th * 16);
+    unswizzle_upload(std::span<uint8_t>(blocks), encoded, 16, g.tw, g.th, 1, g.tile_h, 0);
+    Tegra::Texture::ASTC::DecompressSerial(blocks, g.w, g.h, 1, bw, bh, rgba);
+}
+
+void mip_stream_worker(MipStreamQueue& queue) {
+    helper_thread_start();
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+    std::vector<uint8_t> blocks;
+    for (;;) {
+        std::shared_ptr<MipStreamJob> job;
+        {
+            std::unique_lock lock(queue.mutex);
+            queue.wake.wait(lock, [&] {
+                for (const auto& entry : queue.jobs)
+                    if (entry && entry->state == MipStreamJob::queued &&
+                        (!job || entry->ticket < job->ticket)) job = entry;
+                return bool(job);
+            });
+            job->state = MipStreamJob::decoding;
+        }
+        bool ok = false;
+        try {
+            const auto started = std::chrono::steady_clock::now();
+            job->rgba.resize((uint64_t)job->level.w * job->level.h * 4);
+            decode_stream_mip(job->level, job->bw, job->bh, job->encoded, job->rgba, blocks);
+            job->decode_us = (uint32_t)std::min<int64_t>(1'000'000, std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - started).count());
+            ok = true;
+        } catch (const std::exception&) {
+            // The replay thread can still use the ordinary upload.
+        }
+        std::lock_guard lock(queue.mutex);
+        job->state = ok ? MipStreamJob::ready : MipStreamJob::failed;
+    }
+}
+
+bool mip_stream_preview(Texture& tex) {
+    if (!mip_stream_draw || !mip_stream_on() || mip_stream_memory_pressure.load(std::memory_order_relaxed) ||
+        par_active.load(std::memory_order_relaxed) ||
+        tex.uploaded || tex.gpu_written || tex.released || tex.bc || tex.sparse || tex.mip_stream_repair ||
+        tex.d.target != NVN_TEXTURE_TARGET_2D || tex.layers != 1 || tex.depth != 1 ||
+        tex.samples != VK_SAMPLE_COUNT_1_BIT || tex.bpb != 16 || tex.levels < 2 || tex.levels > 11 ||
+        linear_twin(tex.format) != VK_FORMAT_R8G8B8A8_UNORM ||
+        std::max(tex.width, tex.height) > 1024 || std::min(tex.width, tex.height) < 256 ||
+        uint64_t(tex.width) * tex.height < 512 * 512 || nvn_tex_is_linear(&tex.d) ||
+        tex.gpu >= (1ull << 39) || !tex.gpu || !tex.guest ||
+        memory_has_shadow(tex.gpu, tex.guest_size) || memory_writeback_ever(tex.gpu, tex.guest_size) ||
+        gpu_wrote_into(tex))
+        return false;
+    constexpr VkImageUsageFlags transfer = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    constexpr VkFormatFeatureFlags blit = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+                                          VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    if ((tex.usage & transfer) != transfer || (format_props(tex.format).optimalTilingFeatures & blit) != blit)
+        return false;
+
+    auto& queue = mip_stream_queue();
+    if (frame_no != queue.preview_frame) queue.preview_frame = frame_no, queue.frame_previews = 0;
+    if (queue.frame_previews >= 3) return false;
+    std::unique_lock lock(queue.mutex, std::try_to_lock);
+    if (!lock) return false;
+    const auto slot = std::find(queue.jobs.begin(), queue.jobs.end(), nullptr);
+    if (slot == queue.jobs.end()) return false;
+    // Only the replay thread adds or removes slots. Keep decoding outside the worker lock.
+    lock.unlock();
+
+    std::array<LevelGeo, 11> levels{};
+    std::array<VkBufferImageCopy, 10> copies{};
+    uint64_t bytes = 0;
+    for (uint32_t mip = 0; mip < tex.levels; ++mip) {
+        LevelGeo& g = levels[mip];
+        g = level_geo(tex, mip);
+        if (g.tile_d || !g.swizzled || g.offset >= tex.guest_size || g.swizzled > tex.guest_size - g.offset)
+            return false;
+        if (!mip) {
+            if (g.swizzled > (2u << 20)) return false;
+            continue;
+        }
+        auto& copy = copies[mip - 1];
+        copy.bufferOffset = bytes;
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 1};
+        copy.imageExtent = {g.w, g.h, 1};
+        bytes += ((uint64_t)g.w * g.h * 4 + 15) & ~15ull;
+    }
+    const Staging st = staging(bytes, 16);
+    if (!st.buffer) return false;
+
+    std::shared_ptr<MipStreamJob> job;
+    try {
+        std::vector<uint8_t> source, blocks;
+        job = std::make_shared<MipStreamJob>();
+        job->ticket = ++queue.next_ticket;
+        job->gpu = tex.gpu;
+        job->texture_id = tex.id;
+        job->bw = tex.block_w;
+        job->bh = tex.block_h;
+        job->level = levels[0];
+        const auto* top = guest_bytes(tex.gpu + levels[0].offset, levels[0].swizzled, source);
+        job->encoded.assign(top, top + levels[0].swizzled);
+        for (uint32_t mip = 1; mip < tex.levels; ++mip) {
+            const LevelGeo& g = levels[mip];
+            const auto* encoded = guest_bytes(tex.gpu + g.offset, g.swizzled, source);
+            auto& copy = copies[mip - 1];
+            decode_stream_mip(g, job->bw, job->bh, {encoded, (size_t)g.swizzled},
+                               {st.data + copy.bufferOffset, (size_t)g.w * g.h * 4}, blocks);
+            copy.bufferOffset += st.offset;
+        }
+        lock.lock();
+        if (!queue.started) {
+            std::thread(mip_stream_worker, std::ref(queue)).detach();
+            queue.started = true;
+        }
+    } catch (const std::exception&) {
+        return false;
+    }
+    *slot = job;
+    lock.unlock();
+    queue.wake.notify_one();
+    flush_mapped_range(st.allocation, st.offset, bytes);
+    const VkCommandBuffer cmd = upload_cmd();
+    checkpoint_mark(cmd, tex.gpu, 'u');
+    vkCmdCopyBufferToImage(cmd, st.buffer, tex.image, VK_IMAGE_LAYOUT_GENERAL, tex.levels - 1, copies.data());
+
+    // Keep the original view, swizzle and texel coordinates even for explicit LOD reads.
+    // Every level is initialized, and neither descriptors nor in-flight views need replacing.
+    full_barrier(cmd, "ASTC mip preview before blit");
+    VkImageBlit region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 1, 0, 1};
+    region.srcOffsets[1] = {(int32_t)levels[1].w, (int32_t)levels[1].h, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.dstOffsets[1] = {(int32_t)levels[0].w, (int32_t)levels[0].h, 1};
+    vkCmdBlitImage(cmd, tex.image, VK_IMAGE_LAYOUT_GENERAL, tex.image, VK_IMAGE_LAYOUT_GENERAL, 1, &region, VK_FILTER_LINEAR);
+    tex.mip_stream_ticket = job->ticket;
+    ++queue.frame_previews;
+    st_bytes += bytes;
+    if (++queue.previews <= 8 || queue.previews % 100 == 0)
+        logf("vk: Vega mip stream: %llu previews, latest #%u %ux%u",
+             (unsigned long long)queue.previews, tex.id, tex.width, tex.height);
+    return true;
+}
+
+bool texture_dirty(Texture& tex, uint32_t gen, Ranges& out);
+
+void texture_mip_stream_run_impl() {
+    if (!mip_stream_on()) return;
+    auto& queue = mip_stream_queue();
+    if (queue.promoted_frame == frame_no) return;
+    std::unique_lock lock(queue.mutex, std::try_to_lock);
+    if (!lock) return;
+    for (auto& job : queue.jobs) {
+        if (!job || job->state == MipStreamJob::queued || job->state == MipStreamJob::decoding) continue;
+        Texture* target = nullptr;
+        const auto [first, last] = by_gpu.equal_range(job->gpu);
+        for (auto it = first; it != last; ++it)
+            if (it->second->id == job->texture_id && it->second->mip_stream_ticket == job->ticket) {
+                target = it->second;
+                break;
+            }
+        if (!target || target->gpu_written) {
+            if (target) target->mip_stream_ticket = 0;
+            job.reset();
+            continue;
+        }
+        Texture& tex = *target;
+        Ranges dirty;
+        std::vector<uint8_t> scratch;
+        const auto& g = job->level;
+        if (job->state == MipStreamJob::failed || texture_dirty(tex, tex.upload_gen, dirty) ||
+            memory_has_shadow(tex.gpu, tex.guest_size) || memory_writeback_ever(tex.gpu, tex.guest_size) ||
+            gpu_wrote_into(tex) ||
+            std::memcmp(job->encoded.data(), guest_bytes(tex.gpu + g.offset, g.swizzled, scratch), g.swizzled)) {
+            // The next ordinary lookup repairs the image using the current recording's bytes.
+            tex.mip_stream_ticket = 0;
+            tex.uploaded = false;
+            tex.mip_stream_repair = true;
+            job.reset();
+            continue;
+        }
+        const auto complete = job;
+        lock.unlock();
+        const Staging st = staging((complete->rgba.size() + 15) & ~15ull, 16);
+        if (!st.buffer) return;
+        std::memcpy(st.data, complete->rgba.data(), complete->rgba.size());
+        flush_mapped_range(st.allocation, st.offset, complete->rgba.size());
+        VkBufferImageCopy copy{};
+        copy.bufferOffset = st.offset;
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {g.w, g.h, 1};
+        const VkCommandBuffer cmd = upload_cmd();
+        checkpoint_mark(cmd, tex.gpu, 'u');
+        vkCmdCopyBufferToImage(cmd, st.buffer, tex.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+        // Keep the existing eviction ranking aware of the real cost of rebuilding this material.
+        tex.astc_upload_us = std::min(1'000'000u, tex.astc_upload_us + complete->decode_us);
+        tex.mip_stream_ticket = 0;
+        tex.last_value = std::max(tex.last_value, rec_value);
+        tex.upload_value = rec_value;
+        tex.upload_seg = tl_seg;
+        queue.promoted_frame = frame_no;
+        if (++queue.promoted <= 8 || queue.promoted % 100 == 0)
+            logf("vk: Vega mip stream: %llu exact mips promoted", (unsigned long long)queue.promoted);
+        lock.lock();
+        job.reset();
+        return;
+    }
+}
+
 bool upload_inner(Texture& tex, const Ranges* dirty) {
     PROF(PROF_UPLOAD);
     if (upload_never(tex)) return false;
@@ -2969,6 +3200,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
     if (tex.astc) {
         tex.blocks_hash = 0;
         if (!dirty && !tex.uploaded && reuse_upload(tex, total)) return up_route = UP_ASTC, true;
+        if (!dirty && mip_stream_preview(tex)) return up_route = UP_CPU, true;
     }
     if (tex.astc) {
         up_route = UP_ASTC;
@@ -3167,7 +3399,10 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                     // Both entry points decode with the same block routine and write identical RGBA8.
                     constexpr uint64_t parallel_astc_min_bytes = 64 * 1024;
                     const bool vega = policy_rule::windows_vega_compat(dev.facts);
-                    const auto decode = block_bytes >= parallel_astc_min_bytes && vega
+                    // Terrain arrays are uploaded one layer at a time. A 341-square
+                    // layer can expand to 454 KiB and still be below the usual encoded threshold.
+                    const bool large_array_layer = tex.layers > 1 && block_bytes >= 8 * 1024 && out_bytes >= 256 * 1024;
+                    const auto decode = vega && (block_bytes >= parallel_astc_min_bytes || large_array_layer)
                                             ? Tegra::Texture::ASTC::Decompress
                                             : Tegra::Texture::ASTC::DecompressSerial;
                     const std::span<const uint8_t> encoded(blocks, block_bytes);
@@ -4094,6 +4329,10 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
 
 } // namespace
 
+void texture_mip_stream_run() {
+    texture_mip_stream_run_impl();
+}
+
 std::atomic<uint64_t> work_epoch{0};
 std::atomic<uint64_t> other_work_by_cmd[64]{};
 std::atomic<uint64_t> xfer_work_by_cmd[64]{};
@@ -4520,7 +4759,7 @@ bool upload_defer(Texture& tex) {
     // Limit NPC/prop ASTC upload stalls to 12 ms per frame to protect 60 fps frame pacing (16.6 ms target)
     static const int64_t budget_ns = (int64_t)(getenv("RX_VK_UPLOAD_BUDGET_MS") ? atof(getenv("RX_VK_UPLOAD_BUDGET_MS")) : 12.0) * 1000000;
     static const bool summed = env_on("RX_VK_UPLOAD_BUDGET_SUM");
-    if (!budget_ns || !upload_defer_ok || tex.uploaded || !tex.astc || tex.gpu_written) return false;
+    if (!budget_ns || !upload_defer_ok || tex.uploaded || !tex.astc || tex.gpu_written || tex.mip_stream_repair) return false;
     const int64_t spent = summed ? frame_upload_ns.load(std::memory_order_relaxed) : tl_upload_frame == frame_no ? tl_upload_ns : 0;
     if (spent < budget_ns) return false;
     // On Windows Vega, repeatedly deferring CPU-decoded textures kept black
@@ -4624,13 +4863,28 @@ void texture_ahead_gone(const nvn_tex* t) {
 void texture_ahead_update_pressure() {
 #ifdef _WIN32
     static const bool on = env_on("RX_VK_TEX_AHEAD_PRESSURE");
-    if (!on || !policy_rule::windows_vega_compat(dev.facts)) return;
+    const bool stream = mip_stream_on();
+    if ((!on && !stream) || !policy_rule::windows_vega_compat(dev.facts)) return;
     static int64_t next_check = 0;
     const int64_t now = ahead_now_ms();
     if (now < next_check) return;
     next_check = now + 500;
     MEMORYSTATUSEX m{sizeof(m)};
     if (!GlobalMemoryStatusEx(&m)) return;
+    if (stream) {
+        // The streamer holds at most four jobs. Keep enough headroom for them
+        // separately from speculative texture prefetch, which can fill the cache.
+        const bool was = mip_stream_memory_pressure.load(std::memory_order_relaxed);
+        const bool paused = m.ullAvailPhys < ((was ? 1536ull : 1024ull) << 20) ||
+                            m.ullAvailPageFile < ((was ? 2560ull : 1536ull) << 20);
+        if (paused != was) {
+            mip_stream_memory_pressure.store(paused, std::memory_order_relaxed);
+            logf("vk: Vega mip stream: %s for memory pressure (%llu MB physical, %llu MB commit)",
+                 paused ? "paused" : "resumed", (unsigned long long)(m.ullAvailPhys >> 20),
+                 (unsigned long long)(m.ullAvailPageFile >> 20));
+        }
+    }
+    if (!on) return;
     const bool was = ahead_memory_pressure.load(std::memory_order_relaxed);
     const uint64_t free_phys = (was ? 2560ull : 1536ull) << 20;
     const uint64_t free_commit = (was ? 4096ull : 2560ull) << 20;
@@ -4693,9 +4947,9 @@ bool astc_ahead_offer(const nvn_tex& t, int64_t now) {
 }
 
 void texture_ahead_frame(int64_t draws) {
+    texture_ahead_update_pressure();
     if (!ahead_on()) return;
     static const int64_t budget_ns = (int64_t)((getenv("RX_VK_TEX_AHEAD_MS") ? atof(getenv("RX_VK_TEX_AHEAD_MS")) : 12.0) * 1e6);
-    texture_ahead_update_pressure();
     ahead_allow_ns = ahead_memory_pressure.load(std::memory_order_relaxed) ? 0 : texture_ahead::allowance_ns(draws, budget_ns);
     ahead_spent_ns = 0;
     std::unique_lock lk(ahead_mu);
@@ -5360,8 +5614,8 @@ bool texture_copy_into_bc(VkCommandBuffer cmd, Texture* src, uint32_t src_level,
     // another size, from an ASTC 6x6 or 10x10 source, is left to the copy's other paths)
     if (!dst->bc_resized && (((w & 3) && dx + w != ow) || ((h & 3) && dy + h != oh))) return false;
     if (!bc_scratch_layout(cmd, dst->bc_resized)) return false;
-    for (uint32_t l0 = 0; l0 < layers; l0 += bc_layers()) {   // (a run is the scratch's layers: one, as an upload's)
-        const uint32_t n = std::min(bc_layers(), layers - l0);
+    for (uint32_t l0 = 0; l0 < layers; l0 += bc_array_layers()) {
+        const uint32_t n = std::min(bc_array_layers(), layers - l0);
         full_barrier(cmd);
         const VkImageCopy cp{{VK_IMAGE_ASPECT_COLOR_BIT, src_level, src_layer + l0, n}, {sx, sy, 0},
                              {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, n}, {0, 0, 0}, {w, h, 1}};
@@ -6960,52 +7214,17 @@ void texture_frame(uint64_t completed) {
             logf("vk: texture budget: %llu MB (driver allows %llu MB, the card has %llu MB, RAM %llu MB%s)",
                  (unsigned long long)(own >> 20), (unsigned long long)(a >> 20), (unsigned long long)(device_vram_bytes() >> 20),
                  (unsigned long long)(system_ram_bytes() >> 20), getenv("RX_VK_VRAM_MB") ? ", RX_VK_VRAM_MB" : "");
-    }
-    {   // (hookshot) an integrated GPU's "VRAM" is the system's RAM, dynamically calculated based on system RAM
-        static bool told;
-        if (!getenv("RX_VK_VRAM_MB") && dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
-            // Get system RAM
-            uint64_t system_ram = 0;
-#if defined(_WIN32)
-            MEMORYSTATUSEX mem_info{sizeof(MEMORYSTATUSEX)};
-            if (GlobalMemoryStatusEx(&mem_info)) {
-                system_ram = mem_info.ullTotalPhys;
-            }
-#else
-            // Linux: read from /proc/meminfo
-            FILE* f = fopen("/proc/meminfo", "r");
-            if (f) {
-                char line[256];
-                while (fgets(line, sizeof(line), f)) {
-                    if (sscanf(line, "MemTotal: %llu kB", (unsigned long long*)&system_ram) == 1) {
-                        system_ram *= 1024;
-                        break;
-                    }
-                }
-                fclose(f);
-            }
-#endif
-            if (system_ram == 0) system_ram = 8ull << 30;  // 8 GB fallback
-
-            // (the rule is device_policy.h's integrated_texture_budget, written once: a third of the RAM left to the game's own
-            // allocations (~10 GB), the targets, buffers and pipelines (~3-4 GB), the system and the driver, 8 GB at least
-            // and 16 at most; a cap by the RAM, 1.5 GB at 8 to 6 GB past 32, or 6/8 GB past 16 GB when ASTC is decoded on the
-            // CPU; 1 GB at least; never more than the share)
-            const uint64_t reserved = policy_rule::integrated_reserved(system_ram);   // (for the line below)
-            const uint64_t driver_budget = own;  // (its share of the allowance: texture_budget.h integrated_bytes)
+        if (igpu && !getenv("RX_VK_VRAM_MB")) {
+            // Total installed RAM and the driver share used by this ceiling are fixed. Live pressure still adjusts the budget below.
+            const uint64_t ram = system_ram_bytes();
+            const uint64_t system_ram = ram ? ram : 8ull << 30;
+            const uint64_t reserved = policy_rule::integrated_reserved(system_ram);
+            const uint64_t driver_budget = own;
             own = policy_rule::integrated_texture_budget(driver_budget, system_ram, astc_on_cpu());
-
-            if (!told) {
-                told = true;
-                // (the allowance itself, not the share: "driver allows 3331 MB" was read as the limit on a UHD Graphics allowed 7402)
-                logf("vk: integrated GPU texture budget: %llu MB (system RAM %llu GB, driver allows %llu MB, its share for textures "
-                     "%llu MB, reserved %llu GB)",
-                     (unsigned long long)(own >> 20),
-                     (unsigned long long)(system_ram >> 30),
-                     (unsigned long long)((known ? allowed : 0) >> 20),
-                     (unsigned long long)(driver_budget >> 20),
-                     (unsigned long long)(reserved >> 30));
-            }
+            logf("vk: integrated GPU texture budget: %llu MB (system RAM %llu GB, driver allows %llu MB, its share for textures "
+                 "%llu MB, reserved %llu GB)",
+                 (unsigned long long)(own >> 20), (unsigned long long)(system_ram >> 30), (unsigned long long)(a >> 20),
+                 (unsigned long long)(driver_budget >> 20), (unsigned long long)(reserved >> 30));
         }
     }
     uint64_t budget = own;

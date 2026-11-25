@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | Red Tunic 4.2.2 renderer SHA-256 32498f25308fea4ce21fdf6d6a856422b51a6d94dac74717484851b45e390f7b | Windows 11 build 26300 | Radeon Vega 1002:15e7, 26.5.2 | Ryzen 5 5625U, 16 GB | CPU ASTC, SDR, mip streaming off, Compute module release only | HyruleField_Adult, 90-present right-stick turn, inventory and item wheel | Mean 141.3 ms, median 100.3 ms, p95 343.8 ms, maximum 783.3 ms, ten frames over 250 ms. Private commit 12467 to 11993 MiB, resident 2443 to 2806 MiB. At least 128 modules released. No renderer-reported white/dark frames or device loss. |

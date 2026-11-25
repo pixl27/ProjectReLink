@@ -100,6 +100,7 @@ void jt_mark(int kind, uint64_t v) {
 #endif
 }
 extern std::atomic<bool> movie_networks_slow;   // (vk_draw.cpp: the movie networks left out, issue 109)
+extern std::atomic<int64_t> menu_fade_world_at, menu_fade_pause_at, wheel_drawn_at;  // (vk_draw.cpp)
 int64_t presents_now;   // (the presents so far, for SlowWatch)
 namespace {
 const char* rb_thread_label() {
@@ -4643,6 +4644,7 @@ bool run_submit(const uint64_t* handles, int n, uint64_t value, uint64_t queue, 
         rec_cur = &first, rec_cur_value = tag, rec_parts = 0, part_work = 0, part_end_wanted = false;
         rec_open(tag);
         if (rb_writers_on()) rb_span_begin(tag, first.part);
+        texture_mip_stream_run();
         texture_ahead_run();   // (hookshot, RX_VK_TEX_AHEAD: into this recording's uploads, while the frames are light)
         temporal_prewarm(first.cmd);   // (hookshot, RX_VK_DLSS_PREWARM: DLSS's feature, in a light frame before the first 3D one)
     }
@@ -7423,14 +7425,31 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
                                                                                         : "the SDR picture expanded to HDR10");
             }
         }
+        bool wheel = false;
         if (tex && !dev.offscreen && (opts.upscale || opts.sharpness || opts.crt_filter || dev.hdr || wide_sides_possible())) {
-        // (hookshot) the item wheel open: the game's picture covered with its scene before the HUD, dimmed, and the wheel over it
-        // (the game's own item row, its hints and the HUD gone from behind the wheel; before frame interpolation and shots read it)
-        if (tex) framegen_wheel_backdrop(r.cmd, tex->image, tex->format, sw, sh, crop);
+            // The Hookshot item wheel composites its own backdrop and wheel before interpolation or screenshots read them.
+            wheel = framegen_wheel_backdrop(r.cmd, tex->image, tex->format, sw, sh, crop);
             // Keep the sampled view with the same cached image as the direct present, before advancing its age.
             direct_view = texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample);
             tex->last_frame = texture_frame_no();
             tex->last_value = std::max(tex->last_value, value);
+        }
+        if (menu_fade_wanted()) {
+            const VkImageUsageFlags required = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                               VK_IMAGE_USAGE_STORAGE_BIT;
+            const bool compatible = tex && !dev.offscreen && !dev.hdr && !framegen_on() && swapchain_framegen() < 2 &&
+                                    tex->format == VK_FORMAT_R8G8B8A8_UNORM && shown_format == tex->format &&
+                                    tex->type == VK_IMAGE_TYPE_2D && tex->levels == 1 && tex->layers == 1 &&
+                                    tex->samples == VK_SAMPLE_COUNT_1_BIT && (tex->usage & required) == required;
+            VkImageView storage = compatible ? texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Storage) : VK_NULL_HANDLE;
+            if (storage) {
+                tex->last_frame = texture_frame_no();
+                tex->last_value = std::max(tex->last_value, value);
+            }
+            const bool menu = wheel || (presents_now > 0 && wheel_drawn_at.load(std::memory_order_relaxed) == presents_now) ||
+                              menu_fade_pause_at.load(std::memory_order_relaxed) == presents_now;
+            const bool world = menu_fade_world_at.load(std::memory_order_relaxed) == presents_now;
+            menu_fade_present(r.cmd, src, storage, sw, sh, menu, world, compatible);
         }
         // (frame interpolation: made frames and this one shown by the display thread, vk_framegen.cpp. Recorded
         // after the submit that signals the present's value, in a submit of its own: the game waits for that value

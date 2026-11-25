@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Red Tunic 4.1.0 local base host with Windows renderer built from 58cef5ed plus the Rekarina port | Windows 11 build 26300.10075, 1280×720 window | AMD Radeon Vega 1002:15e7, Vulkan driver 0x800117 | Ryzen 5 5625U, 16 GB | CPU ASTC, RX_VK_ASTC_BATCH=1, frame generation off | HyruleField_Adult outdoors, 720p output, scripted right-stick turn in shared mode | Smoke01 completed a 178° camera turn over 111 presented frames. The terrain, character and HUD appeared in the capture. CPU ASTC remained active, with no device loss in the log. |

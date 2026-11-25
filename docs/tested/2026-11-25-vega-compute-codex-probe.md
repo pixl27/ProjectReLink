@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | Red Tunic 4.2.2 exposure and mesh candidate before extended module cleanup | Windows 11 build 26300 | Radeon Vega 1002:15e7, 26.5.2 | Ryzen 5 5625U, 16 GB | SDR, CPU ASTC, mip streaming off, exposure and mesh switches on | HyruleField_Adult, camera turn, inventory and item wheel | The known exposure writer recorded at least 600 resets and the fixed mesh-argument ring activated. The log reported zero white/dark frames and no device loss. This shared run overlapped a build and is not a performance comparison. |

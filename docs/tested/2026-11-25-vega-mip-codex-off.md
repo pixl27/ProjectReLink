@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | Local 4.1.0 host, Red Tunic 4.2.2 mip-streaming candidate | Windows 11 build 26300, 1280x724 window | Radeon Vega 1002:15e7, driver 26.5.2 | Ryzen 5 5625U, 16 GB | CPU ASTC, frame generation off, isolated warmed cache, RX_VK_MIP_STREAM=0 | HyruleField_Adult lakeside checkpoint, scripted right-stick turn | One timing-mode sample, heading 173.2 to 11.2 degrees, 89 presents. Mean 146.3 ms, median 115.6 ms, p95 332.2 ms, p99 505.8 ms, maximum 669.7 ms. Ten frames over 250 ms and one over 500 ms. |

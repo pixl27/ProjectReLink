@@ -91,4 +91,8 @@ void framegen_wheel_scene(VkCommandBuffer cmd, VkImage image, VkFormat format, u
 /// the wheel is closed, no scene was copied since the row was turned on, or the picture is not that scene's
 bool framegen_wheel_backdrop(VkCommandBuffer cmd, VkImage dst, VkFormat format, uint32_t sw, uint32_t sh, const int crop[4]);
 
+bool menu_fade_wanted();
+void menu_fade_present(VkCommandBuffer cmd, VkImage image, VkImageView storage, uint32_t w, uint32_t h,
+                       bool menu, bool world, bool enabled);
+
 } // namespace mkwvk

@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-24 | Red Tunic 58cef5ed plus the Rekarina port, game-free Vulkan ASTC decoder fixture | Windows 11 build 26300.10075 | AMD Radeon Vega 1002:15e7, Vulkan driver 0x800117 | Ryzen 5 5625U, 16 GB | Standalone GPU decode, linear and Switch 2 native tiling | Synthetic ASTC blocks, GPU readback compared with the CPU reference | Decoder01 passed 28 cases across 14 block sizes and 22,680 pixels. Maximum channel difference was one code value. This measures the decoder in isolation. |

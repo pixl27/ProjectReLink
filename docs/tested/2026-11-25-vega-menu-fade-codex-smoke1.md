@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | Local 4.1.0 host, 4.2.2 renderer with the first menu fade candidate | Windows 11 build 26300 | Radeon Vega 1002:15e7, 26.5.2 | Ryzen 5 5625U, 16 GB | SDR Vulkan, CPU ASTC, frame generation off, menu fade enabled, isolated cache | HyruleField_Adult lakeside checkpoint and camera turn, inventory exit, item wheel | The GPU snapshot initialized and all input phases completed. Fade activation was absent from the log. New terrain uploads remained visible in the timing trace. |
