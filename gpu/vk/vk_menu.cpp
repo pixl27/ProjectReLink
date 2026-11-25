@@ -858,6 +858,14 @@ const char* tx_texture_detail(int v) {
     static const char* t[] = {"Auto", "Full", "Medium", "Low"};
     return (unsigned)v < 4 ? t[v] : t[0];
 }
+const char* tx_material_array_limit(int v) {
+    static const char* t[] = {"Follow Texture detail", "1024 px", "512 px", "256 px"};
+    return t[std::clamp(v, 0, 3)];
+}
+const char* tx_texture_cache_ceiling(int v) {
+    static const char* t[] = {"Auto", "768 MiB", "1024 MiB", "1536 MiB", "2048 MiB"};
+    return t[std::clamp(v, 0, 4)];
+}
 const char* tx_anisotropy(int v) {
     static const char* t[] = {"Game's", "2x", "4x", "8x", "16x"};
     return (unsigned)v < 5 ? t[v] : t[4];
@@ -1770,6 +1778,9 @@ Row rows[] = {
      "How much of the big textures (ground, walls, buildings) is kept in video memory. Lower uses less, for a softer "
      "picture up close: for 6 and 8 GB cards that slow down after a while. Applies to textures made after the change; "
      "a restart applies it to all.", hn_texture_detail, false, true},
+    {TAB_GRAPHICS, "Material array limit", &opts.material_array_limit, 0, 3, 1, tx_material_array_limit,
+     "Caps newly created large sampled ASTC texture arrays, including terrain materials. Lower values soften surfaces close up. Restart for all textures.",
+     nullptr, false, true},
     {TAB_GRAPHICS, "Anisotropic filtering", &opts.anisotropy, 0, 4, 1, tx_anisotropy,
      "Keeps textures sharp on surfaces seen at a slant, such as the ground ahead: higher is sharper in the distance, for a "
      "little GPU time. Game's is the console's own (1x or 2x).", nullptr, false, true},
@@ -1794,6 +1805,9 @@ Row rows[] = {
      "Low uses the game's own handheld preset, for weaker GPUs. Changes apply at once.", nullptr, false, true},
     // (the rows to change when something is wrong, or on a card short of memory: last)
     {TAB_GRAPHICS, "GPU and memory", nullptr, 0, 0, 0, nullptr, nullptr, nullptr, false, true, -1, true},
+    {TAB_GRAPHICS, "Texture cache ceiling", &opts.texture_cache_ceiling, 0, 4, 1, tx_texture_cache_ceiling,
+     "Lowers the renderer's texture eviction target. It can increase texture reloads. Live targets and total process memory are tracked separately.",
+     nullptr, false, true},
     {TAB_GRAPHICS, "GPU device", &opts.gpu_device, 0, 8, 1, tx_gpu,
      "Which graphics card the game runs on. Applies after a restart.", hn_gpu, true, true},
     // (no Mesh shaders row: changing it translated every shader again at the next start, for nothing a player gains. A launch

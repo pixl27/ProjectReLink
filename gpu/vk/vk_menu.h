@@ -50,6 +50,8 @@ struct Options {
     int sharpness = 0;    // 0 to 100
     int texture_detail = 0;   // (hookshot) Texture detail: 0 Auto, 1 Full, 2 Medium, 3 Low (the big textures' top levels left out,
                               // gpu/vk/vk_texture.cpp texture_detail_dims; read as each texture is made)
+    int material_array_limit = 0;  // Follow Texture detail, or cap eligible sampled arrays at 1024, 512 or 256.
+    int texture_cache_ceiling = 0; // Auto, 768, 1024, 1536 or 2048 MiB.
     int anisotropy = 4;   // (hookshot) Anisotropic filtering: 0 the game's own (1x or 2x), 1 2x, 2 4x, 3 8x, 4 16x (the
                           // device's limit at most; gpu/vk/vk_draw.cpp aniso_override, RX_VK_ANISO over it)
     int shadow_res = 0;   // (hookshot) Shadow resolution, the sun's cascades: 0 Auto (the size for the card's memory,

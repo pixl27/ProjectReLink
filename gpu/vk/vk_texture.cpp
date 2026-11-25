@@ -3960,7 +3960,9 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
         // 8192 x 8192 x 68 ASTC: 24 GB as RGBA8)
         const DetailDims dims = texture_detail_dims(opts.texture_detail, low_vram_texture_mips());
         static const char* dim_env = getenv("RX_VK_TEX_MAX_DIM");
-        const uint32_t max_dim = dim_env ? (uint32_t)atoi(dim_env) : dims.max_dim;
+        uint32_t max_dim = dim_env ? (uint32_t)atoi(dim_env) : dims.max_dim;
+        if (!dim_env && astc && d.target == NVN_TEXTURE_TARGET_2D_ARRAY && x.layers >= 8 && opts.material_array_limit > 0)
+            max_dim = std::min(max_dim, 2048u >> std::clamp(opts.material_array_limit, 1, 3));
         static const uint64_t max_bytes = (uint64_t)(getenv("RX_VK_TEX_MAX_MB") ? atoi(getenv("RX_VK_TEX_MAX_MB")) : 1536) << 20;
         const bool blocks = !astc && (is_bc(x.format) || is_astc(x.format));
         const uint32_t texel = astc ? 4 : blocks ? bpb : std::max(1, bpb / std::max(1, bw * bh));
@@ -7440,6 +7442,14 @@ void texture_frame(uint64_t completed) {
     }
     // (hookshot) the 90% rule and the driver's limit let go of their excess, not of an eighth of the cache, while that excess is
     // small (a large one is cut to 7/8 as before): vram_compact.h
+    if (opts.texture_cache_ceiling > 0 && !getenv("RX_VK_VRAM_MB")) {
+        constexpr uint64_t limits[] = {0, 768, 1024, 1536, 2048};
+        const uint64_t cap = limits[std::clamp(opts.texture_cache_ceiling, 1, 4)] << 20;
+        budget = std::min(budget, cap);
+        size_budget = std::min(size_budget, cap);
+        rule_budget = std::min(rule_budget, cap);
+        ahead_budget_bytes = std::min(ahead_budget_bytes, cap);
+    }
     if (policy_rule::windows_vega_compat(dev.facts)) ahead_budget_bytes = std::min(size_budget, budget);
     const uint64_t rule_to = vram_compact::rule_target(total_bytes, size_budget, rule_budget);
     // (hookshot, RX_VK_COMPACT: the driver's limit asks for more than the reserve does: a pass over the budget, to 7/8 of it, as
