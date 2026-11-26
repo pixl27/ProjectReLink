@@ -9,9 +9,7 @@
     <AssemblyName>HookshotBuilder</AssemblyName>
     <RootNamespace>HookshotBuilder</RootNamespace>
     <Version>4.4.0</Version>
-    <FileVersion>4.4.0.0</FileVersion>
-    <AssemblyVersion>4.4.0.0</AssemblyVersion>
-    <InformationalVersion>4.4.0</InformationalVersion>
+    <InformationalVersion>$(Version)</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Description>Red Tunic portable launcher and local game setup</Description>
     <Product>Red Tunic</Product>
