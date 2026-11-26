@@ -4,6 +4,8 @@
 
 Red Tunic is an unofficial native PC recompilation of the Nintendo Switch 2 remake of *The Legend of Zelda: Ocarina of Time*. It builds locally from your own copy of the game. Red Tunic is based on Hookshot and focuses on integrated AMD Radeon graphics, starting with the Ryzen 5 5625U with 16 GB of shared memory.
 
+[![Get it on RecompLauncher](https://recomplauncher.com/assets/press/launcher/badge-dark.svg)](https://recomplauncher.com/game/redtunic)
+
 [Project and source updates](https://github.com/spacefarergames/RedTunic) · [Releases](https://github.com/spacefarergames/RedTunic/releases) · [Technical documentation](docs/README.md) · [Brand artwork](assets/branding.md)
 
 ## <img src="assets/red-tunic-mesh.svg" alt="" width="28"> Radeon Vega mesh reuse
