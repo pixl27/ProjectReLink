@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.4.0](https://github.com/spacefarergames/RedTunic/releases/tag/v4.4.0) (2026-11-26)
+
+- Add current RecompLauncher named-input, settings, saves and direct-play support to the portable releases.
+- Embed the original Red Tunic icon and 4.4.0 Windows version metadata; package Linux as an AppImage and tarball.
+- Add cache-neutral XInput and integrated-GPU budget fixes. Shared fallback scratch stays opt-in after a combined-option regression in the measured scene; no large speedup is claimed.
+- Redesign the README and publish a matching GitHub Pages landing page with original graphics, a credited capture and official IGN video links. Steam Deck-specific measurements remain pending.
+- Validation and known pre-existing suite failures are documented in [the release notes](RELEASE_NOTES_4.4.0.md).
+
 ## [2.2.0-rc.1](https://git.notrexed.dev/Hookshot/Hookshot/compare/v2.1.0...v2.2.0-rc.1) (2026-11-12)
 
 
