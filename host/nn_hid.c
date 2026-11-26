@@ -769,7 +769,7 @@ void hos_filter_stick(int16_t x, int16_t y, int zone, int32_t out[2]) {
 }
 
 static volatile int xinput_pads_now;   /* (xinput_poll: the controllers XInput has, while it is polled) */
-int hos_xinput_pads(void) { return xinput_pads_now; }   /* (host/prompts.c: Auto's face) */
+int hos_xinput_pads(void) { return __atomic_load_n(&xinput_pads_now, __ATOMIC_RELAXED); }   /* (host/prompts.c: Auto's face) */
 
 /* (hookshot) XInput's controllers, read on a thread of their own (xinput_main), never on the game's: XInputGetState on
    a slot with no controller in it is slow (it looks for the device again, a millisecond or more, longer with Bluetooth
@@ -813,13 +813,13 @@ static void xinput_poll(int64_t now, uint64_t *out_raw, int32_t s[4]) {
             was_connected[p] = 0;
             int any = 0;
             for (int q = 0; q < XUSER_MAX_COUNT; q++) any |= was_connected[q];
-            xinput_pads_now = any;
+            __atomic_store_n(&xinput_pads_now, any, __ATOMIC_RELAXED);
             retry[p] = now + 1000000000LL;
             continue;
         }
         if (!was_connected[p]) hos_log("hid: controller %d connected", p);
         was_connected[p] = 1;
-        xinput_pads_now = 1;
+        __atomic_store_n(&xinput_pads_now, 1, __ATOMIC_RELAXED);
         const WORD w = xs.Gamepad.wButtons;
         for (unsigned i = 0; i < sizeof map / sizeof *map; i++)
             if (w & map[i].x) raw |= 1ULL << map[i].b;
@@ -864,7 +864,7 @@ static DWORD WINAPI xinput_main(void *arg) {
         const int wanted = now - __atomic_load_n(&xinput_wanted_ns, __ATOMIC_RELAXED) < XINPUT_WANTED_NS;
         if (wanted) xinput_poll(now, &raw, s);
         xinput_publish(raw, s);   /* (not wanted: nothing held, so a reading from before SDL took over never comes back) */
-        Sleep(wanted && xinput_pads_now ? 2 : 100);
+        Sleep(wanted && hos_xinput_pads() ? 2 : 100);
     }
     return 0;
 }
@@ -880,6 +880,7 @@ static void xinput_read(int64_t now, uint64_t *raw, int32_t s[4]) {
     if (!started && !InterlockedExchange(&started, 1)) {
         HANDLE h = CreateThread(NULL, 0, xinput_main, NULL, 0, NULL);
         if (h) CloseHandle(h);
+        else InterlockedExchange(&started, 0);
     }
     int32_t v[4];
     AcquireSRWLockShared(&xinput_lock);

@@ -205,7 +205,7 @@ def main():
         raise SystemExit("the records buffer cannot be read as indirect arguments")
     # (every fallback program a recording thread draws shares one pair of buffers: per-program pairs were ~2.2 GB of VRAM
     # on an RX 5500M and the cause of the fallback's lock-up without enough of it)
-    if "TLS_OBJECT(fallback_buffers, std::vector<FallbackBuffers>)" not in draw:
+    if "TLS_OBJECT(parallel_fallback_buffers, std::vector<FallbackBuffers>)" not in draw or "std::vector<FallbackBuffers> shared_fallback_buffers;" not in draw:
         raise SystemExit("the fallback still makes a record and payload pair for every program")
     if "fallback_buffers()[&p]" in draw:
         raise SystemExit("the fallback buffers are still keyed by the program")

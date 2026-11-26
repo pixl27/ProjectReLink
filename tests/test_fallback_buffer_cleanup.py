@@ -47,7 +47,9 @@ def main():
     tls_macro = source.index("#define TLS_OBJECT(", tls_start)
     tls_end = source.index("\n\n", tls_macro)
     actual = "\n\n".join((source[tls_start:tls_end], block(source, "struct FallbackBuffers {", True),
-        next(line for line in source.splitlines() if line.startswith("TLS_OBJECT(fallback_buffers,")),
+        next(line for line in source.splitlines() if line.startswith("TLS_OBJECT(parallel_fallback_buffers,")),
+        "std::atomic<bool> par_active{false}; std::vector<FallbackBuffers> shared_fallback_buffers;",
+        block(source, "std::vector<FallbackBuffers>& fallback_buffers() {"),
         block(source, "uint64_t fallback_buffer_address("), block(source, "bool fallback_buffers_of(")))
     flags = subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 0
     env = dict(os.environ)
@@ -56,7 +58,7 @@ def main():
         tmp = Path(folder)
         (tmp / "fallback_actual.inc").write_text(actual + "\n", encoding="utf-8")
         exe = tmp / ("fallback.exe" if os.name == "nt" else "fallback")
-        command = [cxx, "-std=c++20", "-O0", "-Wall", "-Wextra", "-Werror", "-I" + str(tmp),
+        command = [cxx, "-std=c++20", "-O0", "-Wall", "-Wextra", "-Werror", "-I" + str(tmp), "-I" + str(ROOT / "gpu/vk/compat"),
                    str(ROOT / "tests/fallback_buffer_cleanup_test.cpp"), "-o", str(exe)]
         result = subprocess.run(command, cwd=tmp, env=env, capture_output=True, text=True, timeout=60,
                                 creationflags=flags)

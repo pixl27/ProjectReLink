@@ -16,6 +16,8 @@
 // off and on: fallback_buffers_of refuses a records buffer past its limit, every program's fallback then.
 //   mesh_fallback_capacity_test <case>
 #include <cstdint>
+#include <atomic>
+#include "hookshot_env.h"
 #include <cstdio>
 #include <stdexcept>
 #include <string>

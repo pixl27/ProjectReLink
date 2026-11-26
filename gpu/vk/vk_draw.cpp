@@ -8716,7 +8716,17 @@ struct FallbackBuffers {
     bool warp_counters_cleared = false;   // (mma_layout.h mesh_fallback_shared_warp: its counters past the records, at zero once)
 };
 // (grown pairs stay: a command buffer recorded before the growth may still read them)
-TLS_OBJECT(fallback_buffers, std::vector<FallbackBuffers>)
+TLS_OBJECT(parallel_fallback_buffers, std::vector<FallbackBuffers>)
+// Serial command recording is ordered by replay_mu even when its producer changes
+// between the submitting and render threads. Reuse its scratch buffers across those
+// threads; parallel segment recorders still require their own independent buffers.
+std::vector<FallbackBuffers> shared_fallback_buffers;
+std::vector<FallbackBuffers>& fallback_buffers() {
+    static const bool shared = env_on("RX_VK_MFB_SHARED");
+    return shared && !par_active.load(std::memory_order_acquire)
+               ? shared_fallback_buffers : parallel_fallback_buffers();
+}
+
 thread_local VkBuffer fallback_draw_records = VK_NULL_HANDLE;   // (the last fallback_record's: its header is the draw's command)
 
 uint32_t fallback_task_groups(const Program& p) {

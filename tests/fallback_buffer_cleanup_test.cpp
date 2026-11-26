@@ -2,6 +2,8 @@
 // initialization/BDA functions are included verbatim from current vk_draw.cpp.
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include "hookshot_env.h"
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>

@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-25 | v4.2.4 API36, 508c5723c plus existing local changes and cache-safe host patch | Windows 11 Pro for Workstations 26300 | AMD Radeon 1002:15e7, Vulkan driver 26.5.2 | Ryzen 5 5625U, 16 GB RAM | 1920x1080, 67% render, handheld preset, framegen off; shared scratch/readback spans/depth-zero/gone-ring/binding-reuse on; hash memo on | HyruleField_Adult, lake/bridge adult save; right stick 0.5 for 240 frames, timing queue, ABBA order | Codex after2: 240 frames, 8.65 FPS, mean 115.63 ms, p99 545.57 ms, 88/240 frames over 100 ms; independent cache copy; no shader rebuild |

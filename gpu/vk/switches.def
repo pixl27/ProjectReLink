@@ -695,6 +695,7 @@ SW(RX_VK_MESH_SHARED_WARP, hw, bool, "on for Mesa's Intel driver (ANV), off else
 SW(RX_VK_MESH_SHARED_WARP_CHECK, diag, bool, "off", "With RX_VK_MESH_SHARED_WARP on, compares each workgroup-memory answer with the subgroup's and logs how many differed.")
 GONE(RX_VK_MET_WAIT_CAPTURE, "2026-11-16", "it does nothing: the met-wait capture is always on with the render thread off")
 SW(RX_VK_MESH_STRICT_FMUL, hw, bool, "on for AMD's proprietary driver whose driverInfo names the 'proprietary shader compiler' (RDNA 1 and 2 on Windows), off elsewhere", "1 emits mesh-fallback NoContraction f32 multiplies as fma(a, b, -0.0f) so AMD's proprietary compiler cannot reassociate them; 0 emits OpFMul.")
+SW(RX_VK_MFB_SHARED, attempt, bool, "off", "=1 shares mesh fallback scratch across serial recording threads; parallel recorders keep private buffers.")
 SW(RX_VK_MIP_STREAM, attempt, bool, "off", "1 shows a coarse but correctly mapped preview for eligible Vega ASTC materials while their exact top mip decodes on a bounded worker.")
 SW(RX_VK_MIRROR, hw, bool, "on for discrete GPUs, off for integrated ones", "0 turns off the VRAM mirrors of the game's buffer pools; 1 forces them on.")
 GONE(RX_VK_MIRROR_DEFER, "2026-11-16", "it does nothing: a pool's mirror is always made at its first binding")

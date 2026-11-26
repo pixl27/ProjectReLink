@@ -35,7 +35,9 @@ def cut(source):
     if tls_macro not in tls:
         tls += "\n" + tls_macro
     return "\n\n".join((tls, block(source, "struct FallbackBuffers {") + ";",
-                        next(line for line in source.splitlines() if line.startswith("TLS_OBJECT(fallback_buffers,")),
+                        next(line for line in source.splitlines() if line.startswith("TLS_OBJECT(parallel_fallback_buffers,")),
+                        "std::atomic<bool> par_active{false}; std::vector<FallbackBuffers> shared_fallback_buffers;",
+                        block(source, "std::vector<FallbackBuffers>& fallback_buffers() {"),
                         block(source, "uint64_t fallback_buffer_address("), block(source, "bool fallback_buffers_of("))) + "\n"
 
 
@@ -62,7 +64,7 @@ def main():
                 raise
             print("SKIP: %s" % str(e)[6:])
             return
-        made = subprocess.run([cxx, *f, "-I" + str(tmp), str(ROOT / "tests" / "mesh_fallback_capacity_test.cpp"),
+        made = subprocess.run([cxx, *f, "-I" + str(tmp), "-I" + str(ROOT / "gpu/vk/compat"), str(ROOT / "tests" / "mesh_fallback_capacity_test.cpp"),
                                "-o", str(exe)], capture_output=True, text=True, env=env, creationflags=creation)
         if made.returncode:
             print(made.stdout, made.stderr, end="")

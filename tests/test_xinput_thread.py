@@ -27,7 +27,8 @@ RUN_ALL_ARGS = ["--cc", "gcc"]
 ROOT = Path(__file__).resolve().parents[1]
 ENV_ON_H = str(ROOT / "gpu" / "vk" / "compat" / "hookshot_env.h")
 
-PRELUDE = r"""#include <pthread.h>
+PRELUDE = r"""#define _POSIX_C_SOURCE 200809L
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,13 +55,15 @@ typedef DWORD(WINAPI *XInputGetStateFn)(DWORD, XINPUT_STATE *);
 /* the game's thread, and what the fake XInput saw */
 static pthread_t game_thread;
 static volatile int asked_on_game, asked_elsewhere, empty_asked_elsewhere;
+static volatile int sdl_count, connected = 1;
+static int create_attempts;
 static DWORD WINAPI fake_xinput(DWORD user, XINPUT_STATE *s) {
     if (pthread_equal(pthread_self(), game_thread)) __atomic_add_fetch(&asked_on_game, 1, __ATOMIC_RELAXED);
     else {
         __atomic_add_fetch(&asked_elsewhere, 1, __ATOMIC_RELAXED);
         if (user) __atomic_add_fetch(&empty_asked_elsewhere, 1, __ATOMIC_RELAXED);
     }
-    if (user) return ERROR_DEVICE_NOT_CONNECTED;   /* (slots 1 to 3: empty) */
+    if (user || !__atomic_load_n(&connected, __ATOMIC_RELAXED)) return ERROR_DEVICE_NOT_CONNECTED;   /* (slots 1 to 3: empty) */
     memset(s, 0, sizeof *s);
     s->Gamepad.wButtons = XINPUT_GAMEPAD_A;
     return ERROR_SUCCESS;
@@ -83,6 +86,7 @@ struct start { LPTHREAD_START_ROUTINE fn; void *arg; };
 static void *thread_start(void *p) { struct start s = *(struct start *)p; free(p); s.fn(s.arg); return NULL; }
 static HANDLE CreateThread(void *attr, size_t stack, LPTHREAD_START_ROUTINE fn, void *arg, DWORD flags, DWORD *id) {
     (void)attr; (void)stack; (void)flags; (void)id;
+    if (++create_attempts == 1) return NULL; /* exercise failed worker creation and retry */
     struct start *s = malloc(sizeof *s);
     s->fn = fn, s->arg = arg;
     pthread_t t;
@@ -102,7 +106,7 @@ static int64_t hos_now_ns(void) {
 int rx_option(int id, int otherwise) { return id == 11 || id == 16 || id == 17 ? 0 : otherwise; }
 int hos_sdl_pads(uint64_t *buttons, int32_t stick[4]) {   /* (SDL has no pads) */
     (void)buttons; (void)stick;
-    return 0;
+    return __atomic_load_n(&sdl_count, __ATOMIC_RELAXED);
 }
 static void binds_load(void) {}
 static SRWLOCK pad_bind_lock = SRWLOCK_INIT;
@@ -114,6 +118,7 @@ static uint64_t oc_consumed_pads;
 MAIN = r"""
 int main(void) {
     for (int i = 0; i < HOS_SW_N; i++) pad_bind[i][0] = pad_default[i], pad_bind[i][1] = -1;
+    (void)pad_after_menu;
     game_thread = pthread_self();
     const int64_t start = hos_now_ns();
     int a_seen = 0;
@@ -126,10 +131,31 @@ int main(void) {
     }
     if (asked_on_game)
         fprintf(stderr, "the game's thread asked XInputGetState %d times (%d elsewhere)\n", asked_on_game, asked_elsewhere);
-    CHECK(asked_on_game == 0);
+    CHECK(__atomic_load_n(&asked_on_game, __ATOMIC_RELAXED) == 0);
+    CHECK(create_attempts >= 2);
     CHECK(asked_elsewhere > 0);
     CHECK(empty_asked_elsewhere >= 6);   /* (the three empty slots, asked again after a second, by the thread) */
     CHECK(a_seen);
+    __atomic_store_n(&sdl_count, 1, __ATOMIC_RELAXED);
+    int64_t until = hos_now_ns() + 180000000LL;
+    while (hos_now_ns() < until) { uint64_t b=0; int32_t v[4]={0}; pads_read(&b,v); Sleep(3); }
+    CHECK(__atomic_load_n(&pad_raw_now, __ATOMIC_RELAXED) == 0);
+    const int paused = __atomic_load_n(&asked_elsewhere, __ATOMIC_RELAXED);
+    until = hos_now_ns() + 150000000LL;
+    while (hos_now_ns() < until) { uint64_t b=0; int32_t v[4]={0}; pads_read(&b,v); Sleep(3); }
+    CHECK(__atomic_load_n(&asked_elsewhere, __ATOMIC_RELAXED) == paused);
+    __atomic_store_n(&sdl_count, 0, __ATOMIC_RELAXED);
+    a_seen=0; until = hos_now_ns() + 250000000LL;
+    while (hos_now_ns() < until) {
+        uint64_t b=0; int32_t v[4]={0}; pads_read(&b,v);
+        a_seen |= (__atomic_load_n(&pad_raw_now, __ATOMIC_RELAXED) >> HOS_PAD_SOUTH) & 1; Sleep(3);
+    }
+    CHECK(a_seen);
+    __atomic_store_n(&connected, 0, __ATOMIC_RELAXED);
+    until = hos_now_ns() + 250000000LL;
+    while (hos_now_ns() < until) { uint64_t b=0; int32_t v[4]={0}; pads_read(&b,v); Sleep(3); }
+    CHECK(__atomic_load_n(&pad_raw_now, __ATOMIC_RELAXED) == 0);
+    CHECK(hos_xinput_pads() == 0);
     puts("PASS: XInput is read on a thread of its own, never the game's, and its pad still reaches pads_read");
     return 0;
 }
@@ -156,11 +182,11 @@ def main():
         xinput,
         block(hid, "static void pads_read("),
         MAIN))
-    with tempfile.TemporaryDirectory(prefix="hookshot-xinput-thread-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="longshot-xinput-thread-") as tmp:
         src = Path(tmp) / "t.c"
         src.write_text(code, encoding="utf-8")
         exe = Path(tmp) / "t.exe"
-        subprocess.run([a.cc, "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", "-Wno-unused-variable",
+        subprocess.run([a.cc, "-std=c11", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", "-Wno-unused-function",
                         "-pthread", "-o", str(exe), str(src)], check=True)
         r = subprocess.run([str(exe)], capture_output=True, text=True)
         sys.stdout.write(r.stdout)

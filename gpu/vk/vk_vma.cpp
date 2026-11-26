@@ -800,6 +800,12 @@ bool system_heap_usage(uint64_t* used, uint64_t* budget) {
     uint64_t u = 0, t = 0;
     for (uint32_t h = 0; h < dev.memory.memoryHeapCount; h++)
         if (!(dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)) u += b[h].usage, t += b[h].budget;
+    // A unified-memory GPU can expose only DEVICE_LOCAL heaps: those also back
+    // host imports. Returning no budget disabled pressure-driven import retirement.
+    // Discrete GPUs keep the separate system-heap accounting above.
+    if (!t && dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
+        for (uint32_t h = 0; h < dev.memory.memoryHeapCount; h++)
+            if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) u += b[h].usage, t += b[h].budget;
     *used = u, *budget = t;
     return dev.memory_budget && t != 0;
 }
