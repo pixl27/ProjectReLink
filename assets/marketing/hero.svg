@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="460" viewBox="0 0 1280 460" role="img" aria-labelledby="title desc">
+<title id="title">Red Tunic — Radeon iGPU tuning and Steam Deck / Linux focus</title><desc id="desc">Original project artwork with a processor and handheld outline. Steam Deck-specific performance measurements are pending.</desc>
+<defs><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0v32" fill="none" stroke="#edb3b9" stroke-opacity=".08"/></pattern><linearGradient id="red" x2="1" y2="1"><stop stop-color="#ad2034"/><stop offset="1" stop-color="#551324"/></linearGradient></defs>
+<rect width="1280" height="460" rx="18" fill="url(#red)"/><rect width="1280" height="460" rx="18" fill="url(#grid)"/>
+<path d="M860 0C660 160 1110 190 830 460M1000 0C800 160 1250 190 970 460M1140 0C940 160 1390 190 1110 460" fill="none" stroke="#e699a3" stroke-opacity=".12" stroke-width="2"/>
+<text x="60" y="65" fill="#f0c6cb" font-family="monospace" font-size="13" letter-spacing="4">INDEPENDENT / NATIVE PC / VERSION 4.4.0</text>
+<text x="55" y="180" fill="#fff6e7" font-family="Georgia,serif" font-size="106" letter-spacing="-5">RED TUNIC</text>
+<text x="61" y="234" fill="#f3d5d5" font-family="Arial,sans-serif" font-size="24">A new way back to Hyrule.</text>
+<path d="M61 276h545" stroke="#d38491" stroke-opacity=".55"/>
+<text x="61" y="317" fill="#fff6e7" font-family="Arial,sans-serif" font-size="19">AMD Radeon iGPU tuning</text><text x="61" y="350" fill="#f0c6cb" font-family="Arial,sans-serif" font-size="19">Steam Deck / Linux handheld focus</text>
+<text x="61" y="412" fill="#e0a1ad" font-family="monospace" font-size="11" letter-spacing="2">BRING YOUR OWN GAME. BUILD IT LOCALLY.</text>
+<g transform="translate(748 131) rotate(-8 200 100)" fill="none" stroke="#f1c8c6" stroke-width="3"><rect x="0" y="0" width="420" height="180" rx="52"/><rect x="97" y="22" width="226" height="135" rx="5"/><circle cx="51" cy="48" r="16"/><circle cx="367" cy="130" r="16"/><path d="M39 124h24m-12-12v24"/><circle cx="366" cy="37" r="4"/><circle cx="353" cy="51" r="4"/><circle cx="379" cy="51" r="4"/><circle cx="366" cy="65" r="4"/><path d="m144 118 58-68 64 68m-96-38h63m-75 24h96m-52-54v68" stroke-opacity=".4"/></g>
+<rect x="1039" y="345" width="169" height="46" rx="23" fill="#f6ead4"/><text x="1123" y="373" fill="#8f1b2d" text-anchor="middle" font-family="monospace" font-size="12" letter-spacing="1">VULKAN + x64</text></svg>

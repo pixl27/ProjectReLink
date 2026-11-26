@@ -17,6 +17,7 @@ concurrency:
 jobs:
   build:
     if: >-
+      github.repository != 'spacefarergames/RedTunic' &&
       (github.repository == 'bibigurl-yum/Hookshot' || vars.DOCS_PROGRESS_ENABLED == 'true') &&
       github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04

@@ -1,14 +1,68 @@
-<p align="center"><img src="assets/red-tunic.png" alt="Red Tunic logo" width="200"></p>
+![Red Tunic: Radeon iGPU tuning and Steam Deck / Linux focus](assets/marketing/hero.svg)
 
 # Red Tunic 4.4.0
 
-Red Tunic is an unofficial native PC recompilation of the Nintendo Switch 2 remake of *The Legend of Zelda: Ocarina of Time*. It builds locally from your own copy of the game. Red Tunic is based on Hookshot and focuses on integrated AMD Radeon graphics, starting with the Ryzen 5 5625U with 16 GB of shared memory.
+An unofficial native PC recompilation of the **2026 Nintendo Switch 2 remake of The Legend of Zelda: Ocarina of Time**. Built locally from your own supported copy, with **AMD Radeon iGPU tuning** and **Linux / Steam Deck handheld play in focus**.
+
+**[Download 4.4.0](https://github.com/spacefarergames/RedTunic/releases/tag/v4.4.0)** · **[Project website](https://spacefarergames.github.io/RedTunic/)** · [How to play](#your-copy-your-pc-your-build) · [Release notes](RELEASE_NOTES_4.4.0.md) · [Technical docs](docs/README.md) · [Website source](site/)
 
 <a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
-RecompLauncher can build and start Red Tunic from your own supported `.nup` package or extracted `exefs` and `romfs` folder. Launcher-managed builds, saves and settings stay in its `recompdata` folder. [Launcher support and validation](docs/recomplauncher.md)
+![Hardware, with context](assets/marketing/hardware.svg)
 
-[Project and source updates](https://github.com/spacefarergames/RedTunic) · [Releases](https://github.com/spacefarergames/RedTunic/releases) · [Technical documentation](docs/README.md) · [Brand artwork](assets/branding.md)
+| AMD Radeon integrated graphics | Steam Deck & Linux handhelds |
+|---|---|
+| **Tuned and measured on Ryzen 5 5625U / Radeon Vega / 16 GB shared RAM.** The reference profile uses modest output and render sizes, pressure-aware texture budgets and conservative compute defaults. | **A development focus, with portable Linux builds and controller-friendly play.** Steam Deck-specific performance measurements are still pending; Radeon PC numbers are not Deck benchmarks. |
+| [Radeon tuning guide](docs/red-tunic-vega.md) · [Measured runs](docs/tested-configurations.md) | [Linux setup](docs/development.md) · [RecompLauncher support](docs/recomplauncher.md) |
+
+Red Tunic targets shared-memory GPUs and compact PCs. Performance depends on the scene, driver, resolution and memory pressure. Experimental mesh reuse and shared fallback scratch remain opt-in; no universal frame-rate or stutter-free claim is made.
+
+<a id="your-copy-your-pc-your-build"></a>
+
+![Your copy. Your PC. Your build.](assets/marketing/play.svg)
+
+1. **Bring your own game.** Use a supported, decrypted `.nup` or an extracted folder containing `exefs` and `romfs`: update **v131072**, build **`e0f3ccfa`**.
+2. **Choose your setup.** Extract the Windows ZIP and open **`RedTunic.exe`**, open the Linux AppImage, or let RecompLauncher run Easy Setup. The download contains build tools, not the game.
+3. **Build and play locally.** Choose output, upscaling and controller settings. For an existing standalone installation, keep its output directory when updating to retain saves, settings and compatible shader caches.
+
+RecompLauncher keeps its own build, saves and settings under `recompdata`. It does not move an existing standalone installation or its original shader cache.
+
+![Tuned with evidence](assets/marketing/features.svg)
+
+- **Native x64 + Vulkan.** The project builds a PC executable from your copy and replays its GPU work through Vulkan, including compute mesh fallback where native mesh shaders are unavailable.
+- **A budget for shared memory.** 4.3.0’s texture-memory controls remain available; 4.4.0 adds integrated-GPU heap-budget accounting to the existing pressure logic.
+- **Keep your shader work.** The 4.4.0 host changes preserve the translator and cache format. Local validation reused **47,798 cached programs** and reported **zero pipeline compilations**. Compatibility still depends on GPU, toolchain and configuration.
+- **RecompLauncher support.** Named game inputs, verified build-ID checks, setup progress, settings, saves and direct play ship in the portable releases.
+- **The Red Tunic identity, embedded.** The Windows program contains the original cloak icon at seven sizes and Red Tunic **4.4.0** file/product metadata.
+- **Experiments stay optional.** Four camera-turn runs found the combined experimental group **10.9% slower in mean frame time** on the reference APU. Those switches stay off by default. [Measurements and limitations](docs/cache-safe-performance.md)
+
+![See the world again](assets/marketing/gallery.svg)
+
+![Actual Red Tunic validation capture beside the lake and bridge, rendered on Radeon Vega](docs/images/red-tunic-440-gameplay.png)
+
+*Actual Red Tunic validation capture on Radeon Vega / Windows. Game imagery © Nintendo. This is not a Steam Deck performance claim.*
+
+| Official 2026 remake footage | A closer look |
+|---|---|
+| **[▶ IGN: Official Gameplay Overview](https://www.youtube.com/watch?v=lP8PEivKVbg)** | **[▶ IGN: Ocarina of Time Remake Preview](https://www.youtube.com/watch?v=aoqemZVeIzw)** |
+| Official gameplay footage via IGN, September 2026. | IGN’s preview, October 2026. |
+
+IGN videos show the Nintendo release, not Red Tunic benchmarks. No public-domain license is claimed for Nintendo or IGN imagery; the project’s header graphics are original vector artwork.
+
+![Put on the Red Tunic](assets/marketing/downloads.svg)
+
+| Your system | Get started |
+|---|---|
+| **Windows x64** | [Portable ZIP](https://github.com/spacefarergames/RedTunic/releases/download/v4.4.0/RedTunic-v4.4.0-Windows-x64.zip) — extract the whole folder and open `RedTunic.exe`. |
+| **Linux x86-64 / SteamOS** | [AppImage](https://github.com/spacefarergames/RedTunic/releases/download/v4.4.0/RedTunic-v4.4.0-x86_64.AppImage) or [portable tarball](https://github.com/spacefarergames/RedTunic/releases/download/v4.4.0/RedTunic-v4.4.0-Linux-x86_64.tar.gz); glibc 2.35+. |
+| **RecompLauncher** | Install the release, select your supported game and run Easy Setup. [Integration guide](docs/recomplauncher.md) |
+
+[Checksums & all release assets](https://github.com/spacefarergames/RedTunic/releases/tag/v4.4.0) · [Report an issue](https://github.com/spacefarergames/RedTunic/issues) · [Source and licenses](LICENSE)
+
+Red Tunic is independent and unofficial, based on Hookshot. Nintendo, AMD, Valve and IGN retain their respective trademarks and media rights. **No game files, keys, prebuilt game executables, saves or shader caches are distributed.**
+
+<details>
+<summary><strong>Deep dive: implementation, earlier releases and controls</strong></summary>
 
 ## <img src="assets/red-tunic-mesh.svg" alt="" width="28"> Radeon Vega mesh reuse
 
@@ -1113,3 +1167,5 @@ a64-kit tools) keep their own notices in their folders. The Travel page's list o
 
 Hookshot is an unofficial fan project, not affiliated with or endorsed by Nintendo. The Legend of Zelda and Ocarina of
 Time are trademarks of Nintendo.
+
+</details>
