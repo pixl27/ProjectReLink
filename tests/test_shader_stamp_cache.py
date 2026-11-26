@@ -52,6 +52,7 @@ class ShaderStampCacheTests(unittest.TestCase):
             "gpu/vk/vk_shader.cpp": "int shader;\n",
             "gpu/vk/vk_bank.cpp": "int bank;\n",
             "gpu/vk/vk_draw.cpp": "int draw;\n",
+            "gpu/vk/texdecode/astc.cpp": "int fast_astc;\n",
             "gpu/vk/vk_menu.cpp": "int menu;\n",
             "gpu/vk/vk_state.h": "struct State {};\n",
             "gpu/vk/vk_api.h": "struct Api {};\n",
@@ -161,13 +162,14 @@ class ShaderStampCacheTests(unittest.TestCase):
                                  {"gpu/vk/eden/translate.cpp", "gpu/vk/vk_shader.cpp"})
 
     def test_own_renderer_source_still_invalidates_its_object(self):
-        path = self.root / "gpu/vk/vk_draw.cpp"
-        for linux in (False, True):
-            with self.subTest(linux=linux):
-                path.write_bytes(b"int draw;\n")
-                before = self.jobs(linux)
-                path.write_bytes(b"int draw_changed;\n")
-                self.assertEqual(self.changed(before, self.jobs(linux)), {"gpu/vk/vk_draw.cpp"})
+        for name in ("gpu/vk/vk_draw.cpp", "gpu/vk/texdecode/astc.cpp"):
+            path = self.root / name
+            for linux in (False, True):
+                with self.subTest(linux=linux, source=name):
+                    path.write_bytes(b"int renderer;\n")
+                    before = self.jobs(linux)
+                    path.write_bytes(b"int renderer_changed;\n")
+                    self.assertEqual(self.changed(before, self.jobs(linux)), {name})
 
     def test_bank_source_changes_only_its_object_and_shader_consumer(self):
         path = self.root / "gpu/vk/vk_bank.cpp"
@@ -282,7 +284,7 @@ class ShaderStampCacheTests(unittest.TestCase):
     # (RX_VK_PGO: the back end's own files, not Eden's recompiler, sirit, Dear ImGui, the fonts, zstd or the
     # POSIX calls)
     def own(self, jobs):
-        return {n for n in jobs if n.startswith(("gpu/vk/vk_", "gpu/third_party/suyu/"))}
+        return {n for n in jobs if n.startswith(("gpu/vk/vk_", "gpu/vk/texdecode/", "gpu/third_party/suyu/"))}
 
     def test_no_profile_is_the_build_as_it_was(self):
         for linux in (False, True):

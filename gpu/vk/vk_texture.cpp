@@ -70,6 +70,7 @@
 #include "msync_diff.h"   // (the BC cache's content hash)
 #include "astc_bc_policy.h"
 #include "astc_reuse.h"
+#include "texdecode/texdecode.h"
 #include "drawn_writeback.h"
 #include "vram_compact.h"
 #include "commit_room.h"
@@ -2622,6 +2623,31 @@ struct AstcCpuCacheEntry {
 
 using AstcCpuDecoder = decltype(&Tegra::Texture::ASTC::DecompressSerial);
 
+bool astc_fast_cpu_on() {
+    static const bool on = [] {
+        const bool enabled = env_on("RX_VK_ASTC_FAST_CPU");
+        if (enabled) logf("vk: ported ASTC LDR CPU decoder on (RX_VK_ASTC_FAST_CPU=1; shader caches unchanged)");
+        return enabled;
+    }();
+    return on;
+}
+
+// The ported LDR decoder uses the ASTC reference's 8-bit truncation instead of
+// suyu's rounding. Keep one decoder for demand, read-ahead and streamed mips so
+// a retained level never depends on which path supplied it. No shader changes.
+// Keep the legacy linear profile even for sRGB views: retained CPU levels and
+// shared images do not distinguish the profiles. This is not an sRGB accuracy fix.
+void decode_astc_fast_cpu(std::span<const uint8_t> blocks, uint32_t w, uint32_t h, uint32_t d,
+                          uint32_t bw, uint32_t bh, std::span<uint8_t> out) {
+    if (texdecode::astc_decode(blocks, w, h, d, bw, bh, false, out, {0, 0, 0, 0}) < 0)
+        std::fill(out.begin(), out.end(), uint8_t{0});
+}
+
+AstcCpuDecoder astc_cpu_decoder(bool parallel = false) {
+    if (astc_fast_cpu_on()) return decode_astc_fast_cpu;
+    return parallel ? Tegra::Texture::ASTC::Decompress : Tegra::Texture::ASTC::DecompressSerial;
+}
+
 void decode_astc_vega_cached(AstcCpuDecoder decode, std::span<const uint8_t> blocks,
                             uint32_t w, uint32_t h, uint32_t d, uint32_t bw, uint32_t bh,
                             std::span<uint8_t> out) {
@@ -2922,7 +2948,7 @@ void astc_ahead_worker(AstcAheadQueue& q) {
                 j->blocks.resize(size_t(g.tw) * g.th * 16);
                 j->rgba.resize(size_t(g.w) * g.h * 4);
                 unswizzle_upload(j->blocks, j->swizzled, 16, g.tw, g.th, 1, g.tile_h, 0);
-                Tegra::Texture::ASTC::DecompressSerial(j->blocks, g.w, g.h, 1, j->bw, j->bh, j->rgba);
+                astc_cpu_decoder()(j->blocks, g.w, g.h, 1, j->bw, j->bh, j->rgba);
                 decoded = true;
             } catch (const std::exception&) {}   // demand upload is still available
         }
@@ -2971,7 +2997,7 @@ void decode_stream_mip(const LevelGeo& g, uint32_t bw, uint32_t bh, std::span<co
                        std::span<uint8_t> rgba, std::vector<uint8_t>& blocks) {
     blocks.resize((uint64_t)g.tw * g.th * 16);
     unswizzle_upload(std::span<uint8_t>(blocks), encoded, 16, g.tw, g.th, 1, g.tile_h, 0);
-    Tegra::Texture::ASTC::DecompressSerial(blocks, g.w, g.h, 1, bw, bh, rgba);
+    astc_cpu_decoder()(blocks, g.w, g.h, 1, bw, bh, rgba);
 }
 
 void mip_stream_worker(MipStreamQueue& queue) {
@@ -3402,9 +3428,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                     // Terrain arrays are uploaded one layer at a time. A 341-square
                     // layer can expand to 454 KiB and still be below the usual encoded threshold.
                     const bool large_array_layer = tex.layers > 1 && block_bytes >= 8 * 1024 && out_bytes >= 256 * 1024;
-                    const auto decode = vega && (block_bytes >= parallel_astc_min_bytes || large_array_layer)
-                                            ? Tegra::Texture::ASTC::Decompress
-                                            : Tegra::Texture::ASTC::DecompressSerial;
+                    const auto decode = astc_cpu_decoder(vega && (block_bytes >= parallel_astc_min_bytes || large_array_layer));
                     const std::span<const uint8_t> encoded(blocks, block_bytes);
                     const std::span<uint8_t> decoded(out, out_bytes);
                     if (vega) {

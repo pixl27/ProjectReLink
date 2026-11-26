@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-26 | RedTunic v4.4.0 source `bc199725b73f` with branch renderer DLL; installed game executable v4.1.0 source `2cd2475d` | Windows 11 build 26300, windowed | Radeon Vega iGPU PCI 1002:15e7, AMD Vulkan 26.5.2 | Ryzen 5 5625U, 16 GB shared RAM | 1280x720 output, 67% render scale, uncapped; `RX_VK_ASTC_FAST_CPU=1`, `RX_VK_WB_SPANS=0`, `RX_VK_PASS_TIMING=1`; copied save and isolated writable cache | Hyrule Field adult save, scripted 240-frame right-camera turn; run `fast2-rerun`, start frame 4948 | 117.04 ms mean frametime (8.54 fps), P99 423.4 ms, worst 476.6 ms, 112/240 frames over 100 ms; same `codex` tester, run `astc-fastcpu-codex-port-2`. |
