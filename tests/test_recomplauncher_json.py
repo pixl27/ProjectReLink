@@ -30,12 +30,18 @@ class RecompLauncherJsonTests(unittest.TestCase):
         manifest = json.loads((ROOT / "recomplauncher.json").read_text(encoding="utf-8"))
         prepare = manifest["prepare"]["args"]
         out = prepare[prepare.index("--out") + 1]
-        self.assertTrue(out.startswith("{install}/"))
+        self.assertEqual(out, "{data}/game")
         self.assertEqual(manifest["start"]["args"], ["--play", out])
         self.assertEqual(manifest["folders"]["game"][0]["path"], out)
         self.assertEqual(manifest["config"][0]["file"][0]["path"], out + "/hookshot_options.ini")
         self.assertIn(out + "/user", manifest["saves"])
         self.assertNotIn("{home}/Games", json.dumps(manifest))
+        self.assertNotIn("game", manifest)
+        self.assertEqual(manifest["repo"], "spacefarergames/RedTunic")
+        self.assertEqual(manifest["inputs"][0]["id"], "game")
+        self.assertIn("--game={input:game}", prepare)
+        self.assertEqual(prepare[prepare.index("--work") + 1], "{data}/cache/build")
+        self.assertIn(out + "/image.bin", manifest["prepare"]["done"])
 
     def test_appimage_carries_it(self):
         self.assertIn('cp recomplauncher.json "$APPDIR/recomplauncher.json"',
@@ -43,8 +49,14 @@ class RecompLauncherJsonTests(unittest.TestCase):
 
     def test_windows_zip_carries_it(self):
         workflow = (ROOT / ".github" / "workflows" / "windows-builder.yml").read_text(encoding="utf-8")
-        self.assertIn('z.write("recomplauncher.json", "recomplauncher.json")', workflow)
-        self.assertIn("dist/Hookshot-*-Windows-x64.zip", workflow)
+        self.assertIn('scripts/package_recomplauncher.py dist/hookshot-setup.txt', workflow)
+        self.assertIn("dist/RedTunic-*-Windows-x64.zip", workflow)
+
+    def test_linux_tarball_is_published_from_the_appdir(self):
+        package = (ROOT / "scripts/linux/appimage.sh").read_text(encoding="utf-8")
+        self.assertIn('tar -C "$APPDIR" -czf "$B/RedTunic-$VERSION-Linux-x86_64.tar.gz" .', package)
+        workflow = (ROOT / ".github/workflows/linux-appimage.yml").read_text(encoding="utf-8")
+        self.assertGreaterEqual(workflow.count('*-Linux-x86_64.tar.gz'), 3)
 
 
 if __name__ == "__main__":

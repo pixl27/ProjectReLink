@@ -102,8 +102,8 @@ publish() {   # tag -> its release published
 table() {
     local appimage="the \`.AppImage\`" zip="the \`-Windows-x64.zip\`"
     if [[ $1 =~ ^v[0-9] ]]; then
-        appimage="\`Hookshot-$1-x86_64.AppImage\`"
-        zip="\`Hookshot-$1-Windows-x64.zip\`"
+        appimage="\`RedTunic-$1-x86_64.AppImage\`"
+        zip="\`RedTunic-$1-Windows-x64.zip\`"
     fi
     cat <<EOF
 $MARK
@@ -111,10 +111,10 @@ $MARK
 
 | On | Download |
 |---|---|
-| Windows | \`HookshotBuilder.exe\`, the setup |
+| Windows | $zip, the portable Red Tunic app and tools |
 | Linux, Steam Deck | $appimage |
 
-You need your own copy of the game. \`hookshot-setup.txt\`, \`hookshot-linux.txt\` and the \`.zsync\` are for the updaters, and $zip (the setup and its \`recomplauncher.json\`) for RecompLauncher: on Windows, download \`HookshotBuilder.exe\` instead. To check a download: \`sha256sum -c --ignore-missing SHA256SUMS\`, or \`gh attestation verify <file> -R $GH_REPO\`.
+You need your own copy of the game. The portable archives carry \`recomplauncher.json\` for RecompLauncher; the Linux tarball and AppImage contain the same folder. \`hookshot-setup.txt\`, \`hookshot-linux.txt\` and the \`.zsync\` are for the updaters. To check a download: \`sha256sum -c --ignore-missing SHA256SUMS\`.
 EOF
 }
 

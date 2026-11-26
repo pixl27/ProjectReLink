@@ -8,11 +8,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>HookshotBuilder</AssemblyName>
     <RootNamespace>HookshotBuilder</RootNamespace>
-    <Version>4.3.0</Version>
-    <Product>Red Tunic Builder</Product>
+    <Version>4.4.0</Version>
+    <FileVersion>4.4.0.0</FileVersion>
+    <AssemblyVersion>4.4.0.0</AssemblyVersion>
+    <InformationalVersion>4.4.0</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Description>Red Tunic portable launcher and local game setup</Description>
+    <Product>Red Tunic</Product>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <AssemblyTitle>Red Tunic Builder</AssemblyTitle>
+    <AssemblyTitle>Red Tunic</AssemblyTitle>
     <ApplicationIcon>../../assets/red-tunic.ico</ApplicationIcon>
   </PropertyGroup>
 

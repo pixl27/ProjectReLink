@@ -254,3 +254,5 @@ rm -f "$OUT" "$OUT.zsync"
     --comp zstd -u "$UPDATE_INFO" "$APPDIR" "$(basename "$OUT")")
 [ -f "$OUT.zsync" ] || { echo "appimagetool made no $OUT.zsync"; exit 1; }
 echo "$OUT: $(du -h "$OUT" | cut -f1), update information: $UPDATE_INFO"
+# RecompLauncher runs the same portable folder from either release format, without FUSE.
+tar -C "$APPDIR" -czf "$B/RedTunic-$VERSION-Linux-x86_64.tar.gz" .

@@ -1,41 +1,36 @@
 {
   "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
   "format": 1,
-  "name": "Hookshot",
-  "repo": "Hookshot/Hookshot",
-  "game": {
-    "kind": "iso_or_folder",
-    "label": "Your copy of The Legend of Zelda: Ocarina of Time for Nintendo Switch 2, version 131072 (build e0f3ccfa): the .nup file, or the folder that holds its romfs and exefs.",
-    "check": {
-      "nup_build_id": "e0f3ccfa"
-    }
-  },
+  "name": "Red Tunic",
+  "repo": "spacefarergames/RedTunic",
   "start": {
     "program": [
-      "Hookshot.AppImage",
-      "HookshotBuilder.exe"
+      "RedTunic-Linux-x86_64.AppImage",
+      "RedTunic.exe"
     ],
     "args": [
       "--play",
-      "{install}/Hookshot"
-    ]
+      "{data}/game"
+    ],
+    "env": {
+      "HOS_OPTIONS_FILE": "{data}/game/hookshot_options.ini"
+    }
   },
   "prepare": {
     "program": [
-      "Hookshot.AppImage",
-      "HookshotBuilder.exe"
+      "RedTunic-Linux-x86_64.AppImage",
+      "RedTunic.exe"
     ],
     "args": [
       "--cli",
       "--prepare",
-      "--game",
-      "{game}",
+      "--game={input:game}",
       "--out",
-      "{install}/Hookshot"
+      "{data}/game",
+      "--work",
+      "{data}/cache/build"
     ],
-    "version": "2",
     "label": "Building the game from your copy (10 to 45 minutes)",
-    "timeout": 7200,
     "options": [
       {
         "id": "dlss",
@@ -71,6 +66,10 @@
           "url": "https://github.com/intel/xess/blob/de0fb9c1c510661c571164e1418ceca8101dab69/LICENSE.txt"
         }
       }
+    ],
+    "done": [
+      "{data}/game/image.bin",
+      "{data}/game/hookshot_version.txt"
     ]
   },
   "config": [
@@ -79,28 +78,28 @@
       "format": "ini",
       "file": [
         {
-          "path": "{install}/Hookshot/hookshot_options.ini"
+          "path": "{data}/game/hookshot_options.ini"
         }
       ]
     }
   ],
   "saves": [
-    "{local}/hookshot",
-    "{install}/Hookshot/user"
+    "{data}/game/user"
   ],
   "folders": {
     "saves": [
       {
-        "path": "{install}/Hookshot/user",
-        "if": "{install}/Hookshot/user"
-      },
-      {
-        "path": "{local}/hookshot"
+        "path": "{data}/game/user"
       }
     ],
     "game": [
       {
-        "path": "{install}/Hookshot"
+        "path": "{data}/game"
+      }
+    ],
+    "logs": [
+      {
+        "path": "{data}/game"
       }
     ]
   },
@@ -287,9 +286,15 @@
       "help": "The size of the game's whole frame before it is scaled to your window. Applies after a restart.",
       "choices": [
         {
-          "label": "2048x1152",
+          "label": "1280x720",
           "set": {
-            "output_res": "2048x1152"
+            "output_res": "1280x720"
+          }
+        },
+        {
+          "label": "1920x1080",
+          "set": {
+            "output_res": "1920x1080"
           }
         },
         {
@@ -551,5 +556,43 @@
       "help": "The built game, with its log and mods folder.",
       "open": "game"
     }
-  ]
+  ],
+  "inputs": [
+    {
+      "id": "game",
+      "role": "game",
+      "label": "Your copy of The Legend of Zelda: Ocarina of Time for Nintendo Switch 2, version 131072 (build e0f3ccfa): the .nup file, or the folder that holds its romfs and exefs.",
+      "formats": [
+        {
+          "type": "file",
+          "extensions": [
+            "nup"
+          ]
+        },
+        {
+          "type": "folder"
+        }
+      ],
+      "check": {
+        "nup_build_id": "e0f3ccfa"
+      }
+    }
+  ],
+  "system": {
+    "windows": {
+      "version": "10",
+      "graphics": {
+        "vulkan": "1.3"
+      }
+    },
+    "linux": {
+      "glibc": "2.35",
+      "graphics": {
+        "vulkan": "1.3"
+      }
+    }
+  },
+  "looks": {
+    "graphics": "vulkan"
+  }
 }
