@@ -16,7 +16,7 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="portable-archive-") as folder:
         root = Path(folder)
-        for name in ("BuilderHome.cs", "PortableArchive.cs"):
+        for name in ("BuilderHome.cs", "PortableArchive.cs", "Launcher.cs"):
             shutil.copyfile(ROOT / "builder/HookshotBuilder" / name, root / name)
         (root / "NuGet.Config").write_text("<configuration><packageSources><clear/></packageSources></configuration>")
         (root / "Fixture.csproj").write_text('''<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>
