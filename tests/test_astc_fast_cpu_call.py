@@ -72,7 +72,7 @@ int main(int argc,char** argv) {
             else:
                 env['RX_VK_ASTC_FAST_CPU'] = enabled
             subprocess.run([str(exe), mode],env=env,check=True)
-    print('CPU ASTC renderer call: legacy serial/parallel fallback, reference decoder, transparent error and safe refusal passed')
+    print('CPU ASTC renderer call: default-on decoder, explicit legacy fallback, safe refusal and reference output passed')
 
 
 if __name__=='__main__':

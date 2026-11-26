@@ -2625,8 +2625,8 @@ using AstcCpuDecoder = decltype(&Tegra::Texture::ASTC::DecompressSerial);
 
 bool astc_fast_cpu_on() {
     static const bool on = [] {
-        const bool enabled = env_on("RX_VK_ASTC_FAST_CPU");
-        if (enabled) logf("vk: ported ASTC LDR CPU decoder on (RX_VK_ASTC_FAST_CPU=1; shader caches unchanged)");
+        const bool enabled = env_on_or("RX_VK_ASTC_FAST_CPU", true);
+        if (enabled) logf("vk: ported ASTC LDR CPU decoder on (default; RX_VK_ASTC_FAST_CPU=0 restores the legacy decoder; shader caches unchanged)");
         return enabled;
     }();
     return on;
