@@ -10,6 +10,11 @@ public partial class App : Application
     // Why it stopped is one "error <text>" line on stdout (the stream a launcher reads) and again on stderr
     protected override void OnStartup(StartupEventArgs e)
     {
+        if (e.Args.Length > 0 && e.Args[0] == "--play")
+        {
+            Environment.Exit(Launcher.Play(e.Args.Skip(1).ToArray()));
+            return;
+        }
         try { _ = BuilderHome.Base; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         {

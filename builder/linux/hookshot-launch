@@ -62,7 +62,11 @@ done
 cd "$folder"
 # (--play already chose Play: a game built when it asked about updates itself does not ask again)
 export HOOKSHOT_NO_UPDATE_CHECK=1
-if [ -x ./bin/hookshot ]; then
-    exec ./bin/hookshot
+set --
+if [ -n "${RECOMPLAUNCHER_DATA:-}" ]; then
+    set -- --user "$PWD/user"
 fi
-exec ./hookshot
+if [ -x ./bin/hookshot ]; then
+    exec ./bin/hookshot "$@"
+fi
+exec ./hookshot "$@"

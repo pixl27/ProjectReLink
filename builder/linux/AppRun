@@ -10,6 +10,11 @@
 #   Hookshot.AppImage --launch <dir>  the game folder's launcher: Play, and Update when a newer release is out
 #   Hookshot.AppImage --update <dir>  download the new release (only the parts that changed) and build that folder again
 HERE="$(dirname "$(readlink -f "$0")")"
+if [ -n "${RECOMPLAUNCHER_DATA:-}" ]; then
+    export XDG_DATA_HOME="$RECOMPLAUNCHER_DATA/data"
+    export XDG_CONFIG_HOME="$RECOMPLAUNCHER_DATA/config"
+    export XDG_CACHE_HOME="$RECOMPLAUNCHER_DATA/cache"
+fi
 LIB="$HERE/usr/lib/hookshot"
 export HOOKSHOT_TOOLS="$HERE/usr/share/hookshot"
 export EMSDK="$LIB/emsdk"

@@ -11,13 +11,14 @@ import tempfile
 import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
-RUN_ALL_ARGS = ["--dotnet", "{dotnet}"]
+RUN_ALL_ARGS = ["--dotnet", "{dotnet}", "--cc", "gcc"]
 RUN_ALL_SKIP = {"linux": "Windows Builder startup (a win-x64 self-contained program)"}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dotnet", default="dotnet")
+    parser.add_argument("--cc", default="gcc")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="portable-builder-cli-") as folder:
         root = Path(folder)
@@ -92,6 +93,49 @@ def main():
         run({}, False)
         marker.unlink()
         run({"HOOKSHOT_SETUP_BASE": str(home), "HOOKSHOT_BUILDER_PORTABLE": "1"}, False)
+        # RecompLauncher runs this very apphost under its public name, not an AppData copy.
+        public = app / "RedTunic.exe"
+        shutil.copy2(app / "HookshotBuilder.exe", public)
+        data = root / "launcher data"
+        launched = dict(env, RECOMPLAUNCHER_DATA=str(data), HOOKSHOT_SETUP_BASE="relative",
+                        HOOKSHOT_BUILDER_PORTABLE="1")
+        result = subprocess.run([str(public), "--cli", "--authored-probe"], env=launched,
+                                cwd=root, capture_output=True, text=True, encoding="utf8", timeout=30,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+        assert result.returncode == 0, result.stdout + result.stderr
+        child = json.loads(next(x for x in result.stdout.splitlines() if x.startswith("{")))
+        assert Path(child['home']) == data / 'cache/builder' and child['portable'] is None, child
+        folder = data / 'game with spaces'
+        (folder / 'bin').mkdir(parents=True)
+        authored = root / 'child.c'
+        authored.write_text(r'''
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+static void line(FILE *f, const wchar_t *s) {
+    char utf8[32768];
+    WideCharToMultiByte(CP_UTF8, 0, s, -1, utf8, sizeof utf8, NULL, NULL);
+    fprintf(f, "%s\n", utf8);
+}
+int wmain(int argc, wchar_t **argv) {
+    FILE *f = _wfopen(_wgetenv(L"AUTHORED_LOG"), L"wb");
+    if (!f) return 99;
+    wchar_t cwd[32768]; GetCurrentDirectoryW(32768, cwd); line(f, cwd);
+    for (int i=1; i<argc; i++) line(f, argv[i]);
+    line(f, _wgetenv(L"HOOKSHOT_NO_UPDATE_CHECK"));
+    fclose(f); Sleep(200); return 7;
+}
+''', encoding='utf8')
+        subprocess.run([args.cc, '-municode', str(authored), '-o', str(folder / 'bin/hookshot.exe')], check=True)
+        log = root / 'authored-child.txt'
+        launched['AUTHORED_LOG'] = str(log)
+        result = subprocess.run([str(public), '--play', str(folder)], env=launched,
+                                cwd=root, capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+        assert result.returncode == 7, result.stderr
+        assert log.read_text(encoding='utf8').splitlines() == [str(folder), '--user', str(folder / 'user'), '1']
+        missing = subprocess.run([str(public), '--play', str(data / 'missing')], env=launched,
+                                 cwd=root, capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+        assert missing.returncode == 1 and b'Run Set Up again' in missing.stderr
         print("Published Builder startup: %d CLI/child/relocation/error scenarios passed; DOS alias exercised: %s" %
               (scenarios, alias_available))
 

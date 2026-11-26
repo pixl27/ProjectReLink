@@ -14,9 +14,9 @@ static class BuilderHome
     internal readonly record struct Home(string Root, bool Portable);
 
     static readonly Lazy<Home> Current = new(() => Resolve(
-        Environment.GetEnvironmentVariable(RootVariable), AppContext.BaseDirectory,
+        Launcher.BuilderHome() ?? Environment.GetEnvironmentVariable(RootVariable), AppContext.BaseDirectory,
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HookshotBuilder"),
-        Environment.GetEnvironmentVariable(PortableVariable) == "1"));
+        Launcher.BuilderHome() == null && Environment.GetEnvironmentVariable(PortableVariable) == "1"));
 
     public static string Base => Current.Value.Root;
     public static bool Portable => Current.Value.Portable;

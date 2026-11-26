@@ -34,6 +34,16 @@ def game(folder):
 
 
 class LaunchTests(unittest.TestCase):
+    def test_launcher_session_keeps_saves_in_its_game_folder(self):
+        with tempfile.TemporaryDirectory(prefix="recomplauncher-play-") as tmp:
+            folder = Path(tmp) / "game with spaces"
+            game(folder)
+            (folder / "hookshot").write_text('#!/bin/sh\nprintf "arg=%s\\n" "$@"\nexit 7\n', encoding="utf-8")
+            ran = subprocess.run([str(LAUNCH), str(folder)], env=self.env(RECOMPLAUNCHER_DATA=tmp),
+                                 text=True, capture_output=True)
+            self.assertEqual(ran.returncode, 7)
+            self.assertEqual(ran.stdout.splitlines(), ['arg=--user', 'arg=' + str(folder / 'user')])
+
     def env(self, **extra):
         e = os.environ.copy()
         e.pop("DISPLAY", None)
