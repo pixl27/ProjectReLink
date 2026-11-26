@@ -47,6 +47,23 @@ The port and its synthetic vectors come from Longshot's `gpu/vk/texdecode` adapt
 - Khronos' [Vulkan profiling guide](https://github.com/KhronosGroup/Vulkan-Guide/blob/main/chapters/profiling.adoc) separates command recording, descriptor updates, submission and GPU execution. RedTunic's last complete 600-present pass-timing window measured 43.8 ms/frame of command-buffer GPU work; mesh fallback spans were 7.74 ms (17.7%), general dispatch 9.60 ms (21.9%), and render passes 22.90 ms (52.3%). This makes mesh fallback meaningful, but not the only or largest GPU target. The Windows log also shows large CPU draw/descriptor time. AMD's [Radeon GPU Profiler](https://gpuopen.com/manuals/rgp_manual/) targets RDNA hardware; this Vega iGPU is GCN, so support is not established. RedTunic's built-in `RX_VK_PASS_TIMING=1` and full `HOS_PROFILE=1` report are the available next measurements here; no blind shader or barrier change is justified by the totals.
 - The local driver lists `VK_EXT_descriptor_heap` and `VK_EXT_host_image_copy` as unavailable; Vulkan-Samples' [descriptor-heap example](https://github.com/KhronosGroup/Vulkan-Samples/blob/main/samples/extensions/descriptor_heap/README.adoc) therefore does not provide a runnable path on this PC.
 
+## Follow-up A/B and memory diagnostics
+
+Four more 240-frame camera turns compared the existing push-descriptor path (RX_VK_DESCRIPTOR_SETS=0) with pooled descriptor sets (=1) using the rebuilt renderer and the same isolated cache/save setup. The executable was still v4.1.0, and the cache warmed between runs; these are exploratory renderer-only numbers, not a clean counterbalanced A/B:
+
+| Path / run | Mean | P99 | Worst | Frames >100 ms |
+|---|---:|---:|---:|---:|
+| Push, descriptor-push-1 | 179.46 ms | 621.30 ms | 849.41 ms | 199/240 |
+| Sets, descriptor-sets-1 | 363.19 ms | 3084.34 ms | 3213.32 ms | 218/240 |
+| Sets, descriptor-sets-2 | 159.59 ms | 661.85 ms | 915.07 ms | 140/240 |
+| Push, descriptor-push-2 | 116.34 ms | 404.38 ms | 453.13 ms | 104/240 |
+
+The first sets run built 1,102 pipelines, so its large regression includes first-use work. Later per-frame snapshots were similar once warm (about 55 ms sets versus 52 ms push), while the full-turn means still varied substantially. Do not claim a descriptor-set win or change the default from these results. The next useful descriptor experiment is a descriptor-buffer prototype with matched warm-cache state and repeated interleaved runs; it remains unimplemented.
+
+The same logs narrow the active frame bottleneck: a push-path snapshot recorded 77.94 ms submit, 62.33 ms draw, 39.22 ms descriptors, 30.41 ms texture lookup, 29.05 ms uploads, 0.73 ms pipeline work and 1.06 ms queue submission. Another early snapshot was substantially higher, so the distribution matters. The 600-present GPU pass window from the prior run had about 43.8 ms of GPU work, but later windows here varied; the recurring slow-submit lines show texture lookup/upload and draw/descriptor preparation as CPU-side leads. This supports profiling texture-slot misses and upload work before changing queue submission or mesh fallback.
+
+Startup also loaded a 1,418,593,988-byte pipeline cache from the private test runtime and merged two play files totaling 334,618 KB into a 307,643 KB play file. This makes cache loading/merging a startup and memory lead, not proof that the cache caused camera hitches. In a separate incomplete diagnostic, RX_VK_PCACHE_LOAD=0 skipped reading and saving the app cache; the game still loaded 2,867 program records at create (62.2 s aggregate load time, 445 ms P99, 790.5 ms worst) and free system RAM fell to 0.83 GB. The camera sweep was stopped before measurement. In another run, free RAM fell to 0.33 GB during scene warm-up and recovered after the game exited. These were isolated snapshots, not a controlled cache-memory comparison, so neither the switch nor the default cache policy was changed.
+
 ## Validation record
 
 - Reference vectors: 4,694 synthetic blocks in linear and sRGB modes, 9,388 comparisons, zero mismatches; 28 whole-level tests.
