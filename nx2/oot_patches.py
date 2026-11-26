@@ -268,10 +268,40 @@ class ExefsModConflict(SystemExit):
 FUNCS = {"dynamic resolution branch": "f_80825aa0", "text speed block": "f_80b1e140", "fixed path's scale": "f_831f3200",
          "menu screens' update": "f_802f1380", "player heart protection": "f_804bd8c0", "player flight": "f_82c415e0",
          "player flight rotation": "f_806d2530", "free camera": "f_804e48c0", "zstd sequence loop": "f_801102e0",
-         "name searches": "f_805aeea0", "neighbouring area's hold": "f_832b9880"}
+         "name searches": "f_805aeea0", "neighbouring area's hold": "f_832b9880",
+         "scene format": "f_80672260"}
 # (the two ReLink runs natively, host/zstd_native.c and host/names_native.c: in a function a patch changes they are left out
 # even where their text is found, or the host's code would run in place of the patched one)
 NATIVE = {"zstd sequence loop": "host/zstd_native.c", "name searches": "host/names_native.c"}
+
+
+# (relink, after HeyListen ddb156df) The scene buffer's format (hos_scene_rgba16f): f_80672260 picks the format of the scene buffer
+# the game maps colour into, main+0x652340. RGBA16F (0x2c, 44) has 10 bits of mantissa; R11G11B10F (0x1a, 26) 6, so the native HDR
+# banded. With the switch on (HDR tone mapper PsychoV35) both are RGBA16F: the scene RenodX tone maps into keeps its highlights.
+SCENE_FORMAT_HEAD = "void f_80672260(Ctx *__restrict A64_NOESC c) {\n"
+SCENE_FORMAT_OLD = "    c->x[10] = 0x2cULL;\n    c->x[10] &= 0xFFFFFFFFULL;\n"
+SCENE_FORMAT_PICK = "    c->x[9] = 0x1aULL;\n    c->x[9] &= 0xFFFFFFFFULL;\n    { uint64_t _r = (!c->z) ? c->x[10] : c->x[9];"
+SCENE_FORMAT_NEW = ("    c->x[9] = hos_scene_rgba16f ? 0x2cULL : 0x1aULL;\n    c->x[9] &= 0xFFFFFFFFULL;\n"
+                    "    { uint64_t _r = (!c->z) ? c->x[10] : c->x[9];")
+SCENE_FORMAT_DECL = "extern volatile int hos_scene_rgba16f;\n"
+
+
+def patch_scene_format(s):
+    """The scene buffer's format by hos_scene_rgba16f in f_80672260; None when the file has no such function, s unchanged when
+    the function is there but its code differs (another game version)."""
+    head = s.find(SCENE_FORMAT_HEAD)
+    if head < 0:
+        return None
+    end = s.find("\nvoid f_", head + len(SCENE_FORMAT_HEAD))
+    end = end if end >= 0 else len(s)
+    body = s[head:end]
+    if SCENE_FORMAT_NEW in body:   # (applied already: a second run)
+        return s
+    if body.count(SCENE_FORMAT_OLD) != 1 or body.count(SCENE_FORMAT_PICK) != 1 or \
+            body.index(SCENE_FORMAT_OLD) > body.index(SCENE_FORMAT_PICK):
+        return s
+    s = s[:head] + body.replace(SCENE_FORMAT_PICK, SCENE_FORMAT_NEW, 1) + s[end:]
+    return s.replace('#include "a64.h"\n', '#include "a64.h"\n' + SCENE_FORMAT_DECL, 1)
 
 
 def mod_note(notes, modded, func, text):
@@ -305,6 +335,7 @@ def apply(gen, *, protect_hearts=False, required=False, modded=None, notes=None)
         done["zstd sequence loop"] = 0
         done["name searches"] = 0
         done["neighbouring area's hold"] = 0
+        done["scene format"] = 0
     for path in sorted(glob.glob(os.path.join(gen, "code_*.c"))):
         with open(path, encoding="utf-8", newline="") as f:
             s = f.read()
@@ -363,6 +394,12 @@ def apply(gen, *, protect_hearts=False, required=False, modded=None, notes=None)
             out = ocb
             done["neighbouring area's hold"] += 1
             print("oot_patches: the neighbouring area's hold in", os.path.basename(path))
+        scene = patch_scene_format(out) if protect_hearts else None   # (relink: found by name alone: the supported build's lift only)
+        if scene is not None and SCENE_FORMAT_NEW in scene:
+            done["scene format"] += 1
+            if scene != out:
+                print("oot_patches: the scene buffer's format for native HDR in", os.path.basename(path))
+            out = scene
         if out != s:
             with open(path, "w", encoding="utf-8", newline="") as f:
                 f.write(out)

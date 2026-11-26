@@ -38,6 +38,9 @@ void handle_memo_next();   // (relink) a new draw or dispatch on this thread: th
 struct Program {
     uint64_t key = 0;
     bool compute = false, failed = false;
+    // (relink, after HeyListen ddb156df / 79a34381) a graphics program whose fragment stage is a scene mapping program or the
+    // HDR10 output encoder: PsychoV35 replaces its tone map while the Tone mapper row is on (translate_into)
+    bool scene_tonemap = false;
     std::atomic<bool> ready{false};   // translated (graphics programs are translated on a worker: vk_jobs.h)
     std::vector<Stage> stages;
     std::array<uint32_t, 3> workgroup{1, 1, 1};

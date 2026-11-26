@@ -5257,6 +5257,7 @@ void fill_replay_table(MkwVkRenderer& t) {
         if (id == HOS_OPT_HDR) return hdr_output() ? 1 : 0;   // (relink: host/nn_vi.c QueryDisplayHdrStatus)
         if (id == HOS_OPT_HDR_PEAK) return hdr_peak_nits();
         if (id == HOS_OPT_HDR_PAPER_WHITE) return hdr_paper_white_nits();
+        if (id == HOS_OPT_HDR_TONEMAP) return scene_tonemap_on() ? 1 : 0;   // (relink: host/nn_vi.c hos_scene_rgba16f)
         if (id == HOS_OPT_KEY_FULLSCREEN) return hotkey_vk(opts.key_full);   // (relink: host/display.c)
         if (id == HOS_OPT_VOLUME) return opts.volume;   // (relink: host/nn_audio.c)
         if (id == HOS_OPT_PRESENTS_SHOWN) return presents_shown.load(std::memory_order_acquire) & 0x3fffffff;   // (relink: host/nn_vi.c)

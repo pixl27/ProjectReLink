@@ -43,6 +43,8 @@
 #include "vk_jobs.h"
 #include "vk_mesh_split.h"
 #include "vk_shader.h"
+#include "vk_menu.h"                            // (relink: psychov35_bank, the renderer's PsychoV35 grading bank)
+#include "shader_recompiler/ir_opt/psychov35.h" // (PsychoV35's grading bank: uniform_range)
 #include "vk_texture.h"
 #include "movie_upscale_policy.h"
 #include "skip_code.h"
@@ -2935,6 +2937,16 @@ VkDescriptorBufferInfo uniform_range(const NvnState& s, const Stage& st, uint32_
         c.prog = (const Program*)1, c.at = at, c.buf = cur->stream, c.size = n, c.bytes = tmp;
         return {cur->stream, at, n};
     }
+    if (index == Shader::Optimization::PsychoV35::kSettingsBank) {   // (relink, after HeyListen ddb156df) the renderer's own:
+        // PsychoV35's grading, as the menu has it (vk_menu.cpp psychov35_bank; ir_opt/psychov35.h)
+        constexpr uint64_t n = (Shader::Optimization::PsychoV35::kSettingCount * sizeof(float) + 15) & ~uint64_t{15};
+        const uint64_t at = stream_alloc(n, align);
+        if (at == UINT64_MAX) return bi;
+        float bank[n / sizeof(float)] = {};
+        psychov35_bank(bank);
+        std::memcpy(cur->mapped + at, bank, n);
+        return {cur->stream, at, n};
+    }
     if (index == 1) {
         FINE_SCOPE(FT_C1);
         FINE_N(FC_C1_CALLS, 1);
@@ -5490,7 +5502,10 @@ void end_pass(VkCommandBuffer cmd) {
         ps.stand_in = 0;
     }
     // (relink, 0.7.9.3: the upscalers' see-through mask from what the pass's blended draws changed: vk_dlss.cpp)
-    if (ps.n && ps.tex[0] && ps.depth_tex && ps.format0 == VK_FORMAT_B10G11R11_UFLOAT_PACK32)
+    // (relink, Part B: the scene is RGBA16F while PsychoV35 is on, B10G11R11 otherwise)
+    if (ps.n && ps.tex[0] && ps.depth_tex &&
+        (ps.format0 == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+         (scene_tonemap_on() && ps.format0 == VK_FORMAT_R16G16B16A16_SFLOAT)))
         dlss_scene_pass_end(cmd, ps.tex[0], ps.color[0], ps.width, ps.height);
     if (dump_on() && !dump_mesh_indirect().empty()) {
         for (const auto& [key, addr] : dump_mesh_indirect()) {
@@ -6963,8 +6978,10 @@ static void dlss_trace_draw(const NvnState& s, const Program& p, const DrawArgs&
 /// them. RX_VK_DLSS_ONE_JOINT=0: left out, as before
 static void dlss_rigid_check(const NvnState& s, const Program& p, const DrawArgs& d, const Targets& at);
 static void dlss_skin_check(const NvnState& s, const Program& p, const DrawArgs& d, const Targets& at) {
+    const bool scene_fmt = at.color_format[0] == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+                           (scene_tonemap_on() && at.color_format[0] == VK_FORMAT_R16G16B16A16_SFLOAT);
     if (d.mesh || !d.indexed || d.indirect || d.instances != 1 || !at.n || !at.color[0] || !at.depth || at.width < 640 ||
-        at.color_format[0] != VK_FORMAT_B10G11R11_UFLOAT_PACK32 || !dlss_wanted())
+        !scene_fmt || !dlss_wanted())
         return;
     if (s.nvattr < 7) return dlss_rigid_check(s, p, d, at);
     const auto attr = [&](int i) { return *reinterpret_cast<const nvn_va_st*>(&s.vattr[i]); };
@@ -7255,7 +7272,10 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     }
     const Targets at = bare_targets(s, targets(s));
     if (!at.width || !at.height) SKIP_HERE();
-    lod_scene_draw = at.n && at.color[0] && at.depth && at.width >= 640 && at.color_format[0] == VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    // (relink, Part B) the scene's linear colour buffer: RGBA16F while the PsychoV35 tone mapper is on (hos_scene_rgba16f)
+    lod_scene_draw = at.n && at.color[0] && at.depth && at.width >= 640 &&
+                     (at.color_format[0] == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+                      (scene_tonemap_on() && at.color_format[0] == VK_FORMAT_R16G16B16A16_SFLOAT));
     // (relink) the scene's camera and depth for NVIDIA DLSS (vk_dlss.cpp): the vertex stage's uniform buffer 3 (NVN's binding 0)
     if (at.n && at.color[0] && at.depth)
         dlss_note_scene_draw(at.color[0], at.width, at.height, at.depth, s.ubo[0][0].addr, s.ubo[0][0].size);

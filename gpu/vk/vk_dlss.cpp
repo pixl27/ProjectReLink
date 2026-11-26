@@ -87,6 +87,7 @@
 #include "shaders/dlss_hudless_comp_spv.h"
 #include "shaders/dlss_post_comp_spv.h"
 #include "shaders/dlss_out_comp_spv.h"
+#include "shaders/dlss_out16_comp_spv.h"
 #include "shaders/dlss_prep_comp_spv.h"
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
@@ -207,9 +208,9 @@ struct State {
     std::chrono::steady_clock::time_point fsr_last{};   // (its last dispatch: the frame time it is given)
     int drawn_mode = 0;   // (the Upscaler that last drew: one changed in the menu lets the other's go)
     Image color, depth, motion, output;
-    VkDescriptorSetLayout prep_set = VK_NULL_HANDLE, out_set = VK_NULL_HANDLE;
-    VkPipelineLayout prep_layout = VK_NULL_HANDLE, out_layout = VK_NULL_HANDLE;
-    VkPipeline prep = VK_NULL_HANDLE, out = VK_NULL_HANDLE;
+    VkDescriptorSetLayout prep_set = VK_NULL_HANDLE, out_set = VK_NULL_HANDLE, out16_set = VK_NULL_HANDLE;
+    VkPipelineLayout prep_layout = VK_NULL_HANDLE, out_layout = VK_NULL_HANDLE, out16_layout = VK_NULL_HANDLE;
+    VkPipeline prep = VK_NULL_HANDLE, out = VK_NULL_HANDLE, out16 = VK_NULL_HANDLE;
     VkSampler point = VK_NULL_HANDLE, linear = VK_NULL_HANDLE;
     // (relink, 0.7.9.3) the see-through mask (dlss_mask.comp): the solid picture, the mask, the GPU's flags; its pipeline
     Image opaque, mask, mask_flags, mask_dummy;
@@ -669,13 +670,17 @@ bool make_pipeline(const uint32_t* code, size_t size, const VkDescriptorType* ty
 /// The two passes' pipelines and the samplers, once (dlss_upscale stops trying when this fails)
 bool make_pipelines() {
     State& s = st();
-    if (s.prep && s.out && s.point && s.linear) return true;
+    if (s.prep && s.out && s.out16 && s.point && s.linear) return true;
     if (!dev.push_descriptor || !vkCmdPushDescriptorSetKHR) return false;
     const VkDescriptorType S = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, I = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     const VkDescriptorType prep_types[5] = {S, S, I, I, I}, out_types[2] = {S, I};
     if (!s.prep && !make_pipeline(DLSS_PREP_COMP_SPV, sizeof DLSS_PREP_COMP_SPV, prep_types, 5, 84, s.prep_set, s.prep_layout, s.prep))
         return false;
     if (!s.out && !make_pipeline(DLSS_OUT_COMP_SPV, sizeof DLSS_OUT_COMP_SPV, out_types, 2, 20, s.out_set, s.out_layout, s.out))
+        return false;
+    // (relink, Part B) dlss_out.comp's RGBA16F twin, for the PsychoV35 picture: made beside it, chosen by the picture's format
+    if (!s.out16 &&
+        !make_pipeline(DLSS_OUT16_COMP_SPV, sizeof DLSS_OUT16_COMP_SPV, out_types, 2, 20, s.out16_set, s.out16_layout, s.out16))
         return false;
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     si.magFilter = si.minFilter = VK_FILTER_NEAREST;
@@ -908,7 +913,10 @@ void post_pass(VkCommandBuffer cmd, State& s, int mode, VkImageView scene, VkIma
 }  // namespace
 
 void dlss_note_post_draw(VkCommandBuffer cmd, uint64_t key, Texture* color0, uint32_t w, uint32_t h, const NvnState& ns) {
-    if ((key != composite_key() && key != bloom_key()) || !color0 || color0->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32) return;
+    // (relink, Part B) the composite and bloom are RGBA16F while PsychoV35 is on, B10G11R11 otherwise (hos_scene_rgba16f)
+    const bool fmt_ok = color0->format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+                        (scene_tonemap_on() && color0->format == VK_FORMAT_R16G16B16A16_SFLOAT);
+    if ((key != composite_key() && key != bloom_key()) || !color0 || !fmt_ok) return;
     State& s = st();
     const uint64_t now = texture_frame_no();
     if (key == bloom_key()) {
@@ -1594,7 +1602,11 @@ void dlss_probe() {
 void dlss_note_scene_draw(const Texture* color0, uint32_t width, uint32_t height, Texture* depth, uint64_t camera,
                           uint64_t camera_size) {
     if (!color0 || !depth || !camera || camera_size < 0x230 || width < 640 || height < 360) return;
-    if (color0->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 || !dlss_wanted() || is_plain(dlss_mode())) return;
+    // (relink, Part B) the linear scene buffer is B10G11R11, but RGBA16F while the PsychoV35 tone mapper is on
+    // (hos_scene_rgba16f, host/nn_vi.c): the scene's camera and depth are taken from it either way
+    const bool scene_fmt = color0->format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+                           (scene_tonemap_on() && color0->format == VK_FORMAT_R16G16B16A16_SFLOAT);
+    if (!scene_fmt || !dlss_wanted() || is_plain(dlss_mode())) return;
     State& s = st();
     std::lock_guard lk(s.mu);
     const uint64_t now = texture_frame_no();
@@ -1897,7 +1909,7 @@ void fg_capture(VkCommandBuffer cmd, State& s, const Camera& cam, const float* b
 // (relink, 0.7.9.3: the Sharpness row on the 3D alone, before the HUD is drawn over it. The window's pass leaves its own
 // sharpening out meanwhile, upscaler_sharpens. RX_VK_UPSCALER_SHARPEN=0: as before, after the HUD)
 void out_pass(VkCommandBuffer cmd, State& s, VkImageView src, bool same_size, VkImageView out_view, uint32_t ow, uint32_t oh,
-              bool linear = false) {
+              bool linear = false, bool out16 = false) {
     // (relink, 0.7.9.3: DLSS's, DLAA's and FSR's own Sharpness value, 40 % by default; None's is the game's own row's)
     const int row = is_plain(dlss_mode()) ? opts.sharpness : opts.up_sharpness;
     const float amount = upscaler_sharpen_on() ? std::clamp(row, 0, 100) / 100.0f : 0.0f;
@@ -1913,9 +1925,12 @@ void out_pass(VkCommandBuffer cmd, State& s, VkImageView src, bool same_size, Vk
     w[0].pImageInfo = &info[0];
     w[1].dstBinding = 1, w[1].descriptorCount = 1, w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     w[1].pImageInfo = &info[1];
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s.out);
-    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s.out_layout, 0, 2, w);
-    vkCmdPushConstants(cmd, s.out_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof opc, &opc);
+    // (relink, Part B) the PsychoV35 picture is RGBA16F: the out shader's storage format must match it (dlss_out16.comp)
+    VkPipeline pipe = out16 ? s.out16 : s.out;
+    VkPipelineLayout layout = out16 ? s.out16_layout : s.out_layout;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
+    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 2, w);
+    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof opc, &opc);
     vkCmdDispatch(cmd, (ow + 7) / 8, (oh + 7) / 8, 1);
 }
 }  // namespace
@@ -1930,8 +1945,13 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
     if (!known) {   // (another network of the upscale's shape: only the scene into the picture, the rest untouched and unsaid)
         const Camera& c = s.cam;
         // (the gameplay networks' own formats: they sample the scene's B10G11R11 colour and write the B10G11R11 picture.
-        // Other cooperative-matrix networks of the same shape (one RGBA8 into A2B10G10R10, RGB9E5 into B10G11R11) are not it)
-        if (!in || !out || in->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 || out->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+        // Other cooperative-matrix networks of the same shape (one RGBA8 into A2B10G10R10, RGB9E5 into B10G11R11) are not it.
+        // Under PsychoV35 both the scene input and the picture output are RGBA16F (hos_scene_rgba16f))
+        const bool scene_in = in->format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+                              (scene_tonemap_on() && in->format == VK_FORMAT_R16G16B16A16_SFLOAT);
+        const bool picture_out = out->format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+                                 (scene_tonemap_on() && out->format == VK_FORMAT_R16G16B16A16_SFLOAT);
+        if (!in || !out || !scene_in || !picture_out ||
             (out->width >> out_level) <= in->width)
             return false;
         // (one in the gameplay networks' formats whose input is not this frame's scene: counted for the status line)
@@ -1951,14 +1971,16 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
         if (!known || !in || !in_view || !out || !out_view) return false;
         const uint32_t rw = in->width, rh = in->height;
         const uint32_t ow = std::max(1u, out->width >> out_level), oh = std::max(1u, out->height >> out_level);
-        if (out->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 || ow < rw || oh < rh || ow > rw * 3 || oh > rh * 3)
+        const bool out16 = out->format == VK_FORMAT_R16G16B16A16_SFLOAT;
+        if ((out->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 && !(scene_tonemap_on() && out16)) || ow < rw || oh < rh ||
+            ow > rw * 3 || oh > rh * 3)
             return fail("unexpected output");
         if (!make_pipelines()) return fail("its shader was not made");
         struct Disturbed {
             ~Disturbed() { descriptors_disturbed(); }
         } disturbed;
         full_barrier(cmd);   // (the scene's colour, written before)
-        out_pass(cmd, s, in_view, rw == ow && rh == oh, out_view, ow, oh);
+        out_pass(cmd, s, in_view, rw == ow && rh == oh, out_view, ow, oh, false, out16);
         // (s.asked is left alone: a backend still held from the row's last choice is let go by dlss_idle)
         s.last_frame = texture_frame_no();
         s.lod_bias = 0.0f;
@@ -1993,7 +2015,10 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
     if (cam.depth->width != rw || cam.depth->height != rh || !(cam.depth->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
         cam.depth->samples != VK_SAMPLE_COUNT_1_BIT || !(cam.depth->aspect & VK_IMAGE_ASPECT_DEPTH_BIT))
         return fail("unexpected scene depth");
-    if (out->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 || ow < rw || oh < rh || ow > rw * 3 || oh > rh * 3)
+    // (relink, Part B) the picture output is RGBA16F while PsychoV35 is on (hos_scene_rgba16f), B10G11R11 otherwise
+    const bool out16 = out->format == VK_FORMAT_R16G16B16A16_SFLOAT;
+    if ((out->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 && !(scene_tonemap_on() && out16)) || ow < rw || oh < rh ||
+        ow > rw * 3 || oh > rh * 3)
         return fail("unexpected output");
     if (!fsr && !ngx_init()) {
         s.failed = true;
@@ -2291,7 +2316,7 @@ bool dlss_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in, Vk
         full_barrier(cmd);
         picture = s.post_final.view;
     }
-    out_pass(cmd, s, picture, !native, out_view, ow, oh, fsr_linear);
+    out_pass(cmd, s, picture, !native, out_view, ow, oh, fsr_linear, out16);
     s.last_frame = now;
     s.last_jitter[0] = cam.jitter[0], s.last_jitter[1] = cam.jitter[1];
     // (for the status line, dlss_status: the jitter DLSS (or FSR) was given, in render pixels)

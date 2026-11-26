@@ -364,6 +364,10 @@ volatile int hos_fixed_resolution = 0;   /* (the lifted code reads these: nx2/oo
 volatile uint32_t hos_fixed_scale_bits = 0x3f800000;   /* (HOS_RES_SCALE: the fixed path's scale) */
 volatile int hos_dynres_runs = 0;   /* (the dynamic path's frames: it fills fields the 3D reads, +8 +16 +168) */
 volatile float hos_text_scale = 1.0f;   /* (the letters' clock of a text pane, f_80b1e140: nx2/oot_patches.py) */
+/* (relink, after HeyListen ddb156df) the scene buffer RGBA16F, not R11G11B10F, while the HDR tone mapper row is on PsychoV35:
+   f_80672260's format picks it (nx2/oot_patches.py), so the scene PsychoV35 tone maps into has 6 mantissa bits more and its
+   highlights do not band */
+volatile int hos_scene_rgba16f = 0;
 /* (relink) The camera's vertical angle is multiplied by this as it goes into the projection (nx2/oot_fov.py): the Insert menu's
    Field of view in percent (option 13), HOS_FOV=<percent> over it; 1 as the game has it */
 volatile float hos_fov_scale = 1.0f;
@@ -513,6 +517,7 @@ static void realtime_step(int64_t now) {
     /* (Resolution 100% from the start: the fixed path skipped the dynamic block from the first frame, its fields stayed
        unset and the 3D came out black. The dynamic path runs a few frames first, as when the menu turns it on in game) */
     hos_fixed_resolution = !rx_option(2, 1) && hos_dynres_runs >= 30;
+    hos_scene_rgba16f = rx_option(74, 0) != 0;   /* (relink, after HeyListen ddb156df: HOS_OPT_HDR_TONEMAP, gpu/vk/vk_menu.h) */
     {
         static const char *env;
         static int looked;
