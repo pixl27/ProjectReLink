@@ -31,11 +31,13 @@ void DecompressSerial(std::span<const uint8_t>,uint32_t,uint32_t,uint32_t,uint32
 void Decompress(std::span<const uint8_t>,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,std::span<uint8_t>){++parallel;}
 }
 bool env_on(const char* name){const char* p=std::getenv(name);return p&&std::strcmp(p,"1")==0;}
+bool env_on_or(const char* name,int def){const char* p=std::getenv(name);return p?(std::strcmp(p,"0")!=0):def!=0;}
 void logf(const char*,...){}
 using namespace mkwvk;
 ''' + cut + r'''
-int main(int argc,char**) {
- bool fast=argc==2;
+int main(int argc,char** argv) {
+ assert(argc==2);
+ bool fast=std::strcmp(argv[1],"legacy")!=0;
  std::vector<uint8_t> blocks(16),out(64,0xA5);
  astc_cpu_decoder()(blocks,4,4,1,4,4,out);
  astc_cpu_decoder(true)(blocks,4,4,1,4,4,out);
@@ -63,9 +65,13 @@ int main(int argc,char**) {
         src=Path(folder)/'call.cpp';exe=Path(folder)/('call.exe' if os.name=='nt' else 'call')
         src.write_text(source,encoding='utf8')
         subprocess.run([args.cxx,'-std=c++20','-O2','-Wall','-Wextra','-Werror','-I'+str(ROOT/'gpu/vk'),str(src),str(ROOT/'gpu/vk/texdecode/astc.cpp'),'-o',str(exe)],check=True)
-        for fast in (False, True):
-            env=dict(os.environ);env['RX_VK_ASTC_FAST_CPU']='1' if fast else '0'
-            subprocess.run([str(exe)]+(['fast'] if fast else []),env=env,check=True)
+        for mode, enabled in (("default", None), ("legacy", "0"), ("fast", "1")):
+            env=dict(os.environ)
+            if enabled is None:
+                env.pop('RX_VK_ASTC_FAST_CPU', None)
+            else:
+                env['RX_VK_ASTC_FAST_CPU'] = enabled
+            subprocess.run([str(exe), mode],env=env,check=True)
     print('CPU ASTC renderer call: legacy serial/parallel fallback, reference decoder, transparent error and safe refusal passed')
 
 
