@@ -1845,7 +1845,7 @@ void prepare_with_screen() {
         if (!update && !prepared && !prepare_stopped() && state_list_pending()) state_list_run();
         if (!prepared) prep_skip[0].store(true);
         // (a first start, or one after a start that did not finish them: the pipelines the notes predict, into the driver's cache)
-        if ((prepared || (!update && predict_pending())) && compile_all() && !prepare_stopped()) {
+        if (!update && compile_all() && (prepared || predict_pending() || !predicted_complete()) && !prepare_stopped()) {
             prep_done.store(0), prep_total.store(0);
             prep_stage.store(1);
             predict_run(prep_progress);
@@ -2034,7 +2034,8 @@ bool started_up() {
         }
         return true;
     }
-    if (igpu_prepares_in_play() && precompile_wanted()) {
+    const bool prepare_all = precompile_wanted() && compile_all();
+    if (!prepare_all && igpu_prepares_in_play() && precompile_wanted()) {
         logf("vk: an integrated GPU (%s): the shaders and pipelines are made when each is first drawn, none before the game "
              "(RX_VK_PREPARE_IGPU=1: before it)", dev.props.deviceName);
         precompile_index_only();
@@ -2043,7 +2044,7 @@ bool started_up() {
         startup_screen(&view);
         return true;
     }
-    if (FILE* f = fopen(skipped_path().c_str(), "rb")) {
+    if (FILE* f = prepare_all ? nullptr : fopen(skipped_path().c_str(), "rb")) {
         fclose(f);
         logf("vk: the shaders' preparation was skipped at the build: left to when each is first drawn");
         precompile_index_only();
@@ -2094,8 +2095,11 @@ bool started_up() {
             WriteFile(console, line, (DWORD)n, &wrote, nullptr);
         };
         const bool update = prepare_is_update();   // (an update: what the notes name now, the rest in play)
-        if (!update && (prepare_run(progress, false) || predict_pending()) && compile_all()) predict_run(progress);
-        else if (!update && state_list_pending()) state_list_run();
+        if (!update) {
+            const bool prepared = prepare_run(progress, false);
+            if (!prepared && state_list_pending()) state_list_run();
+            if (prepare_all && (prepared || predict_pending() || !predicted_complete())) predict_run(progress);
+        }
         if (update) state_list_run();
         precompile_run(progress);
         if (update) prepare_background();

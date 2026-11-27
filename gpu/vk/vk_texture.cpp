@@ -934,7 +934,7 @@ VkPipeline astc_pipe = VK_NULL_HANDLE;
 bool astc_on_cpu() {
     static const bool on = [] {
         const bool v = dev.policy.astc_on_cpu;   // (device_policy.h: the rule above by this PC, then the switch)
-        if (v) logf("vk: ASTC decoded on the CPU (RX_VK_ASTC_CPU=0: by the GPU; on by default for AMD's Ryzen 7000 and 9000 desktop graphics and for Radeon 860M and Vega 0x15E7 on Windows)");
+        if (v) logf("vk: ASTC decoded on the CPU (RX_VK_ASTC_CPU=0: by the GPU; on by default for AMD's Ryzen 7000 and 9000 desktop graphics and Radeon 860M on Windows)");
         return v;
     }();
     return on;

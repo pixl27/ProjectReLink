@@ -328,7 +328,7 @@ SW(RX_VK_ASTC_BC1, kill, bool, "on where the device has BC1: a big ASTC texture 
 SW(RX_VK_ASTC_BC7, attempt, bool, "off: big ASTC textures are re-encoded as BC3", "=1 re-encodes big ASTC textures as BC7 instead of BC3, for better gradients and alpha.")
 SW(RX_VK_ASTC_BC_ALL, hw, bool, "on when the driver's VRAM allowance is small or the GPU is integrated (astc_bc_policy::all), off elsewhere", "Forces keeping all large decoded ASTC textures as BC3 (1) or only the coarse-block ones (0) on any card.")
 SW(RX_VK_ASTC_BC_MB, tune, int, "1 MB", "Size as RGBA8, in MB, from which a coarse-block decoded ASTC texture is re-encoded as BC3.")
-SW(RX_VK_ASTC_CPU, hw, bool, "on for AMD Ryzen 7000/9000 desktop integrated graphics (0x164E, 0x13C0) and the Radeon 860M (0x1114) and Vega iGPU (0x15E7) on Windows, off elsewhere", "Decodes ASTC textures on the CPU (to RGBA8) instead of with the GPU decoder; 0 forces the GPU.")
+SW(RX_VK_ASTC_CPU, hw, bool, "on for AMD Ryzen 7000/9000 desktop integrated graphics (0x164E, 0x13C0) and the Radeon 860M (0x1114) on Windows, off elsewhere", "Decodes ASTC textures on the CPU (to RGBA8) instead of with the GPU decoder; 0 forces the GPU.")
 SW(RX_VK_ASTC_FAST_CPU, hw, bool, "on by default (0 restores the legacy decoder)", "Uses the ported ASTC LDR CPU decoder for demand uploads, read-ahead and streamed mips; shader caches stay compatible.")
 SW(RX_VK_ASTC_PREFETCH, attempt, bool, "off", "1 prepares up to three learned Vega ASTC levels with the CPU decoder ahead of use when texture prefetch is on.")
 GONE(RX_VK_ASTC_REUSE, "2026-11-16", "it does nothing: decoded ASTC is always reused from finalized textures")

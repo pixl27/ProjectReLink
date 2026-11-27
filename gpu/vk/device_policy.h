@@ -369,8 +369,7 @@ struct DevicePolicy {
     bool split_before_draw = false;
     // AMD's Windows driver on the graphics in Ryzen 7000 and 9000 desktop CPUs (0x164E, 0x13C0) and the Radeon 860M
     // (0x1114): ASTC decoded on the CPU, as the GPU decoder's one long submission had Windows reset the device (a Ryzen 9 7900X,
-    // 7 runs of 8; seen on driver 26.10.1; the 860M lost it on the same Kokiri Forest arrays). On the Ryzen 5 5625U
-    // Vega iGPU (0x15E7, AMD driver 26.5.2), CPU decoding restores Water Temple walls and the minimap.
+    // 7 runs of 8; seen on driver 26.10.1; the 860M lost it on the same Kokiri Forest arrays).
     // RX_VK_ASTC_CPU. Read (vk_texture.cpp astc_on_cpu)
     bool astc_on_cpu = false;
     // NVIDIA: the Deku Tree web's vertex code b449bcdb69b36a8a has its global loads inlined, as NVIDIA's compiler
@@ -596,8 +595,7 @@ inline DevicePolicy device_policy(const DeviceFacts& f) {
     p.compute_builds_serial = f.driver_id == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
     p.pcache_fetch_lock = f.windows && f.intel();
     p.split_before_draw = f.intel();
-    p.astc_on_cpu = f.windows && f.amd() && (f.device_id == 0x164E || f.device_id == 0x13C0 || f.device_id == 0x1114 ||
-                                         f.device_id == 0x15E7);
+    p.astc_on_cpu = f.windows && f.amd() && (f.device_id == 0x164E || f.device_id == 0x13C0 || f.device_id == 0x1114);
     p.inline_deku_web_loads = f.nvidia();
     p.networks_left_out = !f.nvidia();
     p.dma_buf_imports = !f.windows && f.driver_id != VK_DRIVER_ID_NVIDIA_PROPRIETARY;

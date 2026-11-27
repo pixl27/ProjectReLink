@@ -70,7 +70,7 @@ CASES = [
     (1, AMD, 0x1114, 1, "860M (PCI 1002:1114) still decodes ASTC on the GPU by default"),
     (1, AMD, 0x164E, 1, "Ryzen 7000 desktop iGPU"),
     (1, AMD, 0x13C0, 1, "Ryzen 9000 desktop iGPU"),
-    (1, AMD, 0x15E7, 1, "Vega on Ryzen 5 5625U: Water Temple walls and minimap"),
+    (1, AMD, 0x15E7, 0, "Vega on Ryzen 5 5625U defaults to GPU decode"),
     (0, AMD, 0x15E7, 0, "Vega off Windows stays on the GPU decoder"),
     (1, AMD, 0x164F, 0, "another AMD id stays on the GPU decoder"),
     (1, NVIDIA, 0x1114, 0, "the 860M's id on another vendor"),
