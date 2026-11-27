@@ -1701,7 +1701,7 @@ Row rows[] = {
      "The game's whole frame, HUD included, before it is scaled to the window. Docked only. Applies after a restart.",
      hn_output_res, true, true},
     {TAB_GRAPHICS, "Output ceiling", &opts.limit_720p, 0, 1, 1, tx_output_ceiling,
-     "720p sets the default output target to 1280x720. The title screen renders at 1920x1080 so its fixed crop fits, then scales to the window. Choose Unlocked for a higher default. Applies after a restart."},
+     "720p sets the default output target to 1280x720. The title screen renders at 1920x1080 so its fixed crop fits, then scales to the window. Choose Unlocked for a higher default. Applies after a restart.", nullptr, true, true},
     {TAB_GRAPHICS, "Custom output size", nullptr, 0, 0, 0, nullptr,   // (hookshot: a text field, field_rows)
      "An Output resolution of your own, typed as width x height: your monitor's size, such as 3440x1440, 2560x1080 or "
      "2560x1600. Each side is rounded down to a multiple of 8; a size the Output resolution offers is chosen there. Empty: "
@@ -1799,7 +1799,7 @@ Row rows[] = {
      "How far away small trees, bushes and flowers are drawn. Higher costs CPU and GPU time. Changes apply at once.",
      hn_foliage, false, true},
     {TAB_GRAPHICS, "Object detail", &opts.gfx_objects, 50, 400, 10, tx_object_detail,
-     "How far away 3D objects keep their detailed models. 100% is the game's original distance; lower values switch to simpler models sooner, down to 50%. Changes apply at once.", hn_objects, false, true},
+     "How far away 3D objects keep their detailed models. Changes apply at once.", hn_objects, false, true},
     {TAB_GRAPHICS, "Grass density", &opts.gfx_grass, 0, 300, 25, tx_grass,
      "How much grass is drawn: None hides it. Changes apply at once.", hn_grass, false, true},
     {TAB_GRAPHICS, "Shadow distance", &opts.gfx_shadows, 25, 400, 25, tx_fov,

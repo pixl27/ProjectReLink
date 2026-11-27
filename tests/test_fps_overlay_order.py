@@ -32,6 +32,9 @@ def main():
 using VkCommandBuffer = int;
 struct { bool show_fps = false; } opts;
 std::atomic<bool> open_now{false}, startup_on{false};
+std::atomic<bool> startup_transient{false};
+std::atomic<int64_t> startup_transient_at{0};
+void startup_screen(const char*) {}
 std::string calls;
 bool can_draw = true;
 float ease_step = 0;
