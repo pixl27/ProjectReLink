@@ -12,6 +12,7 @@
 #include "../hos.h"
 void hos_input_clear_toggles(void);
 #include "../hos_sdl.h"
+#include "../oot_area_names.h"
 
 /* (the window's app id: the applications menu's entry names it as its StartupWMClass, builder/linux/hookshot_builder.py) */
 #define HOS_APP_ID "io.github.NotRexed.Hookshot"
@@ -38,6 +39,9 @@ void hos_window_closed_exit(void);
 int hos_text_focus(void);           /* (host/rx_backend.c: the Insert menu's text fields, MkwVkHost.take_text) */
 void hos_text_put(uint32_t c);
 void hos_text_put_utf8(const char *s, int first_line);
+int hos_oot_current_map(char *out, size_t cap);
+int hos_oot_state(int *event, int *loading, int *child);
+const char *hos_version(void);
 
 volatile LONG64 hos_present_count;   /* (nvn_native.c: the game's presents) */
 __attribute__((visibility("default"))) volatile uint8_t hos_posix_keys[256];
@@ -67,6 +71,19 @@ static int ptr_in;
 static uint32_t ptr_held;
 static int menu_open;   /* window-thread only */
 static void *window;
+static void game_window_title(void) {
+    char map[96] = "", area[128] = "", title[320];
+    int event = 0, loading = 0, child = 1;
+    const int have_map = hos_oot_current_map(map, sizeof map) && hos_oot_area_name(map, area, sizeof area);
+    const int have_age = hos_oot_state(&event, &loading, &child);
+    const char *version = hos_version();
+    if (have_map && have_age)
+        snprintf(title, sizeof title, "THE LEGEND OF ZELDA OCARINA OF TIME - Retunic Recomp (%s) - %s - %s Link",
+                 version, area, child ? "Child" : "Adult");
+    else
+        snprintf(title, sizeof title, "THE LEGEND OF ZELDA OCARINA OF TIME - Retunic Recomp (%s)", version);
+    hos_sdl_set_window_title(window, title);
+}
 int hos_mouse_pointer(MkwVkPointer *out) { return hos_pointer_take(&pointer, out); }
 
 /* SDL's window/mouse queries belong on the main thread, never on the renderer's pointer callback. */
@@ -360,6 +377,7 @@ void hos_display_loop(void) {
         hos_crash_clean_end();
         ExitProcess(1);
     }
+    game_window_title();
     vk_window.window = window;
     hos_posix_window[0] = 1;
     {   /* the window's icon: hookshot.png in the game folder (make_game.py puts it there: the game's own icon, else Hookshot's),
@@ -398,6 +416,7 @@ void hos_display_loop(void) {
                 hos_posix_window[1]=dw; hos_posix_window[2]=dh;
             }
             __atomic_store_n(&refresh_now, hos_sdl_refresh_mhz(window), __ATOMIC_RELAXED);
+            game_window_title();
         }
         { /* Renderer requests are resolved/applied here, never on the renderer's thread. */
             static char last_wanted[512];

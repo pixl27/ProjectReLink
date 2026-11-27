@@ -49,7 +49,7 @@ static int device_channels, device_asked;
 static int au_device_channels(void) { device_asked++; return device_channels; }
 HOST
 struct Row { int tab; const char* name; int* value; };
-struct { int output_res, vsync, resolution, fps_cap, upscale, dlss, dlss_pre_bloom, handheld, ultrawide, audio_output, vibration, rumble; } opts;   // (ultrawide: the Aspect ratio row's key; vibration, rumble: the Vibration rows' keys)
+struct { int output_res, limit_720p, vsync, resolution, fps_cap, upscale, dlss, dlss_pre_bloom, handheld, ultrawide, audio_output, vibration, rumble; } opts;   // (ultrawide: the Aspect ratio row's key; vibration, rumble: the Vibration rows' keys)
 int monitor_pick; // Unexercised fullscreen selector referenced by the real ini_key().
 MENU
 int main(int argc, char **argv) {

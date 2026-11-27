@@ -23,6 +23,7 @@ void rx_close_asked(void);   /* host/rx_backend.c */
 #include "../gpu/vk/vk_api.h"
 #include "display_pointer.h"
 #include "fullscreen_monitor.h"
+#include "oot_area_names.h"
 #ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
 #include "../gpu/vk/compat/hookshot_env.h"
 #endif
@@ -38,6 +39,26 @@ void hos_text_put(uint32_t c);
 volatile LONG64 hos_present_count;   /* (nvn_native.c: the game's presents) */
 static HWND hwnd;
 static int renderer;   /* the renderer presents into the window */
+
+/* (hookshot) The status tracker keeps the current map and age from Link's updates; the window thread
+   samples that host snapshot and owns every title-bar update. */
+int hos_oot_current_map(char *out, size_t cap);
+int hos_oot_state(int *event, int *loading, int *child);
+const char *hos_version(void);
+static void game_window_title(HWND w) {
+    char map[96] = "", area[128] = "", title[320];
+    int event = 0, loading = 0, child = 1;
+    const int have_map = hos_oot_current_map(map, sizeof map) && hos_oot_area_name(map, area, sizeof area);
+    const int have_age = hos_oot_state(&event, &loading, &child);
+    const char *version = hos_version();
+    if (have_map && have_age)
+        snprintf(title, sizeof title, "THE LEGEND OF ZELDA OCARINA OF TIME - Retunic Recomp (%s) - %s - %s Link",
+                 version, area, child ? "Child" : "Adult");
+    else
+        snprintf(title, sizeof title, "THE LEGEND OF ZELDA OCARINA OF TIME - Retunic Recomp (%s)", version);
+    wchar_t wide[512];
+    if (MultiByteToWideChar(CP_UTF8, 0, title, -1, wide, (int)(sizeof wide / sizeof *wide))) SetWindowTextW(w, wide);
+}
 
 /* mouse capture: raw motion accumulated here, taken by nn_hid.c */
 static volatile LONG mouse_dx, mouse_dy;
@@ -613,6 +634,7 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
             if (fullscreen) set_fullscreen(w,1); /* selection/hotplug changes, on the window thread */
         }
         pointer_update(w, 0, 0);
+        game_window_title(w);
         /* (hookshot, #1532) a controller is not input to Windows: playing with one, the display went off at the power
            plan's timeout. While the game's window is in front and not minimized, the display's idle timer is reset every
            30 s (ES_DISPLAY_REQUIRED without ES_CONTINUOUS: nothing is held when the game is left or closed).
@@ -807,11 +829,7 @@ static DWORD WINAPI display_main(void *p) {
         AdjustWindowRect(&s, WS_OVERLAPPEDWINDOW, FALSE);
         SetWindowPos(hwnd, NULL, 0, 0, s.right - s.left, s.bottom - s.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    {   /* the game's own name for the window (host/hos_paths.h hos_game_title), as Unicode: the class is an ANSI one */
-        wchar_t title[256];
-        if (MultiByteToWideChar(CP_UTF8, 0, hos_game_title(HOS_GAME_TITLE), -1, title, 256))
-            DefWindowProcW(hwnd, WM_SETTEXT, 0, (LPARAM)title);
-    }
+    game_window_title(hwnd);
     /* (no activate: shown at the bottom of the z-order, so a game in front keeps its focus) */
     if (noactivate)
         SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);

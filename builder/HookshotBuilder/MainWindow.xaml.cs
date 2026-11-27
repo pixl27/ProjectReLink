@@ -618,7 +618,7 @@ public partial class MainWindow : Window
         Sweep.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(-88, 208, TimeSpan.FromSeconds(1.2)) { RepeatBehavior = forever, EasingFunction = ease });
     }
 
-    /// The hookshot fades out and the first step fades in, in the same window
+    /// The Red Tunic splash fades out and the first step fades in, in the same window
     void ShowMain()
     {
         var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(450));

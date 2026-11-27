@@ -31,7 +31,7 @@ changes nothing in what players build (docs/development.md, *Testing a change ag
         of the built game folder that differs from the base's (button prompts and the like). A runtime prepares again when the
         shader translator (what nx2/build.py stamps the shader caches with) or the shader seed changed.
     python -I scripts/dev_packs.py rt <dir> <runtime> [<pack>...]
-        A game folder to run: the base's, its romfs hard-linked (read-only; none for a --romfs-in-place base), the rest copied
+        A game folder to run: the base's, its romfs directory-linked by default (read-only; none for a --romfs-in-place base), the rest copied
         (the caches are written in play; a copy-on-write clone where the file system makes one), the packs' files over it,
         prepared again if a pack needs it.
     python -I scripts/dev_packs.py ls <dir>
@@ -522,6 +522,18 @@ def link_or_copy(src, dst):
         shutil.copy2(src, dst)
 
 
+def directory_link(src, dst):
+    """Link a read-only ROMFS into a runtime without walking or cloning its files."""
+    try:
+        os.symlink(src, dst, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        # Windows may deny symlink creation when Developer Mode is off; a junction still links the directory without copying it.
+        import _winapi
+        _winapi.CreateJunction(src, dst)
+
+
 def link_objects(base_work, work):
     """A new work folder with the base's compiled objects (hard links: the object cache's keys hold no folder path) and the note of
     the compiler's headers they were made with, so only what a change touches compiles"""
@@ -715,11 +727,17 @@ def cmd_rt(a):
             over[rel] = (p, src)
         needs_prepare |= meta["prepare"]
     os.makedirs(rt)
-    for top, _, fs in os.walk(os.path.join(b["game"], "romfs")):
-        dst = os.path.join(rt, os.path.relpath(top, b["game"]))
-        os.makedirs(dst, exist_ok=True)
-        for f in fs:
-            link_or_copy(os.path.join(top, f), os.path.join(dst, f))
+    romfs = os.path.join(b["game"], "romfs")
+    romfs_overlay = any(rel.startswith("romfs/") for rel in over)
+    if os.path.isdir(romfs) and not romfs_overlay:
+        directory_link(romfs, os.path.join(rt, "romfs"))
+    elif os.path.isdir(romfs):
+        # A pack that changes ROMFS needs a private directory so replacing or deleting a file cannot affect the base.
+        for top, _, fs in os.walk(romfs):
+            dst = os.path.join(rt, os.path.relpath(top, b["game"]))
+            os.makedirs(dst, exist_ok=True)
+            for f in fs:
+                link_or_copy(os.path.join(top, f), os.path.join(dst, f))
     for name in os.listdir(b["game"]):
         s = os.path.join(b["game"], name)
         if os.path.isfile(s):

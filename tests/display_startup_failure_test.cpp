@@ -123,6 +123,7 @@ static void driver_cache_folder() {}   // (host/hos_main.c: the folder __GL_SHAD
 static void driver_env_choose() {}   // (host/hos_main.c: RADV_FORCE_VRS_CONFIG_FILE dropped)
 static void hos_profiling_env() {}   // (host/profiling.c: HOS_PROFILE=1, after the env file)
 void hos_relaunch_keep_env() {}   // (host/hos_relaunch.c: whether the game was given a stderr, for a restart)
+static void game_window_title() {} // (display-startup source cut: title updates are outside this failure-path fixture)
 
 #include "display_startup_actual.inc"
 

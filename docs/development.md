@@ -1323,9 +1323,10 @@ python -I scripts/dev_packs.py rt   ../base-main ../rt-my-fix my-fix
     work folder it was made in, so the first game pack translates the game once (or copies the base's translation from the lift store,
     below) and the later ones skip the lift while the translator, the HLE functions and the hot list stay the same;
     the base's compiled objects are linked in. Build one pack at a time.
-- **`rt`** makes a game folder to run: the base's, with `romfs` hard-linked (it is never written; none from a
-  `--romfs-in-place` base), the other files copied (the game writes its caches; a copy-on-write clone on btrfs and
-  XFS), and the packs' files over them. Two packs that bring the same file are
+- **`rt`** makes a game folder to run: the base's, with `romfs` directory-linked (a Windows junction if symlink creation is
+  unavailable; none from a `--romfs-in-place` base), so an unchanged ROMFS is not walked or cloned. A pack that changes or
+  deletes a ROMFS file gets an isolated ROMFS tree. The other files are copied (the game writes its caches; a copy-on-write
+  clone on btrfs and XFS), with pack files over them. Two packs that bring the same file are
   refused (merge the branches and build one pack); a pack built on another base is refused too, so the game and
   the renderer always come from one base (`MKWVK_API_VERSION`).
 - **`warm`** plays a runtime with no pack once per `--run` command (`{runtime}` in it is the runtime's folder),

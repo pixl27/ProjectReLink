@@ -128,8 +128,8 @@ def check_sites():
     texture = read("gpu/vk/vk_texture.cpp")
     if re.search(r"\.emplace_back\(\[&part", texture):
         problems.append("vk_texture.cpp: a helper thread started outside fork_join (one refused at the commit limit: terminate)")
-    if texture.count("::mkwvk::cxx_escape::fork_join(") != 3:
-        problems.append("vk_texture.cpp: not three fork_joins (the gather, the check, the unswizzle)")
+    if texture.count("::mkwvk::cxx_escape::fork_join(") != 4:
+        problems.append("vk_texture.cpp: not four fork_joins (the gather, the check, the unswizzle and ASTC decode)")
     escape = read("gpu/vk/cxx_escape.h")
     if re.search(r"catch\s*\(\s*\.\.\.\s*\)", re.sub(r"//[^\n]*", "", escape)):
         problems.append("cxx_escape.h has a catch (...): it would take a foreign exception from the host's crash record")

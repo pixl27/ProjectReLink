@@ -24,7 +24,7 @@ The new CPU decoder is enabled by default with `RX_VK_ASTC_FAST_CPU=0` as the ro
 
 ## PC camera-route measurements
 
-Four 240-frame camera turns were recorded in Hyrule Field at 1280x720 output and 67% render resolution, using the same copied save and pinned settings. The renderer DLL was rebuilt from this branch; the installed game executable reported v4.1.0 (`2cd2475d`), so this is a controlled renderer comparison on the PC, not a complete v4.4.0 application test. Input started at the same Hyrule Field coordinates and facing for baseline2 and fast2. The isolated test cache was shared sequentially and grew warmer between runs.
+Four 240-frame camera turns were recorded in Hyrule Field in a 1280x720 window. The pinned handheld profile made the game render at its 2048x1152 target with the 67% resolution setting, using the same copied save and pinned settings. The renderer DLL was rebuilt from this branch; the installed game executable reported v4.1.0 (`2cd2475d`), so this is a renderer comparison on the PC, not a complete v4.4.0 application test. Input started at the same Hyrule Field coordinates and facing for baseline2 and fast2. The isolated test cache was shared sequentially and grew warmer between runs.
 
 | Arm | Start frame | Mean frame time | Mean FPS | P99 | Worst | Frames >100 ms |
 |---|---:|---:|---:|---:|---:|---:|
@@ -34,6 +34,19 @@ Four 240-frame camera turns were recorded in Hyrule Field at 1280x720 output and
 | Port 2 | 4948 | 117.04 ms | 8.54 | 423.4 ms | 476.6 ms | 112/240 |
 
 The second turn pair improved mean frame time by 14.1%, P99 by 23.4%, and the worst frame by 35.6%; the first pair improved mean by 4.1% and the worst frame by 29.1%, but had 33 more frames over 100 ms. All 960 measured frames exceeded 33.3 ms. These short runs support a modest decode improvement, not a substantial, repeatable camera-smoothness result. A current v4.4.0 executable and independently reset, matching cache states still need testing. No memory reduction was measured. The legacy logs attribute most cumulative slow-submit time to draw and descriptor work; shader-program waits and pipeline compilations were zero.
+
+## Parallel fast-decoder camera test
+
+The new selector now honors the existing Vega parallel request when the fast CPU decoder is enabled. I ran two ordered pairs in the isolated Windows runtime with a copied save and the same cache, `HyruleField_Adult`, a 1280x720 window, the handheld profile's 2048x1152 game target at 67% resolution, and a scripted 240-frame camera turn. The parallel renderer was the v4.4.0 release-profile build (`fd040ee3`); the game executable was still v4.1.0 (`2cd2475d`). The serial control used the saved local pre-parallel DLL. The private cache warmed across sequential runs, so pair one is order-confounded; pair two reverses the order.
+
+| Pair / order | Decoder | Mean | P99 | >100 ms | All frames >33.3 ms |
+|---|---|---:|---:|---:|---:|
+| 1a, first | parallel fast | 100.21 ms (9.98 FPS) | 667.95 ms | 59/240 | yes |
+| 1b, second | serial fast | 93.72 ms (10.67 FPS) | 316.51 ms | 68/240 | yes |
+| 2a, first | serial fast | 91.27 ms (10.96 FPS) | 380.70 ms | 54/240 | yes |
+| 2b, second | parallel fast | 90.17 ms (11.09 FPS) | 236.10 ms | 68/240 | yes |
+
+The reversed pair is a small mean-time gain (1.2%) and lower P99 (38%), while the first pair favors serial on both. In the camera-window upload-deferral logs, serial fast accumulated about 3.39 s of new-ASTC CPU upload work over 236 presents; parallel fast accumulated about 0.91 s over 241 presents. The timing logs also show 30 vs 10 frames over 50 ms for upload rollups in the complete sessions, but those totals include area loading and are not a clean camera-only A/B. Texture sets and caches were not reset independently. The evidence supports lower decode/upload work in the parallel run, but does not show a repeatable mean-frame improvement yet; all measured camera frames still exceeded 33.3 ms. Full logs and each run's context remain local under `work/recomp-survey-20261126/`.
 
 The port preserves the existing CPU integration's linear-profile interpretation, including when the image is subsequently viewed as sRGB. It does **not** add format-correct sRGB CPU decoding. Its 8-bit truncation differs from suyu's rounding; results are not byte-identical. Illegal blocks remain transparent black; refused arguments produce zero output rather than stale staging bytes. The library's independent reference test covers both profiles, while the renderer adapter test explicitly checks the legacy linear-profile choice.
 
@@ -69,6 +82,8 @@ Startup also loaded a 1,418,593,988-byte pipeline cache from the private test ru
 - Reference vectors: 4,694 synthetic blocks in linear and sRGB modes, 9,388 comparisons, zero mismatches; 28 whole-level tests.
 - Independent cold review: 250,000 random block decodes preserved guard bytes; no bounds or shader-cache blocker found.
 - Renderer adapter: switch off/on, original serial/parallel routes, transparent illegal blocks, short-source refusal and explicit linear-profile choice.
+- Large Vega ASTC uploads previously asked for parallel decode but the fast-decoder selector ignored that request. The fast decoder now splits validated block rows over the existing fork/join workers for large images, up to eight threads; small or invalid inputs retain the serial safe path. A two-slice 256x256 pixel-equality check covers the split. The release-profile Windows renderer build compiled all 214 objects and linked into the active local build. In the isolated parallel run, the game reached `HyruleField_Adult`, but free physical RAM fell to 0.2 GB and the game stalled before the harness collected its camera route. The run was stopped; memory recovered to 9.4 GB. No camera performance result is available.
+- The initial full Windows suite completed with 825 passed, 43 failed, and 132 skipped. The ASTC-specific reference and adapter checks passed. `test_cxx_escape.py` was one failure: its count guard expected only the three old texture fork/join sites. The guard was updated and the test passed on focused rerun; the full suite has not been rerun since. The other failures remain untriaged, so the suite is not considered clean.
 - Synthetic decoder timings are exploratory only. In-game measurements are recorded above. Repeated, controlled in-game runs on a current executable and complete-suite results are still needed to validate the new default across hardware tiers.
 
 Prepared program records, shader translation sources and the renderer API are unchanged. The writable benchmark cache and copied saves stayed local; the player's original shader cache and saves were not used as writable benchmark files.

@@ -1,3 +1,5 @@
 # Red Tunic project website
 
-Static HTML, CSS and JavaScript; no dependencies or server state. Serve this directory with a static web server. Links target the public 4.4.0 release. Official IGN videos load only after Play is pressed. Game imagery © Nintendo; no public-domain license is asserted. The marketing copy distinguishes the measured Radeon reference PC from pending Steam Deck-specific testing.
+A static, responsive product page built with HTML, CSS, and JavaScript. Preview it from the repository root with `python -m http.server 8000 --directory site`, then open `http://localhost:8000`.
+
+The artwork in `assets/hyrule-card.svg` is original Red Tunic illustration. Official Ocarina of Time screenshots and footage stay on their publishers’ pages; the site links to Nintendo’s official game gallery and loads IGN video players only after the visitor presses Play. Radeon measurements describe the reference Ryzen 5 5625U PC. Steam Deck-specific performance has not been tested.

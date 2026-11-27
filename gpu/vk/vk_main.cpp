@@ -2038,6 +2038,9 @@ bool started_up() {
         logf("vk: an integrated GPU (%s): the shaders and pipelines are made when each is first drawn, none before the game "
              "(RX_VK_PREPARE_IGPU=1: before it)", dev.props.deviceName);
         precompile_index_only();
+        StartupView view;
+        view.title = "Starting game";
+        startup_screen(&view);
         return true;
     }
     if (FILE* f = fopen(skipped_path().c_str(), "rb")) {
@@ -2221,7 +2224,7 @@ int start(void* hwnd) {
     auto_profile();   // (the Quality preset Auto (this PC): before the game first asks its mode, which reads the options)
     if (!hwnd) {   // (HOS_HEADLESS: no window; the frames are rendered all the same, RX_VK_SHOTS writes them out)
         dev.offscreen = true;
-        dev.swap_extent = {1920, 1080};
+        dev.swap_extent = {1280, 720};
         dev.swap_format = VK_FORMAT_R8G8B8A8_UNORM;
         logf("vk: no window: presents render offscreen (%ux%u)", dev.swap_extent.width, dev.swap_extent.height);
         if (!started_up()) return 0;

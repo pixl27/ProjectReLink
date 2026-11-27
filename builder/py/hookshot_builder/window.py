@@ -85,11 +85,12 @@ def time_left(seconds):
 # ================= small pieces drawn as the XAML draws them =================
 
 class Splash(QWidget):
-    """The start: the hookshot (178 wide) over its pulsing halo, bobbing; "Hookshot", the status, and the sweeping bar"""
+    """The start: Red Tunic logo over a warm pulsing halo, bobbing, embers, status and sweeping progress bar."""
 
     def __init__(self, hook):
         super().__init__()
         self.hook, self.t0, self.text, self.scale = hook, time.monotonic(), "Starting…", 1.0
+        self.embers = [(i * 0.61803398875 % 1.0, i * 0.38196601125 % 1.0, 0.65 + (i % 5) * 0.21) for i in range(24)]
         self.timer = QTimer(self, timeout=self.update)
         self.timer.start(16)
 
@@ -108,14 +109,24 @@ class Splash(QWidget):
         hc = QPointF(0, top + 130)
         r = (260 - 48) / 2 * (0.94 + 0.10 * ping)   # (the halo: Margin 24, scale 0.94..1.04, opacity 0.6..1)
         g = QRadialGradient(hc, r)
-        g.setColorAt(0, argb("#663D63E6"))
-        g.setColorAt(0.68, argb("#003D63E6"))
-        g.setColorAt(1, argb("#003D63E6"))
+        g.setColorAt(0, argb("#669C3445"))
+        g.setColorAt(0.68, argb("#009C3445"))
+        g.setColorAt(1, argb("#009C3445"))
         p.setOpacity(0.6 + 0.4 * ping)
         p.setBrush(g)
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(hc, r, r)
         p.setOpacity(1)
+        # Red Tunic's restrained fire motes: deterministic paths avoid per-frame allocation or random flicker.
+        p.setPen(Qt.PenStyle.NoPen)
+        for i, (x0, phase, speed) in enumerate(self.embers):
+            rise = (t * speed + phase) % 1.0
+            x = (x0 - 0.5) * 210 + 7 * math.sin(t * 2.2 + i)
+            y = top + 235 - rise * 230
+            alpha = int(125 * math.sin(math.pi * rise))
+            p.setBrush(QColor(246, 105 + (i % 4) * 18, 64, max(0, alpha)))
+            size = 2.0 + (i % 3) * 0.7
+            p.drawEllipse(QPointF(x, y), size / 2, size)
         w = 178
         h = self.hook.height() * w / self.hook.width()
         p.save()
@@ -130,7 +141,7 @@ class Splash(QWidget):
         y = top + 260 + 16
         p.setPen(C["Ink"])
         p.setFont(font(22, W_SEMIBOLD))
-        p.drawText(QRectF(-200, y, 400, 28), Qt.AlignmentFlag.AlignCenter, "Hookshot")
+        p.drawText(QRectF(-200, y, 400, 28), Qt.AlignmentFlag.AlignCenter, "Red Tunic")
         y += 28 + 6
         p.setPen(argb("#A6FFFFFF"))
         p.setFont(font(13))
@@ -143,9 +154,9 @@ class Splash(QWidget):
         f = (1 - math.cos(math.pi * f)) / 2
         x = -100 - 88 + 296 * f   # (Sweep -88..208, sine in-out, repeating)
         lg = QLinearGradient(x, 0, x + 80, 0)
-        lg.setColorAt(0, argb("#007F9BFF"))
-        lg.setColorAt(0.5, argb("#FF7F9BFF"))
-        lg.setColorAt(1, argb("#007F9BFF"))
+        lg.setColorAt(0, argb("#00F68F79"))
+        lg.setColorAt(0.5, argb("#FFF68F79"))
+        lg.setColorAt(1, argb("#00F68F79"))
         p.fillRect(QRectF(x, y, 80, 3), lg)
 
     _shadow = None
@@ -578,19 +589,40 @@ class Window(QWidget):
         self.elapsed0 = self.compile0 = None
         self.prepare_now, self.shaders_began, self.shaders_later, self.built_in = True, False, None, None
         self.weight = WITHOUT_SHADERS
-        self.setWindowTitle("Hookshot")
-        self.setWindowIcon(QIcon(os.path.join(paths.ASSETS, "hookshot.ico")))
+        self.setWindowTitle("Red Tunic Builder")
         self.setFixedSize(960, 600)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAcceptDrops(True)
-        self.hook = QPixmap(os.path.join(paths.ASSETS, "hookshot.png"))
+        roots = [os.path.dirname(os.path.dirname(os.path.dirname(paths.APP_DIR))),
+                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(paths.APP_DIR))))]
+        self.hook = QPixmap()
+        for root in roots:
+            for relative in (os.path.join("assets", "red-tunic.png"), os.path.join("tools", "assets", "red-tunic.png")):
+                candidate = QPixmap(os.path.join(root, relative))
+                if not candidate.isNull():
+                    self.hook = candidate
+                    break
+            if not self.hook.isNull():
+                break
+        if self.hook.isNull():
+            self.hook = QPixmap(os.path.join(paths.ASSETS, "hookshot.png"))
+        icon = ""
+        for root in roots:
+            for relative in (os.path.join("assets", "red-tunic.ico"), os.path.join("tools", "assets", "red-tunic.ico")):
+                candidate = os.path.join(root, relative)
+                if os.path.isfile(candidate):
+                    icon = candidate
+                    break
+            if icon:
+                break
+        self.setWindowIcon(QIcon(icon or os.path.join(paths.ASSETS, "hookshot.ico")))
         self.clock = QTimer(self, interval=1000, timeout=self.tick)
         self._build_ui()
-        self.out_path.setText(os.path.join(os.path.expanduser("~"), "Games", "Hookshot"))
+        self.out_path.setText(os.path.join(os.path.expanduser("~"), "Games", "Red Tunic"))
         self.out_path.textChanged.connect(self.refresh)
         tools = core.Tools.find()
-        self.tools_note.setText("Nothing else to install: Hookshot's own build tools are here, downloaded and checked by its setup."
-                                if tools else "Hookshot's build tools are missing from its folder. Press Build and Hookshot downloads "
+        self.tools_note.setText("Nothing else to install: Red Tunic's own build tools are here, downloaded and checked by its setup."
+                                if tools else "Red Tunic's build tools are missing from its folder. Press Build and Red Tunic downloads "
                                               "them again.")
         self.set_step(0)
         self.refresh()
@@ -664,7 +696,7 @@ class Window(QWidget):
         icon.setGeometry(28, 32 - int(28 * self.hook.height() / self.hook.width() / 2), 28,
                          int(28 * self.hook.height() / self.hook.width()))
         glow(icon, "#000000", 6, 2, 0.5)
-        title = label("Hookshot", 15, W_BOLD)
+        title = label("Red Tunic", 15, W_BOLD)
         title.setParent(head)
         title.move(28 + 28 + 10, 32 - title.sizeHint().height() // 2)
         self.version_chip = label("", 12, color="InkSoft")
@@ -698,7 +730,7 @@ class Window(QWidget):
         self.caption.raise_()
 
     def _files_page(self):
-        self.files_title, self.files_sub = heading("Build your game"), sub("Pick your game files and where the game goes. Hookshot does "
+        self.files_title, self.files_sub = heading("Build your game"), sub("Pick your game files and where the game goes. Red Tunic does "
                                                                             "the rest, once.")
         self.dump_list = QVBoxLayout()
         self.dump_list.setSpacing(0)
@@ -877,7 +909,7 @@ class Window(QWidget):
             QTimer.singleShot(900, lambda: (self.show_main(), updater.update_folder(self, a.update, a.tag, a.fetched)))
             return
         if a.launch:
-            self.splash.text = "Starting Hookshot…"
+            self.splash.text = "Starting Red Tunic…"
             QTimer.singleShot(700, lambda: (self.show_main(), self.show_launcher(a.launch.rstrip("\\/"))))
             return
         if a.repair or not core.Tools.find():   # (the first start, or Repair: the build tools, as the setup got them)
@@ -949,7 +981,7 @@ class Window(QWidget):
         self.refresh_mode()
 
     def show_main(self):
-        """The hookshot fades out and the first step fades in, in the same window"""
+        """The Red Tunic splash fades out and the first step fades in, in the same window"""
         if getattr(self, "_shown_main", False):
             return
         self._shown_main = True
@@ -1010,7 +1042,7 @@ class Window(QWidget):
             self.mode = "build"
         if self.mode == "update_game":
             self.files_title.setText("Update available")
-            self.files_sub.setText("Hookshot %s is available. Your game is %s: Update builds it again from the game files kept in its "
+            self.files_sub.setText("Red Tunic %s is available. Your game is %s: Update builds it again from the game files kept in its "
                                    "folder, compiling only what changed." % (self.update_target, game))
             self.build_button.setText("Update")
         elif self.mode == "up_to_date":
@@ -1021,12 +1053,12 @@ class Window(QWidget):
             self.build_button.setText("Play")
         elif self.mode == "update_builder":
             self.files_title.setText("Build your game")
-            self.files_sub.setText("Hookshot Builder %s is available (this one is %s): update it first, then build." % (self.latest_tag,
+            self.files_sub.setText("Red Tunic Builder %s is available (this one is %s): update it first, then build." % (self.latest_tag,
                                                                                                                      builder))
             self.build_button.setText("Update builder")
         else:
             self.files_title.setText("Build your game")
-            self.files_sub.setText("Pick your game files and where the game goes. Hookshot does the rest, once.")
+            self.files_sub.setText("Pick your game files and where the game goes. Red Tunic does the rest, once.")
             self.build_button.setText("Build the game")
         self.build_button.setEnabled(self.mode != "build" or (self.source_ready() and len(out) > 2))
         self.about_text.setVisible(self.mode == "build")
@@ -1038,7 +1070,7 @@ class Window(QWidget):
         self.out_path.setText(folder)
         self.step_pill.hide()
         game = core.game_version(folder) or core.read_version(folder)
-        self.launch_version.setText(("Hookshot %s" % game if game else "Hookshot") + " · " + folder)
+        self.launch_version.setText(("Red Tunic %s" % game if game else "Red Tunic") + " · " + folder)
         self.launch_play.setEnabled(os.path.isfile(core.game_exe(folder)))
         self.show_page(self.launch_page)
         import threading
@@ -1284,7 +1316,7 @@ class Window(QWidget):
 
     def use_folders(self, r, x):
         if not os.path.isfile(os.path.join(x, "main")):
-            QMessageBox.information(self, "Hookshot", "That exefs folder has no file named main.")
+            QMessageBox.information(self, "Red Tunic", "That exefs folder has no file named main.")
             return
         self.source_picked = True
         self.romfs, self.exefs, self.chosen_nup = r, x, None
@@ -1298,7 +1330,7 @@ class Window(QWidget):
             self.out_path.setText(os.path.normpath(d))
 
     def browse_work(self):
-        d = QFileDialog.getExistingDirectory(self, "Choose where Hookshot keeps its build files")
+        d = QFileDialog.getExistingDirectory(self, "Choose where Red Tunic keeps its build files")
         if d:
             self.change_work(os.path.normpath(d))
 
@@ -1306,7 +1338,7 @@ class Window(QWidget):
         try:
             core.move_work(picked)
         except OSError as e:
-            QMessageBox.information(self, "Hookshot", "Hookshot cannot keep its build files there: %s" % e)
+            QMessageBox.information(self, "Red Tunic", "Red Tunic cannot keep its build files there: %s" % e)
         self.refresh()
 
     def show_work(self):
@@ -1708,7 +1740,7 @@ class Window(QWidget):
     def copy_for_report(self):
         tools = core.Tools.find()
         import platform
-        text = "Hookshot Builder %s on Windows %s\n%s: %s\n\n%s" % (tools.version if tools and tools.version else "(source)",
+        text = "Red Tunic Builder %s on Windows %s\n%s: %s\n\n%s" % (tools.version if tools and tools.version else "(source)",
                                                                   platform.version(), self.problem_title.text(), self.last_failure,
                                                                   "\n".join(self.log_lines[-200:]))
         QGuiApplication.clipboard().setText(text)

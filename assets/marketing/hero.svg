@@ -1,13 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="460" viewBox="0 0 1280 460" role="img" aria-labelledby="title desc">
-<title id="title">Red Tunic — Radeon iGPU tuning and Steam Deck / Linux focus</title><desc id="desc">Original project artwork with a processor and handheld outline. Steam Deck-specific performance measurements are pending.</desc>
-<defs><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0v32" fill="none" stroke="#edb3b9" stroke-opacity=".08"/></pattern><linearGradient id="red" x2="1" y2="1"><stop stop-color="#ad2034"/><stop offset="1" stop-color="#551324"/></linearGradient></defs>
-<rect width="1280" height="460" rx="18" fill="url(#red)"/><rect width="1280" height="460" rx="18" fill="url(#grid)"/>
-<path d="M860 0C660 160 1110 190 830 460M1000 0C800 160 1250 190 970 460M1140 0C940 160 1390 190 1110 460" fill="none" stroke="#e699a3" stroke-opacity=".12" stroke-width="2"/>
-<text x="60" y="65" fill="#f0c6cb" font-family="monospace" font-size="13" letter-spacing="4">INDEPENDENT / NATIVE PC / VERSION 4.4.0</text>
-<text x="55" y="180" fill="#fff6e7" font-family="Georgia,serif" font-size="106" letter-spacing="-5">RED TUNIC</text>
-<text x="61" y="234" fill="#f3d5d5" font-family="Arial,sans-serif" font-size="24">A new way back to Hyrule.</text>
-<path d="M61 276h545" stroke="#d38491" stroke-opacity=".55"/>
-<text x="61" y="317" fill="#fff6e7" font-family="Arial,sans-serif" font-size="19">AMD Radeon iGPU tuning</text><text x="61" y="350" fill="#f0c6cb" font-family="Arial,sans-serif" font-size="19">Steam Deck / Linux handheld focus</text>
-<text x="61" y="412" fill="#e0a1ad" font-family="monospace" font-size="11" letter-spacing="2">BRING YOUR OWN GAME. BUILD IT LOCALLY.</text>
-<g transform="translate(748 131) rotate(-8 200 100)" fill="none" stroke="#f1c8c6" stroke-width="3"><rect x="0" y="0" width="420" height="180" rx="52"/><rect x="97" y="22" width="226" height="135" rx="5"/><circle cx="51" cy="48" r="16"/><circle cx="367" cy="130" r="16"/><path d="M39 124h24m-12-12v24"/><circle cx="366" cy="37" r="4"/><circle cx="353" cy="51" r="4"/><circle cx="379" cy="51" r="4"/><circle cx="366" cy="65" r="4"/><path d="m144 118 58-68 64 68m-96-38h63m-75 24h96m-52-54v68" stroke-opacity=".4"/></g>
-<rect x="1039" y="345" width="169" height="46" rx="23" fill="#f6ead4"/><text x="1123" y="373" fill="#8f1b2d" text-anchor="middle" font-family="monospace" font-size="12" letter-spacing="1">VULKAN + x64</text></svg>
+<title id="title">Red Tunic 5.0.0 — a native PC journey back to Hyrule</title>
+<desc id="desc">Original fantasy-inspired artwork with a crimson cloak emblem, ember-lit forest, AMD Radeon iGPU tuning, and Steam Deck and Linux handheld focus. Steam Deck performance testing is pending.</desc>
+<defs>
+  <linearGradient id="night" x2="1" y2="1"><stop stop-color="#170d13"/><stop offset=".48" stop-color="#4b101b"/><stop offset="1" stop-color="#971e2d"/></linearGradient>
+  <radialGradient id="ember"><stop stop-color="#ffb84c" stop-opacity=".72"/><stop offset=".38" stop-color="#ef4d22" stop-opacity=".28"/><stop offset="1" stop-color="#ed3b25" stop-opacity="0"/></radialGradient>
+  <linearGradient id="gold" x2="0" y2="1"><stop stop-color="#ffe8a3"/><stop offset="1" stop-color="#c89a49"/></linearGradient>
+  <linearGradient id="screen" x2="0" y2="1"><stop stop-color="#7fb7a2"/><stop offset="1" stop-color="#233c3d"/></linearGradient>
+  <pattern id="grain" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="3" cy="7" r=".8" fill="#fff6e4" opacity=".14"/><circle cx="17" cy="18" r=".6" fill="#ffbd68" opacity=".18"/></pattern>
+</defs>
+<rect width="1280" height="460" rx="20" fill="url(#night)"/>
+<ellipse cx="1020" cy="305" rx="390" ry="280" fill="url(#ember)"/>
+<path d="M0 365c125-72 207-29 317-95 95-56 155-41 247 10s156 53 239-14c70-56 137-41 200 6 81 60 169 50 277-39v227H0z" fill="#1a171b" opacity=".8"/>
+<path d="M0 410c129-60 223-20 334-68 108-46 192-26 294 25 119 60 196 12 291-30 113-49 218 17 361-36v159H0z" fill="#101419" opacity=".82"/>
+<path d="M759 460c35-87 13-122 46-196 17 47 33 64 32 119 16-70 42-122 79-167-9 68-3 101 24 140 1-73 27-128 76-175-8 89 19 127 56 165 18-58 42-91 81-125-9 89 28 122 53 172v67z" fill="#7c1a24" opacity=".68"/>
+<path d="M819 460c23-54 16-93 40-142 12 38 13 65 11 98 20-61 47-100 82-132-6 53 2 89 19 116 9-49 33-87 64-117 1 61 14 89 37 117 12-45 35-72 62-96-2 57 22 89 42 121v35z" fill="#da472c" opacity=".43"/>
+<path d="M892 460c12-43 2-66 23-111 13 30 17 53 18 76 13-45 35-69 56-93 0 40 9 62 23 82 8-35 23-54 44-73 2 39 16 62 31 80 8-34 20-50 39-68 1 47 20 76 32 107z" fill="#ffbd5b" opacity=".27"/>
+<path d="M0 0h1280v460H0z" fill="url(#grain)"/>
+<g fill="none" stroke="#e7bd72" stroke-opacity=".26" stroke-width="2"><path d="M687 0c-37 71-26 113 26 138s70 53 38 103-28 90 15 131"/><path d="M727 0c-37 71-26 113 26 138s70 53 38 103-28 90 15 131"/><path d="M767 0c-37 71-26 113 26 138s70 53 38 103-28 90 15 131"/></g>
+<text x="60" y="57" fill="#f1c98c" font-family="monospace" font-size="12" letter-spacing="3.2">NATIVE PC RECOMPILATION  /  VERSION 5.0.0</text>
+<image href="../red-tunic.png" x="57" y="92" width="94" height="94" preserveAspectRatio="xMidYMid meet"/>
+<text x="169" y="166" fill="#fff2d3" font-family="Georgia,serif" font-size="87" letter-spacing="-4">RED TUNIC</text>
+<path d="M172 182h465" stroke="url(#gold)" stroke-width="2" opacity=".75"/>
+<text x="61" y="235" fill="#f7e4c8" font-family="Georgia,serif" font-size="28" font-style="italic">A new way back to Hyrule.</text>
+<text x="62" y="283" fill="#fff5df" font-family="Arial,sans-serif" font-size="17">Build your own supported game locally. Play on PC.</text>
+<g transform="translate(60 316)">
+  <rect width="252" height="43" rx="21" fill="#f4e3bd"/><path d="M18 12h23v19H18zM14 16h4m23 0h4M14 25h4m23 0h4M24 8v4m10-4v4M24 31v4m10-4v4" fill="none" stroke="#8d2331" stroke-width="2"/><text x="56" y="27" fill="#5b1d27" font-family="Arial,sans-serif" font-size="13" font-weight="700" letter-spacing=".6">AMD RADEON iGPU</text>
+  <rect x="265" width="265" height="43" rx="21" fill="#211b1d" stroke="#d9ae66"/><path d="M282 14h23v15h-23zM278 18h4m23 0h4m-31 7h4m23 0h4M287 11v3m12-3v3m-12 15v3m12-3v3" fill="none" stroke="#f3d18c" stroke-width="1.5"/><text x="319" y="27" fill="#f3dfb7" font-family="Arial,sans-serif" font-size="12" font-weight="700" letter-spacing=".5">STEAM DECK / LINUX</text>
+</g>
+<text x="62" y="414" fill="#efbd81" font-family="monospace" font-size="10" letter-spacing="2">HANDHELD FOCUS · DECK-SPECIFIC TESTS PENDING</text>
+<g transform="translate(801 75) rotate(-7 188 126)">
+  <rect x="0" y="0" width="392" height="252" rx="46" fill="#15171b" fill-opacity=".82" stroke="url(#gold)" stroke-width="3"/>
+  <rect x="91" y="25" width="210" height="190" rx="16" fill="#282326" stroke="#d5bd8e" stroke-width="2"/>
+  <rect x="105" y="39" width="182" height="162" rx="8" fill="url(#screen)"/>
+  <path d="M105 156c31-47 59-28 85-61 23-30 48-23 97-50v156H105z" fill="#355d50"/><path d="M105 170c34-32 55-9 83-36s59-7 99-32v99H105z" fill="#233a34"/>
+  <circle cx="42" cy="73" r="22" fill="#33252a" stroke="#e7c98c" stroke-width="2"/><path d="M26 150h34m-17-17v34" stroke="#e7c98c" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="350" cy="69" r="19" fill="#302126" stroke="#e7c98c" stroke-width="2"/><circle cx="329" cy="122" r="5" fill="#f4ddad"/><circle cx="351" cy="140" r="5" fill="#f4ddad"/><circle cx="373" cy="122" r="5" fill="#f4ddad"/><circle cx="351" cy="104" r="5" fill="#f4ddad"/>
+  <path d="M129 60c18-14 33-14 50 0m-50 17c18-14 33-14 50 0" fill="none" stroke="#e8d7b6" stroke-opacity=".5" stroke-width="3"/>
+</g>
+<g transform="translate(900 365)"><rect width="286" height="52" rx="26" fill="#180f14" stroke="#e5bc75" stroke-opacity=".78"/><text x="143" y="22" fill="#f5d995" text-anchor="middle" font-family="monospace" font-size="10" letter-spacing="1.4">VULKAN  ·  WINDOWS + LINUX</text><text x="143" y="39" fill="#dfc9a6" text-anchor="middle" font-family="Arial,sans-serif" font-size="10">Local build · bring your own game</text></g>
+</svg>

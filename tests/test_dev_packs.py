@@ -306,6 +306,14 @@ def test_generated_and_runtime(d):
     check("...not written through the base's hard link", (game / "romfs" / "prompts" / "icon.bntx").read_bytes() == b"base icon")
     check("the pack's deleted file is not in the runtime", not (rt / "prompts" / "Common.bntx").exists())
     check("...and still in the base", (game / "prompts" / "Common.bntx").exists())
+    linked_rt = d / "rt-romfs-link"
+    packs.main(["rt", str(base_dir), str(linked_rt), "cpu2"])
+    is_junction = getattr(os.path, "isjunction", lambda p: False)
+    check("an unchanged ROMFS is one directory link, not a file-by-file clone",
+          os.path.islink(linked_rt / "romfs") or is_junction(linked_rt / "romfs"))
+    check("the ROMFS link points at the base", os.path.samefile(linked_rt / "romfs", game / "romfs"))
+    check("a file below the ROMFS link stays the same file", os.path.samefile(linked_rt / "romfs" / "a" / "data.bin",
+                                                                               game / "romfs" / "a" / "data.bin"))
     for asked, what, why in ((["cpu", "cpu2"], "two packs with the same module", "both bring"),
                              (["old"], "a pack on another base", "not the base")):
         refused(what, ["rt", str(base_dir), str(d / ("rt-" + asked[-1])), *asked], why)

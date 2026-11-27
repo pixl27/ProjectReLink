@@ -18,7 +18,8 @@ static struct {
     /* window */
     void *CreateWindow, *SetWindowPosition, *SetWindowFullscreen, *SetRelativeMouseMode, *GetPrimaryDisplay,
         *GetDesktopDisplayMode, *Vulkan_CreateSurface, *PixelSize, *GetKeyboardState, *GetMouseState, *WaitEventTimeout,
-        *PollEvent, *GetWindowSize, *LoadPNG, *SetWindowIcon, *DestroySurface, *GetWindowDisplay, *GetCurrentDisplayMode;
+        *PollEvent, *GetWindowSize, *LoadPNG, *SetWindowIcon, *DestroySurface, *GetWindowDisplay, *GetCurrentDisplayMode,
+        *SetWindowTitle;
     void *StartTextInput, *StopTextInput, *GetClipboardText;   /* (hookshot: the menu's text fields; optional) */
     void *GetDisplays, *GetNumVideoDisplays, *GetDisplayName, *GetCurrentVideoDriver, *GetWindowPosition, *GetWindowFlags, *SyncWindow;
     /* sound */
@@ -58,6 +59,7 @@ static int get_all(HMODULE m, int three) {
     GET(SetHint, "SDL_SetHint");
     GET(GetError, "SDL_GetError");
     GET(CreateWindow, "SDL_CreateWindow");
+    *(FARPROC *)&f.SetWindowTitle = GetProcAddress(m, "SDL_SetWindowTitle");   /* optional: keep older SDL builds usable */
     GET(SetWindowFullscreen, "SDL_SetWindowFullscreen");
     GET2(SetRelativeMouseMode, "SDL_SetWindowRelativeMouseMode", "SDL_SetRelativeMouseMode");
     GET(GetDesktopDisplayMode, "SDL_GetDesktopDisplayMode");
@@ -202,6 +204,9 @@ void *hos_sdl_window(const char *title, int width, int height) {
                                                                               WIN_RESIZABLE | WIN_HIGH_DENSITY | WIN_VULKAN);
     if (w) CALL(_Bool (*)(void *, int, int), SetWindowPosition)(w, CENTRED, CENTRED);
     return w;
+}
+void hos_sdl_set_window_title(void *window, const char *title) {
+    if (window && title && f.SetWindowTitle) CALL(void (*)(void *, const char *), SetWindowTitle)(window, title);
 }
 void hos_sdl_fullscreen(void *window, int on) {
     if (version == 3) CALL(_Bool (*)(void *, _Bool), SetWindowFullscreen)(window, on != 0);

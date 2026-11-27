@@ -9,24 +9,37 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+/* Fit a render target inside the 720p ceiling while keeping its shape and 8-pixel alignment. */
+static inline void hos_output_cap_720p(uint32_t *w, uint32_t *h) {
+    if (!*w || !*h || (*w <= 1280 && *h <= 720)) return;
+    const double scale = fmin(1280.0 / *w, 720.0 / *h);
+    uint32_t nw = (uint32_t)(*w * scale) & ~7u;
+    uint32_t nh = (uint32_t)(*h * scale) & ~7u;
+    *w = nw ? nw : 8;
+    *h = nh ? nh : 8;
+}
+
+/* The title screen uses a fixed 1920x1080 crop. Keep a 720p choice as the window/presentation target, but render that
+   shape at 1080p so the logo is not clipped before Vulkan scales the finished image into the window. */
+static inline void hos_output_title_minimum(uint32_t *w, uint32_t *h) {
+    if (*w == 1280 && *h == 720) *w = 1920, *h = 1080;
+}
+
 /* The host and the menu accept the same custom output shapes and pixel budget. */
 static inline int hos_output_size_valid(uint32_t w, uint32_t h) {
     return w >= 640 && h >= 360 && (uint64_t)w * h <= 5120ULL * 2880 &&
            (uint64_t)w * 4 >= (uint64_t)h * 5 && (uint64_t)w * 9 <= (uint64_t)h * 48;
 }
 
-/* The Output resolution when none is chosen (no output_res= line in the options file, no HOS_OUTPUT_RES): the game's docked
-   picture, 2560 x 1440 (its display size at the full graphics scale: host/nn_applet.c hos_output_parse), or the main screen's
-   own size where that has fewer pixels (a Steam Deck's 1280 x 800, a 1080p monitor), so the game draws no more than the screen
-   shows. That size keeps the screen's shape, on purpose: 2560 x 1080 (21:9) or 2256 x 1504 (3:2) starts at its own size,
-   pixel for pixel, a picture of the monitor's shape (hos_output_own_shape), the shape the Aspect ratio row's default gives a
-   16:9 size too; 1280 x 800 and 1920 x 1200 did so before. A screen not known (0 x 0), or of no size the game takes, gets
-   2560 x 1440 too. host/nn_applet.c at boot and the Insert menu's first start (gpu/vk/vk_menu.cpp menu_init) take it alike,
-   so the run and the menu agree with no restart. */
+/* The default Output resolution: the game's 2560 x 1440, or the main screen's own size when it has fewer pixels, then fit inside
+   1280 x 720 while keeping its shape. An explicit output_res= or HOS_OUTPUT_RES bypasses the cap, so the player can choose a
+   larger render size. host/nn_applet.c at boot and the Insert menu's first start (gpu/vk/vk_menu.cpp menu_init) take the same
+   default, so the run and menu agree with no restart. */
 static inline void hos_output_default(uint32_t sw, uint32_t sh, uint32_t *w, uint32_t *h) {
     *w = 2560, *h = 1440;
     sw &= ~7u, sh &= ~7u;
     if ((uint64_t)sw * sh < 2560ULL * 1440 && hos_output_size_valid(sw, sh)) *w = sw, *h = sh;
+    hos_output_cap_720p(w, h);
 }
 
 /* An output size of a shape of its own: more than 1 % off 16:9 (16:10, 4:3, 21:9, 32:9...), as the Insert menu's Aspect ratio

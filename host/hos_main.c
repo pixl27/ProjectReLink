@@ -2564,6 +2564,7 @@ static int game_main(int argc, char **argv) {
         }
         extern volatile uint64_t hos_wide_out, hos_wide_scene;
         extern volatile float hos_wide_ratio, hos_wide_squeeze, hos_wide_margin;
+        int hos_ini_option(const char *key, int otherwise);
         uint32_t hos_output_size(int height);
         const uint32_t output_w = hos_output_size(0), output_h = hos_output_size(1);
         /* An output of a shape of its own (the Insert menu's Aspect ratio: 21:9, 16:10, 4:3, a 32:9 surround...) asks for that
@@ -2580,6 +2581,7 @@ static int game_main(int argc, char **argv) {
                resolution rows share; issue 1031) */
             unsigned ow, oh;
             hos_wide_size(output_h, r, hos_wide_max_px(), &ow, &oh);
+            if (output_w <= 1280 && output_h <= 720 && hos_ini_option("limit_720p", 1)) hos_output_cap_720p(&ow, &oh);
             const unsigned sh = oh * 3 / 4, sw = (unsigned)(ow * 0.75 / 8 + 0.5) * 8;   /* (the scene, 3/4 of the picture as shipped) */
             hos_wide_out = (uint64_t)oh << 32 | ow;
             hos_wide_scene = (uint64_t)sh << 32 | sw;

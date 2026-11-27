@@ -2643,8 +2643,60 @@ void decode_astc_fast_cpu(std::span<const uint8_t> blocks, uint32_t w, uint32_t 
         std::fill(out.begin(), out.end(), uint8_t{0});
 }
 
+void decode_astc_fast_cpu_parallel(std::span<const uint8_t> blocks, uint32_t w, uint32_t h, uint32_t d,
+                                   uint32_t bw, uint32_t bh, std::span<uint8_t> out) {
+    constexpr uint64_t min_bytes = 64 * 1024;
+    constexpr unsigned max_threads = 8;
+    const uint32_t available = std::thread::hardware_concurrency();
+    const unsigned nthreads = std::clamp(available / 2, 1u, max_threads);
+    if (blocks.size() < min_bytes || nthreads < 2 || !h || !d || !bw || !bh) {
+        decode_astc_fast_cpu(blocks, w, h, d, bw, bh, out);
+        return;
+    }
+
+    const uint64_t bx = (uint64_t(w) + bw - 1) / bw;
+    const uint64_t by = (uint64_t(h) + bh - 1) / bh;
+    if (!bx || !by || d > UINT64_MAX / by) {
+        decode_astc_fast_cpu(blocks, w, h, d, bw, bh, out);
+        return;
+    }
+    const uint64_t rows = by * d;
+    const uint64_t available_blocks = blocks.size() / 16;
+    const uint64_t slice_pixels = uint64_t(w) * h;
+    if (rows < uint64_t(nthreads) * 2 || by > available_blocks / bx ||
+        uint64_t(d) > available_blocks / (bx * by) || slice_pixels > out.size() / 4 ||
+        uint64_t(d) > out.size() / 4 / slice_pixels) {
+        decode_astc_fast_cpu(blocks, w, h, d, bw, bh, out);
+        return;
+    }
+
+    auto part = [&](unsigned thread) {
+        const uint64_t each = rows / nthreads, extra = rows % nthreads;
+        uint64_t row = each * thread + std::min<uint64_t>(thread, extra);
+        const uint64_t end = row + each + (thread < extra);
+        while (row < end) {
+            const uint64_t z = row / by;
+            const uint64_t y_block = row % by;
+            const uint64_t slice_end = std::min(end, (z + 1) * by);
+            const uint64_t row_count = slice_end - row;
+            const uint32_t y = (uint32_t)(y_block * bh);
+            const uint32_t strip_h = (uint32_t)std::min<uint64_t>(h - y, row_count * bh);
+            const uint64_t block_offset = row * bx * 16;
+            const uint64_t block_bytes = row_count * bx * 16;
+            const uint64_t rgba_offset = (z * slice_pixels + uint64_t(y) * w) * 4;
+            const uint64_t rgba_bytes = uint64_t(w) * strip_h * 4;
+            const int64_t bad = texdecode::astc_decode(
+                blocks.subspan((size_t)block_offset, (size_t)block_bytes), w, strip_h, 1, bw, bh, false,
+                out.subspan((size_t)rgba_offset, (size_t)rgba_bytes), {0, 0, 0, 0});
+            if (bad < 0) std::fill_n(out.data() + rgba_offset, (size_t)rgba_bytes, uint8_t{0});
+            row = slice_end;
+        }
+    };
+    ::mkwvk::cxx_escape::fork_join("ASTC CPU decode", nthreads, part, helper_thread_start);
+}
+
 AstcCpuDecoder astc_cpu_decoder(bool parallel = false) {
-    if (astc_fast_cpu_on()) return decode_astc_fast_cpu;
+    if (astc_fast_cpu_on()) return parallel ? decode_astc_fast_cpu_parallel : decode_astc_fast_cpu;
     return parallel ? Tegra::Texture::ASTC::Decompress : Tegra::Texture::ASTC::DecompressSerial;
 }
 

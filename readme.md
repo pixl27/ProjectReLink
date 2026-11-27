@@ -1,65 +1,61 @@
-![Red Tunic: Radeon iGPU tuning and Steam Deck / Linux focus](assets/marketing/hero.svg)
+![Red Tunic 5.0.0 — a native PC journey back to Hyrule](assets/marketing/hero.svg)
 
-# Red Tunic 4.4.0
+# Return to Hyrule on PC
 
-An unofficial native PC recompilation of the **2026 Nintendo Switch 2 remake of The Legend of Zelda: Ocarina of Time**. Built locally from your own supported copy, with **AMD Radeon iGPU tuning** and **Linux / Steam Deck handheld play in focus**.
+Red Tunic is an independent native PC project for **The Legend of Zelda: Ocarina of Time**. It builds from your own supported game copy, then lets you play with Vulkan graphics, familiar controls and settings for your machine.
 
-**[Download 4.4.0](https://github.com/spacefarergames/RedTunic/releases/tag/v4.4.0)** · **[Project website](https://spacefarergames.github.io/RedTunic/)** · [How to play](#your-copy-your-pc-your-build) · [Release notes](RELEASE_NOTES_4.4.0.md) · [Technical docs](docs/README.md) · [Website source](site/)
+**[Get Red Tunic 5.0.0](https://github.com/spacefarergames/RedTunic/releases/tag/v5.0.0)** · **[Visit the project site](https://spacefarergames.github.io/RedTunic/)** · [Start here](#your-copy-your-pc-your-build) · [See the official game gallery](https://www.nintendo.com/en-gb/Games/Nintendo-Switch-2-games/The-Legend-of-Zelda-Ocarina-of-Time-3115664.html) · [Release notes](RELEASE_NOTES_5.0.0.md)
 
 <a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
-![Hardware, with context](assets/marketing/hardware.svg)
-
-| AMD Radeon integrated graphics | Steam Deck & Linux handhelds |
-|---|---|
-| **Tuned and measured on Ryzen 5 5625U / Radeon Vega / 16 GB shared RAM.** The reference profile uses modest output and render sizes, pressure-aware texture budgets and conservative compute defaults. | **A development focus, with portable Linux builds and controller-friendly play.** Steam Deck-specific performance measurements are still pending; Radeon PC numbers are not Deck benchmarks. |
-| [Radeon tuning guide](docs/red-tunic-vega.md) · [Measured runs](docs/tested-configurations.md) | [Linux setup](docs/development.md) · [RecompLauncher support](docs/recomplauncher.md) |
-
-Red Tunic targets shared-memory GPUs and compact PCs. Performance depends on the scene, driver, resolution and memory pressure. Experimental mesh reuse and shared fallback scratch remain opt-in; no universal frame-rate or stutter-free claim is made.
-
-<a id="your-copy-your-pc-your-build"></a>
-
 ![Your copy. Your PC. Your build.](assets/marketing/play.svg)
 
-1. **Bring your own game.** Use a supported, decrypted `.nup` or an extracted folder containing `exefs` and `romfs`: update **v131072**, build **`e0f3ccfa`**.
-2. **Choose your setup.** Extract the Windows ZIP and open **`RedTunic.exe`**, open the Linux AppImage, or let RecompLauncher run Easy Setup. The download contains build tools, not the game.
-3. **Build and play locally.** Choose output, upscaling and controller settings. For an existing standalone installation, keep its output directory when updating to retain saves, settings and compatible shader caches.
+## Start with your own game
 
-RecompLauncher keeps its own build, saves and settings under `recompdata`. It does not move an existing standalone installation or its original shader cache.
+1. **Bring a supported copy.** Red Tunic needs update **v131072**, build **`e0f3ccfa`**, as a decrypted `.nup` or extracted `exefs` and `romfs` folders.
+2. **Pick how you want to set it up.** Use the Windows Builder, the Linux AppImage, or RecompLauncher’s Easy Setup.
+3. **Build and play on your PC.** Your game files stay on your machine. The download contains the setup tools, not the game.
+
+Keep your existing standalone output folder when rebuilding to retain your saves, settings and compatible shader caches. RecompLauncher keeps its own build and saves in its separate `recompdata` folder.
+
+![Hardware, with context](assets/marketing/hardware.svg)
+
+## Tuned for compact PCs, measured on Radeon
+
+| Radeon integrated graphics | Steam Deck and Linux handhelds |
+|---|---|
+| The reference PC is a Ryzen 5 5625U with Radeon Vega and 16 GB shared RAM. The default profile is tuned for shared-memory limits and lower output sizes. | Linux and handheld play are active development targets. Steam Deck-specific performance has not been measured; Radeon PC results are not Deck benchmarks. |
+
+Version 5.0.0 speeds up one CPU texture-decoding path, adds a 720p output choice with an optional higher-resolution limit, and lets you lower distant object detail to 50%. These changes improve specific work and display options; they do not promise a fixed frame rate or stutter-free play. [Read the measurements](docs/recomp-performance-survey-2026-11-26.md).
 
 ![Tuned with evidence](assets/marketing/features.svg)
 
-- **Native x64 + Vulkan.** The project builds a PC executable from your copy and replays its GPU work through Vulkan, including compute mesh fallback where native mesh shaders are unavailable.
-- **A budget for shared memory.** 4.3.0’s texture-memory controls remain available; 4.4.0 adds integrated-GPU heap-budget accounting to the existing pressure logic.
-- **Keep your shader work.** The 4.4.0 host changes preserve the translator and cache format. Local validation reused **47,798 cached programs** and reported **zero pipeline compilations**. Compatibility still depends on GPU, toolchain and configuration.
-- **RecompLauncher support.** Named game inputs, verified build-ID checks, setup progress, settings, saves and direct play ship in the portable releases.
-- **The Red Tunic identity, embedded.** The Windows program contains the original cloak icon at seven sizes and Red Tunic **4.4.0** file/product metadata.
-- **Experiments stay optional.** Four camera-turn runs found the combined experimental group **10.9% slower in mean frame time** on the reference APU. Those switches stay off by default. [Measurements and limitations](docs/cache-safe-performance.md)
+- **A native PC build.** Red Tunic recompiles the game for x64 and replays graphics through Vulkan, with a compute fallback for GPUs without mesh shaders.
+- **Faster texture loading work.** The optimized CPU ASTC decoder is enabled by default. In one reversed camera-test pair, CPU decode and upload work fell from about **3.39 s to 0.91 s**; results varied between pairs, so this is not a general FPS claim.
+- **A fitted picture.** Choose 1280 × 720, use higher output modes when desired, and unlock the optional 720p ceiling in settings.
+- **Distance detail in your hands.** Lower object detail to 50% so distant models can use simpler versions sooner.
+- **A familiar setup.** RecompLauncher support includes named game inputs, build-ID checks, setup progress, settings and saves.
+- **Your shader cache stays yours.** Version 5.0.0 keeps the existing shader translation and cache format. Compatibility depends on GPU, driver, toolchain and settings.
 
-![See the world again](assets/marketing/gallery.svg)
+![See the adventure](assets/marketing/gallery.svg)
 
-![Actual Red Tunic validation capture beside the lake and bridge, rendered on Radeon Vega](docs/images/red-tunic-440-gameplay.png)
+## Explore the adventure
 
-*Actual Red Tunic validation capture on Radeon Vega / Windows. Game imagery © Nintendo. This is not a Steam Deck performance claim.*
-
-| Official 2026 remake footage | A closer look |
-|---|---|
-| **[▶ IGN: Official Gameplay Overview](https://www.youtube.com/watch?v=lP8PEivKVbg)** | **[▶ IGN: Ocarina of Time Remake Preview](https://www.youtube.com/watch?v=aoqemZVeIzw)** |
-| Official gameplay footage via IGN, September 2026. | IGN’s preview, October 2026. |
-
-IGN videos show the Nintendo release, not Red Tunic benchmarks. No public-domain license is claimed for Nintendo or IGN imagery; the project’s header graphics are original vector artwork.
+See the official **Ocarina of Time** screenshots and game details on [Nintendo’s gallery page](https://www.nintendo.com/en-gb/Games/Nintendo-Switch-2-games/The-Legend-of-Zelda-Ocarina-of-Time-3115664.html). Watch the [IGN gameplay overview](https://www.youtube.com/watch?v=lP8PEivKVbg) or [IGN remake preview](https://www.youtube.com/watch?v=aoqemZVeIzw). Those show the Nintendo release; they are not Red Tunic performance captures.
 
 ![Put on the Red Tunic](assets/marketing/downloads.svg)
 
+## Choose your setup
+
 | Your system | Get started |
 |---|---|
-| **Windows x64** | [Portable ZIP](https://github.com/spacefarergames/RedTunic/releases/download/v4.4.0/RedTunic-v4.4.0-Windows-x64.zip) — extract the whole folder and open `RedTunic.exe`. |
-| **Linux x86-64 / SteamOS** | [AppImage](https://github.com/spacefarergames/RedTunic/releases/download/v4.4.0/RedTunic-v4.4.0-x86_64.AppImage) or [portable tarball](https://github.com/spacefarergames/RedTunic/releases/download/v4.4.0/RedTunic-v4.4.0-Linux-x86_64.tar.gz); glibc 2.35+. |
-| **RecompLauncher** | Install the release, select your supported game and run Easy Setup. [Integration guide](docs/recomplauncher.md) |
+| **Windows x64** | [Portable download](https://github.com/spacefarergames/RedTunic/releases/download/v5.0.0/RedTunic-v5.0.0-Windows-x64.zip) — extract the folder and open `RedTunic.exe`. |
+| **Linux x86-64 / SteamOS** | [AppImage](https://github.com/spacefarergames/RedTunic/releases/download/v5.0.0/RedTunic-v5.0.0-x86_64.AppImage) or [portable tarball](https://github.com/spacefarergames/RedTunic/releases/download/v5.0.0/RedTunic-v5.0.0-Linux-x86_64.tar.gz); glibc 2.35+. |
+| **RecompLauncher** | Install the launcher, choose your supported game and run Easy Setup. [Setup guide](docs/recomplauncher.md) |
 
-[Checksums & all release assets](https://github.com/spacefarergames/RedTunic/releases/tag/v4.4.0) · [Report an issue](https://github.com/spacefarergames/RedTunic/issues) · [Source and licenses](LICENSE)
+[All downloads and checksums](https://github.com/spacefarergames/RedTunic/releases/tag/v5.0.0) · [Get help](https://github.com/spacefarergames/RedTunic/issues) · [Source and licenses](LICENSE)
 
-Red Tunic is independent and unofficial, based on Hookshot. Nintendo, AMD, Valve and IGN retain their respective trademarks and media rights. **No game files, keys, prebuilt game executables, saves or shader caches are distributed.**
+Red Tunic is an unofficial, independent project based on Hookshot. Nintendo, AMD, Valve and IGN retain their respective trademarks and media rights. **No game files, keys, prebuilt game executables, saves or shader caches are distributed.**
 
 <details>
 <summary><strong>Deep dive: implementation, earlier releases and controls</strong></summary>
@@ -255,7 +251,8 @@ Camera, Mouse, Movement and Menu. The table lists those tabs' rows in that order
 |---|---|---|---|
 | Graphics | Quality preset | Custom, Minimum (4GB), Low (6GB), Balanced (8GB), High (12GB), Ultra (16GB+), Auto (this PC) | Auto (this PC) on a first start; Custom in an options file from before it |
 | | Aspect ratio | The shapes your screen's resolutions have, narrowest first (5:4, 4:3, 16:10, 16:9, 21:9, 32:9, ...), your monitor's own marked "(monitor's)" (after a restart) | Your monitor's |
-| | Output resolution | The Aspect ratio's sizes: your screen's resolutions and the common ones (1440p, 4K, 5K at 16:9; 1920x1200, 2560x1600 at 16:10; 3440x1440 at 21:9; ...), and 2048x1152 (the game's own) at 16:9 (after a restart) | 2048x1152 |
+| | Output resolution | The Aspect ratio's sizes: your screen's resolutions and common sizes, plus 2048x1152 (after a restart) | 1280x720 target; title frame uses 1920x1080 then scales to window |
+| | Output ceiling | 720p, Unlocked (after a restart; the title screen uses a 1080p source and scales to the window) | 720p |
 | | Custom output size | A size of your own, typed as `<width>x<height>` (after a restart) | None |
 | | Profile | Docked, Handheld (after a restart) | Docked |
 | | Upscaler | Game's own, NVIDIA DLSS, NVIDIA DLAA (only in builds with NVIDIA's DLSS SDK, below; DLSS and DLAA on RTX GPUs), AMD FSR 3.1 (every build, on GPUs it runs on, below), AMD FSR 4, AMD FSR 4 Native AA (only in builds with FSR 4, below), Off (no upscaling) | Game's own |
@@ -282,14 +279,16 @@ Camera, Mouse, Movement and Menu. The table lists those tabs' rows in that order
 | | HDR contrast | 50% to 200% around mid grey (while HDR is on) | 100% |
 | | HDR tone mapper | Vanilla (the game's curve), PsychoV35 (RenoDX's; with HDR set to Native. DLSS, FSR and TAAU do not take its scene yet: the game's own upscale runs) | Vanilla |
 | | Texture detail | Auto, Full, Medium, Low | Auto |
+| | Material array limit | Follow Texture detail, 1024 MiB, 512 MiB, 256 MiB | Follow Texture detail |
 | | Anisotropic filtering | Game's, 2x, 4x, 8x, 16x | 16x |
 | | Shadow resolution | Auto (for the card's memory), Game's (1600), High (2200), Highest (3072): the sun's shadow maps, applies at once | Auto |
 | | Foliage distance | 25% to 150% (400% uncapped), in steps of 25; applies immediately | 100% (original) |
-| | Object detail | 100% to 250% (400% uncapped), in steps of 25; applies immediately | 100% (original) |
+| | Object detail | 50% to 400%, in steps of 10; lower switches to simpler distant models sooner | 100% (original) |
 | | Grass density | None, 25% to 200% (300% uncapped), in steps of 25; applies immediately | 100% (original) |
 | | Shadow distance | 25% to 200% (400% uncapped), in steps of 25; applies immediately | 100% (original) |
 | | Contact shadows | On, Off | On |
 | | Base quality | Normal, Low (handheld) | Normal |
+| | Texture cache ceiling | Auto, 768 MiB, 1024 MiB, 1536 MiB, 2048 MiB | Auto |
 | | GPU device | Auto, or each graphics card by name (after a restart) | Auto |
 | Audio | Volume | 0 to 100%, in steps of 5 | 100% |
 | | Mute in background | Off, On | Off |

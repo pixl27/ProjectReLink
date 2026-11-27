@@ -19,11 +19,14 @@ def main():
     cut = text[text.index('using AstcCpuDecoder ='):text.index('void decode_astc_vega_cached(')]
     source = r'''
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
 #include <span>
+#include <thread>
 #include <vector>
+#include "cxx_escape.h"
 #include "texdecode/texdecode.h"
 static int serial=0, parallel=0;
 namespace Tegra::Texture::ASTC {
@@ -33,6 +36,7 @@ void Decompress(std::span<const uint8_t>,uint32_t,uint32_t,uint32_t,uint32_t,uin
 bool env_on(const char* name){const char* p=std::getenv(name);return p&&std::strcmp(p,"1")==0;}
 bool env_on_or(const char* name,int def){const char* p=std::getenv(name);return p?(std::strcmp(p,"0")!=0):def!=0;}
 void logf(const char*,...){}
+void helper_thread_start(){}
 using namespace mkwvk;
 ''' + cut + r'''
 int main(int argc,char** argv) {
@@ -52,6 +56,19 @@ int main(int argc,char** argv) {
  blocks={0xFC,0xFD,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x22,0x22,0x44,0x44,0x66,0x66,0x88,0x88};
  astc_cpu_decoder()(blocks,4,4,1,4,4,out);
  for(unsigned i=0;i<64;++i)assert(out[i]==uint8_t(0x22*(i%4+1)));
+ // Large Vega uploads enter the parallel fast path; splitting block rows must
+ // produce the same pixels across rows and depth slices as a serial decode.
+ std::vector<uint8_t> large_blocks(16u*64u*64u*2u);
+ for(size_t i=0;i<large_blocks.size();i+=blocks.size())
+   std::copy(blocks.begin(),blocks.end(),large_blocks.begin()+i);
+ std::vector<uint8_t> serial_out(256u*256u*2u*4u), parallel_out(serial_out.size(),0xA5);
+ decode_astc_fast_cpu(large_blocks,256,256,2,4,4,serial_out);
+ decode_astc_fast_cpu_parallel(large_blocks,256,256,2,4,4,parallel_out);
+ assert(serial_out==parallel_out);
+ // The parallel adapter takes the same safe zero-fill path for a short source.
+ large_blocks.resize(large_blocks.size()-1);std::fill(parallel_out.begin(),parallel_out.end(),0xA5);
+ decode_astc_fast_cpu_parallel(large_blocks,256,256,2,4,4,parallel_out);
+ assert(std::all_of(parallel_out.begin(),parallel_out.end(),[](auto c){return c==0;}));
  // Synthetic astcenc vector 49 distinguishes the two profiles. This adapter
  // deliberately preserves the existing linear-profile/cache identity contract.
  blocks={0x1d,0xef,0x4f,0xea,0x11,0xbb,0xc7,0x30,0x8e,0x29,0x77,0xbb,0x60,0x99,0x26,0x97};

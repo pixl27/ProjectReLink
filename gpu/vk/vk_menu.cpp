@@ -153,6 +153,7 @@ const char* tx_framegen(int v) {
     return t[framegen_capped(v, dlss_fg_most())];
 }
 const char* tx_onoff(int v) { return v ? "On" : "Off"; }
+const char* tx_output_ceiling(int v) { return v ? "720p" : "Unlocked"; }
 const char* tx_fps_level(int v) { return fps_stats::level_name(v); }
 const char* tx_fps_corner(int v) { return fps_stats::corner_name(v); }
 const char* tx_fps_size(int v) {   // (the FPS counter size row: Auto, then the Menu size row's names)
@@ -696,6 +697,7 @@ int output_for_aspect(int v) {
 Out picture_for(int v, bool* native = nullptr) {
     v = output_choice(v);
     Out o = output_at(v);
+    // The row names the selected window/output size. Only the actual logical game target is promoted for the fixed title crop.
     uint32_t sw = 0, sh = 0;
     if (native) *native = false;
     const bool own = hos_output_own_shape(o.w, o.h);
@@ -722,7 +724,8 @@ Out shown_output() {
 // 3840x2160, not the 2560x1440 of 8/12.
 int twelfths(float scale) { return std::min(std::max((int)(scale * 12.0f + 0.5f), 1), 12); }
 void game_size(float scale, uint32_t& w, uint32_t& h) {
-    const Out o = shown_output();
+    Out o = shown_output();
+    hos_output_title_minimum(&o.w, &o.h);
     const int k = twelfths(scale);
     w = (o.w * k + 11) / 12, h = o.h * k / 12;
 }
@@ -886,6 +889,7 @@ const char* tx_damage_taken(int v) {
     return names[v >= 0 && v < 4 ? v : 1];
 }
 const char* tx_fov(int v) { return v == 100 ? "100% (original)" : tx_percent(v); }
+const char* tx_object_detail(int v) { return v < 100 ? tx_percent(v) : tx_fov(v); }
 // (hookshot) Walk mode: how the Walk key (the Controls page) makes Link walk with the movement keys (host/nn_hid.c walk_held)
 const char* tx_grass(int v) { return v == 0 ? "None" : tx_fov(v); }
 const char* tx_base_quality(int v) { return v ? "Low (handheld)" : "Normal"; }
@@ -1696,6 +1700,8 @@ Row rows[] = {
     {TAB_GRAPHICS, "Output resolution", &opts.output_res, 0, 0, 1, tx_output_res,
      "The game's whole frame, HUD included, before it is scaled to the window. Docked only. Applies after a restart.",
      hn_output_res, true, true},
+    {TAB_GRAPHICS, "Output ceiling", &opts.limit_720p, 0, 1, 1, tx_output_ceiling,
+     "720p sets the default output target to 1280x720. The title screen renders at 1920x1080 so its fixed crop fits, then scales to the window. Choose Unlocked for a higher default. Applies after a restart."},
     {TAB_GRAPHICS, "Custom output size", nullptr, 0, 0, 0, nullptr,   // (hookshot: a text field, field_rows)
      "An Output resolution of your own, typed as width x height: your monitor's size, such as 3440x1440, 2560x1080 or "
      "2560x1600. Each side is rounded down to a multiple of 8; a size the Output resolution offers is chosen there. Empty: "
@@ -1792,8 +1798,8 @@ Row rows[] = {
     {TAB_GRAPHICS, "Foliage distance", &opts.gfx_foliage, 25, 400, 25, tx_fov,
      "How far away small trees, bushes and flowers are drawn. Higher costs CPU and GPU time. Changes apply at once.",
      hn_foliage, false, true},
-    {TAB_GRAPHICS, "Object detail", &opts.gfx_objects, 100, 400, 25, tx_fov,
-     "How far away 3D objects keep their detailed models. Changes apply at once.", hn_objects, false, true},
+    {TAB_GRAPHICS, "Object detail", &opts.gfx_objects, 50, 400, 10, tx_object_detail,
+     "How far away 3D objects keep their detailed models. 100% is the game's original distance; lower values switch to simpler models sooner, down to 50%. Changes apply at once.", hn_objects, false, true},
     {TAB_GRAPHICS, "Grass density", &opts.gfx_grass, 0, 300, 25, tx_grass,
      "How much grass is drawn: None hides it. Changes apply at once.", hn_grass, false, true},
     {TAB_GRAPHICS, "Shadow distance", &opts.gfx_shadows, 25, 400, 25, tx_fov,
@@ -2317,14 +2323,16 @@ void nfc_press(bool tap) {
     }
 }
 
-/// Detail rows' max: table hi (uncapped) or the cap; a capped value is pulled back (after the ini, on the Debug row)
+/// Detail rows' max: table hi (uncapped) or the cap; a capped value is pulled back (after the ini, on the Debug row). Keep
+/// the new 50% object-detail floor when reading older saved values.
 void gfx_limits() {
     static const struct { int* v; int cap, max; } caps[] = {
         {&opts.gfx_foliage, kCapFoliage, 400}, {&opts.gfx_objects, kCapObjects, 400},
         {&opts.gfx_grass, kCapGrass, 300}, {&opts.gfx_shadows, kCapShadows, 400}};
     for (Row& r : rows)
         for (const auto& k : caps)
-            if (r.value == k.v) r.hi = opts.gfx_uncapped ? k.max : k.cap, *k.v = std::min(*k.v, r.hi);
+            if (r.value == k.v) r.hi = opts.gfx_uncapped ? k.max : k.cap,
+                                 *k.v = std::min(*k.v, r.hi), *k.v = k.v == &opts.gfx_objects ? std::max(*k.v, 50) : *k.v;
 }
 
 int ultrawide_read = 1;   // (ultrawide= as read: saved again while HOS_OUTPUT_RES holds the Output resolution and the row is as it was)
@@ -2785,6 +2793,7 @@ std::string ini_path() { return options_path(); }   // (the user folder's when -
 const char* ini_key(const Row& r) {
     if (r.value == &monitor_pick) return "fullscreen_monitor";
     if (r.value == &opts.output_res) return "output_res";   // (host/nn_applet.c reads it at the start)
+    if (r.value == &opts.limit_720p) return "limit_720p";
     if (r.value == &opts.vsync) return "vsync";
     // (rows renamed since their values were first saved keep their keys: an options file from before still loads)
     if (r.value == &opts.audio_output) return "audio_output";
@@ -3913,6 +3922,8 @@ std::string key_text(int button, int slot) {
 std::mutex startup_mu;   // (the start-up screen's view, set from its own thread)
 StartupView startup;
 std::atomic<bool> startup_on{false};
+std::atomic<bool> startup_transient{false};
+std::atomic<int64_t> startup_transient_at{0};
 std::atomic<float> startup_fade{0};   // (the start-up screen's fade to black at its end, 0 to 1: startup_fade_to)
 std::atomic<int64_t> game_frames{0}, shown_frames{0};
 char fps_text[48] = "";
@@ -6175,8 +6186,27 @@ void draw_startup(ui::Ctx& c) {
         v = startup;
     }
     const float s = c.s, w = c.w, h = c.h, cx = w * 0.5f, k = s * 0.86f;   // (k: the scale of what is under the logo)
-    c.d->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), ui::rgba(17, 8, 10));
     const int64_t now = prof_now();
+    int64_t transient_at = startup_transient_at.load(std::memory_order_relaxed);
+    float transient_fade_out = 0.0f;
+    if (startup_transient.load(std::memory_order_relaxed) && transient_at <= 0) {
+        startup_transient_at.compare_exchange_strong(transient_at, now, std::memory_order_relaxed);
+        transient_at = startup_transient_at.load(std::memory_order_relaxed);
+    }
+    if (startup_transient.load(std::memory_order_relaxed) && transient_at > 0) {
+        const float elapsed = static_cast<float>((prof_now() - transient_at) / 1e9);
+        transient_fade_out = std::clamp((elapsed - 1.0f) / 0.42f, 0.0f, 1.0f);
+        v.title = "Starting game";
+        v.left = "Loading game";
+        v.right.clear();
+        v.fraction = 0.18 + 0.12 * (0.5 + 0.5 * std::sin(elapsed * 4.2f));
+        v.pct = "";
+    }
+    // A newly created swapchain can be black before the first complete UI frame. Bring the existing Red Tunic screen in
+    // over a warm background instead of exposing that black frame; the ending still fades this same image to black.
+    const float fade_in = transient_at > 0
+        ? std::clamp(static_cast<float>((now - transient_at) / 1e9) / 0.32f, 0.0f, 1.0f) : 1.0f;
+    c.d->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), ui::rgba(28, 10, 12));
     static int64_t fire_since = now, last_frame = now;
     static float shown_fraction = 0;
     const float dt = static_cast<float>((now - last_frame) / 1e9);
@@ -6228,8 +6258,12 @@ void draw_startup(ui::Ctx& c) {
             ui::text(c, c.f.body, px, ImVec2(x1 - ui::size_of(c.f.body, px, v.right.c_str()).x, under + 12 * k), ui::kSoft, v.right.c_str());
         if (!v.hint.empty()) ui::text_centre(c, c.f.body, 15.5f * k, ImVec2(cx, by + 92 * k), ui::kDim, v.hint.c_str());
     }
+    if (startup_transient.load(std::memory_order_relaxed) && transient_at > 0 && fade_in < 1.0f)
+        c.d->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), ui::rgba(28, 10, 12, (int)(255 * (1.0f - fade_in))));
     if (const float f = startup_fade.load(std::memory_order_relaxed); f > 0)   // (the end: to black, the game's first frame next)
         c.d->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), ui::rgba(0, 0, 0, (int)(std::min(f, 1.0f) * 255 + 0.5f)));
+    if (transient_fade_out > 0.0f)
+        c.d->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), ui::rgba(0, 0, 0, (int)(transient_fade_out * 255 + 0.5f)));
 }
 
 } // namespace
@@ -6265,6 +6299,8 @@ void startup_screen(const StartupView* view) {
     if (!view) {
         startup_on.store(false, std::memory_order_release);
         startup_fade.store(0, std::memory_order_relaxed);
+        startup_transient.store(false, std::memory_order_relaxed);
+        startup_transient_at.store(0, std::memory_order_relaxed);
         return;
     }
     StartupView v = *view;
@@ -6272,6 +6308,10 @@ void startup_screen(const StartupView* view) {
     {
         std::lock_guard lk(startup_mu);
         startup = v;
+    }
+    if (v.title == "Starting game") {
+        startup_transient_at.store(0, std::memory_order_relaxed);
+        startup_transient.store(true, std::memory_order_release);
     }
     startup_on.store(true, std::memory_order_release);
     probe_upscalers_soon();
@@ -6396,6 +6436,11 @@ void menu_init() {
         uint32_t sw = 0, sh = 0, w = 0, h = 0;
         host_screen_size(&sw, &sh);   // (not known: 0 x 0, the game's 2560x1440)
         hos_output_default(sw, sh, &w, &h);
+        if (!opts.limit_720p) {
+            w = 2560, h = 1440;
+            sw &= ~7u, sh &= ~7u;
+            if ((uint64_t)sw * sh < 2560ULL * 1440 && hos_output_size_valid(sw, sh)) w = sw, h = sh;
+        }
         opts.output_res = output_choice_of(w, h);
         logf("vk: the Output resolution: none chosen, %ux%u (the game's 2560x1440, or the screen's where smaller)", w, h);
     }
@@ -7863,7 +7908,15 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
     }
     ui::Ctx c = ui_ctx(w, h);
     prebake(c);   // (the menu's glyphs at this size, before it opens: no hitch then)
-    if (start) draw_startup(c);   // (under the menu)
+    if (start) {
+        const bool transient = startup_transient.load(std::memory_order_acquire);
+        const int64_t began = startup_transient_at.load(std::memory_order_relaxed);
+        draw_startup(c);   // (under the menu)
+        if (transient && began > 0) {
+            const float elapsed = static_cast<float>((prof_now() - began) / 1e9);
+            if (elapsed >= 1.42f) startup_screen(nullptr);
+        }
+    }   // (under the menu)
     if (open) draw_menu(c);
     if (fps) draw_fps(c, open);
     if (notice) draw_travel_notice(c);

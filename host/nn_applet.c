@@ -127,10 +127,11 @@ static int handheld(void) {
     }
     return v;
 }
-/* (hookshot) The Insert menu's Output resolution (output_res=, HOS_OUTPUT_RES over it), docked only: a size, "<width>x<height>",
+/* (hookshot) The Insert menu's Output resolution (output_res=, HOS_OUTPUT_RES over it): a size, "<width>x<height>",
    each side a multiple of 8 (rounded down to one), at least 640 x 360, at most 5120 x 2880's pixels (the largest the render
    targets' pool, hos_rt_pool_size, was played at) and between 5:4 and 48:9 in shape (host/hos_main.c's screen shapes); anything
-   else is the game's own size, said in the log. The menu offers 2048x1152 and the screen's display modes (gpu/vk/display_modes.h;
+   else is the game's own size, said in the log. The default and the handheld fallback are capped at 1280x720; an explicit
+   resolution above 720p is honored. The menu offers 2048x1152 and the screen's display modes (gpu/vk/display_modes.h;
    where they are not known 1920x1080, 2560x1440, 3840x2160, 5120x1440 and 5120x2880), and any other size as its own choice. The numbers it saved before are read as their sizes: 0 the game's
    2048 x 1152, 1 2560 x 1440, 2 3840 x 2160, 3 1920 x 1080, 4 5120 x 1440, 5 5120 x 2880. The game's frame is its display size
    (2560 x 1440 as shipped; nx2/oot_patches.py apply_output_size asks hos_output_size) times its graphics scale
@@ -169,26 +170,36 @@ static int output_mode(void) {   /* (an explicit size: 1; the game's own: 0) */
         char text[80] = "";
         const char *e = getenv("HOS_OUTPUT_RES");
         const int chosen = e || ini_text("output_res", text, sizeof text);
-        if (!handheld() && chosen) hos_output_parse(e ? e : text, &output_w, &output_h);
+        if (chosen) hos_output_parse(e ? e : text, &output_w, &output_h);
         /* (none chosen, a new install: the game's 2560 x 1440, or the screen's size where that has fewer pixels,
            hos_output_default; the menu's first start saves the same. A 2048 x 1152 screen: the game's own reduced size, as
            hos_output_parse reads what the menu saves for it. The window's thread made the window before the game's thread
            starts: the screen is known) */
         const int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
         const int fresh = !handheld() && !chosen;
-        if (fresh) hos_output_default(sw > 0 ? (uint32_t)sw : 0, sh > 0 ? (uint32_t)sh : 0, &output_w, &output_h);
+        if (fresh) {
+            hos_output_default(sw > 0 ? (uint32_t)sw : 0, sh > 0 ? (uint32_t)sh : 0, &output_w, &output_h);
+            if (!ini_option("limit_720p", 1)) {
+                output_w = 2560, output_h = 1440;
+                if ((uint64_t)(sw > 0 ? sw : 0) * (sh > 0 ? sh : 0) < 2560ULL * 1440 && sw > 0 && sh > 0)
+                    output_w = (uint32_t)sw & ~7u, output_h = (uint32_t)sh & ~7u;
+            }
+        }
         if (output_w == 2048 && output_h == 1152) output_w = output_h = 0;
-        if (output_w)
+        if (output_w) {
             hos_log("oe: output resolution %ux%u%s", output_w, output_h,
-                    !fresh ? "" : output_w == 2560 && output_h == 1440 ? " (none chosen: the game's)"
-                                                                       : " (none chosen: the screen's, smaller than the game's 2560x1440)");
-        else hos_log("oe: output resolution 2048x1152 (the game's at graphics scale 1)");
+                    !fresh ? "" : " (none chosen: the 720p default)");
+        } else hos_log("oe: output resolution 1280x720 (720p cap; game's own was 2048x1152 at graphics scale 1)");
     }
     return output_w != 0;
 }
 uint32_t hos_output_size(int height) {
-    if (!output_mode()) return height ? 1440 : 2560;
-    return height ? output_h : output_w;
+    const int selected = output_mode();
+    uint32_t w = selected ? output_w : 2560;
+    uint32_t h = selected ? output_h : 1440;
+    if (!selected && ini_option("limit_720p", 1)) hos_output_cap_720p(&w, &h);
+    hos_output_title_minimum(&w, &h);
+    return height ? h : w;
 }
 /* (hookshot) The render targets' GPU pool (nx2/oot_patches.py), 0x13100000 bytes as shipped, for 2560 x 1440: a 3840x2160 3D at
    the 4K output ran out of it. Scaled with the output's pixels, or the widescreen picture's when it has more (host/hos_main.c:

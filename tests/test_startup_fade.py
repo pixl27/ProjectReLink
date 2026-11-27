@@ -19,6 +19,20 @@ def need(text, pattern, what):
 def main():
     main_cpp = (ROOT / "gpu/vk/vk_main.cpp").read_text(encoding="utf-8")
     menu = (ROOT / "gpu/vk/vk_menu.cpp").read_text(encoding="utf-8")
+    started = main_cpp[main_cpp.index("bool started_up() {"):main_cpp.index("int start(void* hwnd) {")]
+    igpu = started[started.index("if (igpu_prepares_in_play() && precompile_wanted()) {"):]
+    if 'view.title = "Starting game";' not in igpu or "startup_screen(&view);" not in igpu:
+        raise SystemExit("the integrated-GPU in-play shader path does not show the startup screen")
+    if "startup_transient_at.compare_exchange_strong" not in menu or "Loading game" not in menu:
+        raise SystemExit("the in-play startup screen does not start its animation on its first visible frame")
+    if "v.fraction = 0.18 + 0.12" not in menu or "startup_transient_at.store(0" not in menu:
+        raise SystemExit("the in-play startup bar is not visibly animated")
+    if "ui::rgba(28, 10, 12, (int)(255 * (1.0f - fade_in)))" not in menu:
+        raise SystemExit("the in-play startup screen does not fade in over a warm background")
+    if "transient_fade_out = std::clamp((elapsed - 1.0f) / 0.42f" not in menu or \
+            "ui::rgba(0, 0, 0, (int)(transient_fade_out * 255 + 0.5f))" not in menu or \
+            "if (elapsed >= 1.42f) startup_screen(nullptr);" not in menu:
+        raise SystemExit("the in-play startup screen does not fade away")
     prep = main_cpp[main_cpp.index("void prepare_with_screen() {"):main_cpp.index("bool started_up() {")]
     need(prep, r"if \(shown >= 1\.5 && !paint_stop\.load\(\)\)", "the fade is not skipped after a short screen")
     need(prep, r"/ 0\.4;.*?startup_fade_to\(\(float\)std::min\(f, 1\.0\)\).*?present_image", "the fade does not run 0.4 s and present")
@@ -35,7 +49,7 @@ def main():
     tail = draw[draw.rindex("startup_fade.load"):]
     need(tail, r"AddRectFilled\(ImVec2\(0, 0\), ImVec2\(w, h\), ui::rgba\(0, 0, 0,", "the fade is not drawn over the whole screen")
     need(menu, r"startup_on\.store\(false, std::memory_order_release\);\s*startup_fade\.store\(0", "the fade is not reset when the screen goes")
-    print("PASS: the start-up screen fades to black at its end, and only after a screen worth fading")
+    print("PASS: integrated-GPU startup shows an animated Red Tunic screen, fades smoothly, and clears; prepared startup fades to black")
 
 
 if __name__ == "__main__":

@@ -40,6 +40,7 @@ volatile float hos_wide_ratio, hos_wide_squeeze, hos_wide_margin;
 float hos_aspect_ratio;
 static unsigned out_w, out_h = 1440;
 uint32_t hos_output_size(int height) { return height ? out_h : out_w; }
+int hos_ini_option(const char *key, int otherwise) { (void)key; (void)otherwise; const char *e = getenv("TEST_LIMIT_720P"); return e && *e == '1'; }
 static void hos_log(const char *f, ...) { (void)f; }
 
 static void wide(float want) {
@@ -108,6 +109,18 @@ int main(int argc, char **argv) {
             got = subprocess.check_output([str(exe), *args_], text=True, env=old_cap).strip()
             if got != expect:
                 bad.append("HOS_WIDE_MAX_PX=8294400, %s: %s, expected %s" % (" ".join(args_), got, expect))
+        # An output selected at or below 720p keeps the widescreen target within the same 1280x720 ceiling.
+        for want, expect in (
+            ("1.3333", "960x720 720x540 1.3333 1.0000 0.0000"),
+            ("1.6", "1152x720 864x540 1.6000 1.0000 0.0000"),
+            ("2.3889", "1280x528 960x396 2.4242 0.7333 0.1333"),
+            ("3.5556", "1280x360 960x270 3.5556 0.5000 0.2500"),
+        ):
+            capped_env = env.copy()
+            capped_env["TEST_LIMIT_720P"] = "1"
+            got = subprocess.check_output([str(exe), want, "720", "1280"], text=True, env=capped_env).strip()
+            if got != expect:
+                bad.append("720p cap, ratio %s: %s, expected %s" % (want, got, expect))
         if bad:
             raise SystemExit("FAIL:\n  " + "\n  ".join(bad))
     print("PASS: widescreen sizes for 4:3, 16:10, 5:4, 16:9, 21:9, 32:9 and 48:9 screens")

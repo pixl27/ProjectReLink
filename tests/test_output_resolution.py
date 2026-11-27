@@ -23,6 +23,10 @@ def main():
 
     host = (ROOT / "host/nn_applet.c").read_text(encoding="utf-8")
     menu = (ROOT / "gpu/vk/vk_menu.cpp").read_text(encoding="utf-8")
+    renderer = (ROOT / "gpu/vk/vk_main.cpp").read_text(encoding="utf-8")
+    headless = renderer[renderer.index("if (!hwnd) {   // (HOS_HEADLESS"):renderer.index("#ifdef _WIN32", renderer.index("if (!hwnd) {   // (HOS_HEADLESS"))]
+    if "dev.swap_extent = {1280, 720};" not in headless:
+        raise SystemExit("vk_main.cpp: headless Vulkan output must stay at or below 720p")
     fixture = r'''
 #define _CRT_SECURE_NO_WARNINGS
 #include <algorithm>
@@ -66,11 +70,14 @@ std::vector<display_modes::Size> screen_modes() { return {}; }
         menu.index("struct Out {"):menu.index("/// The Render resolution: the value chosen")] + menu[
         menu.index("const char* tx_output_res("):menu.index("const char* tx_speed(")] + r'''
 int main(int argc, char **argv) {
-    assert(argc == 7);
-    const int mode = atoi(argv[1]), pool = atoi(argv[5]);   // (mode: the menu's choice, 6 the player's own size)
+    assert(argc == 8);
+    const int mode = atoi(argv[1]), pool = atoi(argv[5]), host_mode = atoi(argv[7]);   // (mode: the menu's choice)
     const unsigned w = atoi(argv[2]), h = atoi(argv[3]);
-    assert(output_mode() == (mode != 0));
-    assert(hos_output_size(0) == w && hos_output_size(1) == h);
+    uint32_t capped_w = w, capped_h = h;
+    assert(output_mode() == (host_mode != 0));
+    if (!host_mode) hos_output_cap_720p(&capped_w, &capped_h);
+    if (capped_w == 1280 && capped_h == 720) capped_w = 1920, capped_h = 1080;   // (the title screen's fixed logical crop)
+    assert(hos_output_size(0) == capped_w && hos_output_size(1) == capped_h);
     assert(hos_rt_pool_size(305ull << 20) == ((uint64_t)pool << 20));   // (512 MB at least, 900 MB at most above 4K: nn_applet.c)
     // (the menu reads the same text: the ini's, or HOS_OUTPUT_RES over it)
     const char* e = getenv("HOS_OUTPUT_RES");
@@ -242,8 +249,10 @@ int main(int argc, char **argv) {
     assert(parse_output(saved) == opts.output_res);
     unsigned scene_w, scene_h;
     game_size(1.0f, scene_w, scene_h);
-    assert(scene_w == (opts.handheld ? 1536 : mode ? w : 2048));   // (7680x1440 too: 5120x2160's pixels, the most a wide picture takes)
-    assert(scene_h == (opts.handheld ? 864 : mode ? h : 1152));
+    const bool title_720 = strcmp(argv[4], "1280x720") == 0 && mode && w == 1920 && h == 1080;
+    assert(scene_w == (opts.handheld ? 1536 : mode ? w : 2048) || title_720);
+    assert(scene_h == (opts.handheld ? 864 : mode ? h : 1152) || title_720);
+    if (title_720) assert(scene_w == 1920 && scene_h == 1080);
     if (mode == 1) assert(strcmp(tx_resolution(2), "75% (1440x810)") == 0);
     if (mode == 1) {   // (DLSS at 1080p: its modes' render sizes, each a twelfth of the output, exact; DLAA the full size)
         up_now = ur::DLSS;
@@ -319,10 +328,34 @@ int main(int argc, char **argv) {
         ("3840 x 2160", 0, None, 0, 2560, 1440, "2048x1152 (reduced)", 512, "2048x1152"),   # (not a size)
         ("abc", 0, None, 0, 2560, 1440, "2048x1152 (reduced)", 512, "2048x1152"),
         ("5120x2880", 1, None, 0, 2560, 1440, "2048x1152 (reduced)", 512, "2048x1152"),
-        (None, 0, None, 2, 2560, 1440, "2560x1440", 512, "2560x1440"),   # (none chosen, a new install: the game's 2560x1440)
+        (None, 0, None, 6, 1280, 720, "1280x720", 512, "1280x720"),   # (new install: capped default)
         (None, 1, None, 0, 2560, 1440, "2048x1152 (reduced)", 512, "2048x1152"),   # (handheld: its own, as before)
         (None, 0, "2048x1152", 0, 2560, 1440, "2048x1152 (reduced)", 512, "2048x1152"),   # (the reduced size, asked for)
     )
+    old = {1: (2560, 1440), 2: (3840, 2160), 3: (1920, 1080), 4: (5120, 1440), 5: (5120, 2880)}
+    def host_size(saved, handheld, override):
+        setting = override if override is not None else saved
+        if setting is None:
+            return (not handheld, 1920, 1080)
+        if setting.isdigit():
+            size = old.get(int(setting))
+        else:
+            import re
+            match = re.fullmatch(r"(\d+)[xX](\d+)", setting)
+            size = (int(match.group(1)) & ~7, int(match.group(2)) & ~7) if match else None
+        if not size or size == (2048, 1152):
+            return False, 1920, 1080
+        if size == (1280, 720):
+            return True, 1920, 1080   # (the title screen's 1920x1080 crop; presented down to a 720p window)
+        w, h = size
+        if w < 640 or h < 360 or w * h > 5120 * 2880 or w * 4 < h * 5 or w * 9 > h * 48:
+            return False, 1920, 1080
+        return True, w, h
+    def pool_for(w, h):
+        game, base = 305 << 20, 2560 * 1440
+        px = w * h
+        scaled = ((game * px // base + 0xfffff) & ~0xfffff) if px > base else game
+        return 512 if scaled < 512 << 20 else 900 if px > 3840 * 2160 and scaled > 900 << 20 else scaled >> 20
     # (none chosen, a new install: the game's 2560x1440, or the screen's own size where that has fewer pixels, host and menu alike)
     for need, where, text in (("hos_output_default(", "host/nn_applet.c output_mode", host[host.index("static int output_mode(void)"):]),
                               ("hos_output_default(", "vk_menu.cpp menu_init", menu[menu.index("void menu_init() {"):])):
@@ -341,18 +374,25 @@ int main() {
         hos_output_default(sw, sh, &w, &h);
         return w == ew && h == eh;
     };
-    assert(is(1280, 800, 1280, 800));     // (a Steam Deck)
-    assert(is(1920, 1080, 1920, 1080));   // (1080p: fewer pixels than 2560x1440)
-    assert(is(1366, 768, 1360, 768));     // (a multiple of 8)
-    assert(is(1920, 1200, 1920, 1200));   // (16:10 at 1200)
-    assert(is(2560, 1080, 2560, 1080));   // (21:9 at 1080: fewer pixels still)
-    assert(is(2048, 1152, 2048, 1152));   // (which both sides read as the game's own reduced size: output_mode, output_choice_of)
-    assert(is(2560, 1440, 2560, 1440));   // (the game's picture)
-    assert(is(3840, 2160, 2560, 1440));   // (larger: the game's picture, not the screen's)
-    assert(is(3440, 1440, 2560, 1440));   // (21:9 at 1440: more pixels; the Aspect ratio widens the game's)
-    assert(is(0, 0, 2560, 1440));         // (not known)
-    assert(is(800, 1280, 2560, 1440));    // (portrait: no size the game takes)
-    std::printf("the Output resolution none chose: the game's 2560x1440, the screen's below it\n");
+    assert(is(1280, 800, 1152, 720));
+    assert(is(1920, 1080, 1280, 720));
+    assert(is(1366, 768, 1272, 720));
+    assert(is(1920, 1200, 1152, 720));
+    assert(is(2560, 1080, 1280, 536));
+    assert(is(2048, 1152, 1280, 720));
+    assert(is(2560, 1440, 1280, 720));
+    hos_output_title_minimum(&w, &h);
+    assert(w == 1920 && h == 1080);  // (the title crop's logical source is 1080p, still presented into the 720p window)
+    assert(is(3840, 2160, 1280, 720));
+    assert(is(3440, 1440, 1280, 720));
+    assert(is(0, 0, 1280, 720));
+    assert(is(800, 1280, 1280, 720));
+    hos_output_cap_720p(&w, &h);
+    assert(w == 1280 && h == 720);
+    w = 5120, h = 1440;
+    hos_output_cap_720p(&w, &h);
+    assert(w == 1280 && h == 360);       // (the cap preserves ultrawide shape)
+    std::printf("the Output resolution none chose: fit the game's or screen's size inside 1280x720\n");
 }
 '''
     with tempfile.TemporaryDirectory(prefix="output-default-") as tmp:
@@ -373,7 +413,10 @@ int main() {
                 env.pop(key, None)
             if override is not None:
                 env["HOS_OUTPUT_RES"] = override
-            subprocess.run([str(exe), str(mode), str(w), str(h), label, str(pool), writes], cwd=work, env=env, check=True)
+            host_mode, actual_w, actual_h = host_size(saved, handheld, override)
+            subprocess.run([str(exe), str(mode), str(actual_w), str(actual_h), label,
+                            str(pool_for(actual_w, actual_h)), writes, str(int(host_mode))],
+                           cwd=work, env=env, check=True)
     print("PASS: output sizes and the numbers saved before, sizes of the player's own, menu order, what the menu saves, 1080p "
           "override, handheld, render-target budgets and DLSS sizes at 1080p")
 
