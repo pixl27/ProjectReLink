@@ -50,6 +50,15 @@ def main():
         tmp = Path(directory)
         astc_obj = tmp / "astc_cpu.o"
         exe = tmp / ("astc_decoder_gpu.exe" if os.name == "nt" else "astc_decoder_gpu")
+        texture = (ROOT / "gpu/vk/vk_texture.cpp").read_text(encoding="utf-8")
+        start = texture.index("struct AstcPush {")
+        end = texture.index("\n};", start) + 3
+        fixture = fixture_cpp.read_text(encoding="utf-8")
+        first = fixture.index("struct AstcPush {")
+        last = fixture.index("\n};", first) + 3
+        fixture_cpp = tmp / fixture_cpp.name
+        fixture_cpp.write_text(fixture[:first] + texture[start:end] + fixture[last:], encoding="utf-8")
+        assert texture.count("pc.blocks_x = g.tw, pc.blocks_y = g.th;") == 3, "every decoder path passes block bounds"
 
         # Compile third_party CPU ASTC reference with -DNDEBUG so error-block cases return FillError zeros.
         subprocess.run(

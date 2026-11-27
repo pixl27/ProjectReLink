@@ -23,6 +23,10 @@ def main():
     guard = body.rfind("if (log_hits)", 0, stat)
     if guard < 0:
         raise SystemExit("the hit counters run on every lookup")
+    pending = body.index("if (known && !tex && !cache_null)")
+    store = body.index("handle_hits()[key] =")
+    if pending >= store or "return VK_NULL_HANDLE;" not in body[pending:store]:
+        raise SystemExit("a known texture waiting for upload must bypass both view caches")
     print("PASS: one handle lookup, and the counters stay behind RX_VK_LOG_HITS")
 
 
