@@ -4178,6 +4178,17 @@ VkImageView texture_view_of(uint32_t handle, VkImageViewType want, ViewUse use, 
                      has_view && v.set_format ? v.format : 0, has_view && v.set_target ? v.target : -1, (int)want, (int)use);
         }
     }
+    // (Steam Deck fix) A registered texture the cache could not hand out yet (texture_touch's upload_defer held its upload
+    // back to a later frame, so texture_get answered null) is not remembered: cached, the dummy stayed bound for every later
+    // lookup of the slot at this version and destroy generation, so held-back ASTC textures (characters, wood, the HUD's
+    // hearts) stayed black until some unrelated texture was destroyed. The next lookup asks again and takes the image
+    // once its upload is let through. RX_VK_CACHE_NULL_VIEWS=1: cached, as before
+    static const bool cache_null = env_on("RX_VK_CACHE_NULL_VIEWS");
+    if (known && !tex && !cache_null) {
+        if (tex_out) *tex_out = nullptr;
+        if (level_out) *level_out = 0;
+        return VK_NULL_HANDLE;
+    }
     handle_hits()[key] = {view, tex, dgen, level, version, texture_epoch(), use == ViewUse::Sample || use == ViewUse::Storage};
     if (vf) vf->key = key, vf->view = view, vf->tex = tex, vf->level = level, vf->version = version, vf->destroy_gen = dgen,
             vf->tex_epoch = texture_epoch(), vf->sampling = use == ViewUse::Sample || use == ViewUse::Storage;
