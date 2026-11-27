@@ -364,6 +364,7 @@ namespace HookshotBuilder
 {
     sealed class Tools
     {
+        public const string RedTunicReleases = "https://github.com/spacefarergames/RedTunic/releases";
         public string Version => "v0.0.0";
         public bool RedTunicRelease => false;
         public static Tools Find() => new();
