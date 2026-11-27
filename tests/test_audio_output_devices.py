@@ -69,7 +69,7 @@ def check_host_callbacks(api, backend):
     # and options_path come earlier, the mods' and cheats' callbacks between them and playback)
     tail = ['audio_output_count', 'audio_output_info', 'audio_output_select', 'audio_output_state', 'mic_test',
             'main_thread_times', 'out_of_memory', 'monitor_count', 'monitor_info', 'monitor_select', 'rumble_test',
-            'nfc_count', 'nfc_name', 'nfc_tap', 'nfc_state', 'nfc_dir', 'nfc_scan', 'nfc_scan_name', 'ab_frame', 'vulkan_loader_proc']
+            'nfc_count', 'nfc_name', 'nfc_tap', 'nfc_state', 'nfc_dir', 'nfc_scan', 'nfc_scan_name', 'ab_frame', 'vulkan_loader_proc', 'menu_audio_cue']
     assert fields[-len(tail):] == tail, 'Mic test must follow playback (29 appends main_thread_times, 30 out_of_memory, 31 the monitor callbacks, 33 the rumble test, 34 NFC)'
     assert fields.index('take_text') < fields.index('options_path') < fields.index('audio_output_count'), \
         'take_text and options_path must come before playback'

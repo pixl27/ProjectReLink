@@ -69,6 +69,7 @@ const char *hos_mic_name(int index);
 void hos_mic_select(int mode, const char *name, int index);
 int hos_mic_test(int enabled, int gain, int *levels);
 void hos_sdl_rumble_test(void);   /* pad_sdl.c */
+void hos_audio_cue(const char *name);   /* nn_audio.c: sounds extracted locally during setup */
 int hos_nfc_count(void);            /* nn_nfp.c: the player's NFC tags, for the Insert menu's NFC tab */
 const char *hos_nfc_name(int index);
 int hos_nfc_tap(int index);
@@ -372,6 +373,7 @@ static const MkwVkHost vk_host = {
 #else
     NULL,
 #endif
+    hos_audio_cue,
 };
 
 static const MkwVkRenderer *vk;   /* the Vulkan back end, when it was chosen and started */

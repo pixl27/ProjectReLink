@@ -56,7 +56,8 @@ class AppImageHeaders(unittest.TestCase):
                                     cwd=ROOT, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue((packaged / ".red-tunic-source-only").is_file())
-            for local_data in ("work", "assets/pipeline_states", "assets/profiles", "assets/saves"):
+            self.assertEqual(sorted(p.name for p in (packaged / "assets/profiles").iterdir()), ["hot_funcs.txt"])
+            for local_data in ("work", "assets/pipeline_states", "assets/saves"):
                 self.assertFalse((packaged / local_data).exists(), local_data)
             entries = [p.relative_to(ROOT).as_posix() for p in (ROOT / "host").rglob("*")
                        if p.suffix in (".c", ".h")]

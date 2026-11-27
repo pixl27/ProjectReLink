@@ -88,8 +88,9 @@ def check_windows_source():
     for need in ("bool Switching => Tools.Find()?.RedTunicRelease != true && (pinned != null || Track != Updater.TrackOf(Tools.Find()?.Version));",
                  "async Task<string?> NewestTag() =>", "pinned ?? (Environment.GetEnvironmentVariable(\"HOOKSHOT_LATEST_TAG\")",
                  "releases = await ReleaseList.Fetch();", "VersionBox.DropDownOpened += VersionsOpened;",
-                 "updateTarget = Tools.Find()?.RedTunicRelease == true ? builder : pinned ?? Updater.Target(latestTag, builder, Track);",
-                 "updateTarget = tools?.RedTunicRelease == true ? tools.Version : pinned ?? Updater.Target(latestTag, tools?.Version, Track);",
+                 "updateTarget = redTunic ? (Updater.RedTunicNewer(latestTag, builder) ? latestTag : builder)",
+                 "updateTarget = redTunic ? (Updater.RedTunicNewer(latestTag, tools?.Version) ? latestTag : tools?.Version)",
+                 "Tools.Find()?.RedTunicRelease == true ? await Updater.LatestRedTunicTag()",
                  "Version = pinned };", "pinned = null;   // (a track chosen"):
         assert need in cs, "MainWindow.xaml.cs: " + need
     assert "await Updater.LatestTag(Track)" in cs and cs.count("await Updater.LatestTag(Track)") == 1, \

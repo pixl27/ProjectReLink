@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 36   /* (36: the Windows Vulkan loader resolver, vulkan_loader_proc) */
+#define MKWVK_API_VERSION 37   /* (37: settings menu sound cues) */
 enum { HOS_MONITOR_CURRENT = 1, HOS_MONITOR_PRIMARY = 2 };
 typedef struct MkwVkMonitor {
     char id[512];             /* opaque persistent preference; never a runtime handle or list index */
@@ -336,6 +336,7 @@ typedef struct MkwVkHost {
        shim that hooks the game's loader imports (Streamline, OptiScaler) sees the renderer's calls too; 0: the renderer loads
        its own */
     uintptr_t (*vulkan_loader_proc)(void);
+    void (*menu_audio_cue)(const char *name);
 } MkwVkHost;
 /* (version 26) a cheat's kind: a heading (no opcodes), a data cheat (switched), a master cheat (always on), not supported (note) */
 enum { MKWVK_CHEAT_HEADING, MKWVK_CHEAT_DATA, MKWVK_CHEAT_MASTER, MKWVK_CHEAT_UNSUPPORTED };

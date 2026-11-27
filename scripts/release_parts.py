@@ -203,6 +203,8 @@ def package(a):
         copy(os.path.join(ROOT, name), os.path.join(tools, name))
     for icon in ("red-tunic.png", "red-tunic.ico"):
         copy(os.path.join(ROOT, "assets", icon), os.path.join(tools, "assets", icon))
+    hot_list = os.path.join("assets", "profiles", "hot_funcs.txt")
+    copy(os.path.join(ROOT, hot_list), os.path.join(tools, hot_list))
     for f in tracked("gpu", "host", "native", "nx2", "scripts", "third_party", "tools"):
         copy(os.path.join(ROOT, f), os.path.join(tools, *f.split("/")))
     if a.list:

@@ -121,6 +121,9 @@ public partial class MainWindow : Window
             return;
         }
         SplashText.Text = "Looking for your game files…";
+        var releaseCheck = Tools.Find()?.RedTunicRelease == true &&
+            string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HOOKSHOT_UI_PREVIEW"))
+            ? Updater.LatestRedTunicTag() : null;
         var found = await Task.Run(Finder.FindDumps);
         dumps.AddRange(found);
         SplashText.Text = found.Count switch { 0 => "No game files found yet", 1 => "Found 1 game file", _ => $"Found {found.Count} game files" };
@@ -133,7 +136,7 @@ public partial class MainWindow : Window
         ShowMain();
         if (Environment.GetEnvironmentVariable("HOOKSHOT_UI_PREVIEW") is { Length: > 0 } preview) { Preview(preview); return; }
         CheckAll();
-        latestTag = await NewestTag();
+        latestTag = await (releaseCheck ?? NewestTag());
         RefreshMode();
     }
 
@@ -190,10 +193,13 @@ public partial class MainWindow : Window
     {
         if (BuildButton == null || updating || runner != null) return;
         var game = OutPath.Text.Length > 2 ? GameVersion(OutPath.Text) : null;
-        var builder = Tools.Find()?.Version;
+        var tools = Tools.Find();
+        var builder = tools?.Version;
+        var redTunic = tools?.RedTunicRelease == true;
         // (the newest release known: GitHub's, else this builder's own. v2.0.0 took a GitHub that did not answer for "up to date")
-        updateTarget = Tools.Find()?.RedTunicRelease == true ? builder : pinned ?? Updater.Target(latestTag, builder, Track);
-        if (game != null && updateTarget != null && game != updateTarget && !sourcePicked) mode = Mode.UpdateGame;
+        updateTarget = redTunic ? (Updater.RedTunicNewer(latestTag, builder) ? latestTag : builder)
+            : pinned ?? Updater.Target(latestTag, builder, Track);
+        if (game != null && updateTarget != null && (redTunic ? Updater.RedTunicNewer(updateTarget, game) : game != updateTarget) && !sourcePicked) mode = Mode.UpdateGame;
         else if (game != null && !sourcePicked) mode = Mode.UpToDate;
         else if (latestTag != null && builder != null && builder != updateTarget) mode = Mode.UpdateBuilder;
         else mode = Mode.Build;
@@ -217,9 +223,11 @@ public partial class MainWindow : Window
                 BuildButton.Content = "Update";
                 break;
             case Mode.UpToDate:
-                FilesTitle.Text = "Your game is up to date";
-                FilesSub.Text = Tools.Find()?.RedTunicRelease == true
-                    ? $"Your game uses Red Tunic {game}. Check Red Tunic Releases for newer builder downloads."
+                FilesTitle.Text = redTunic && latestTag == null ? "Your game is ready to play" : "Your game is up to date";
+                FilesSub.Text = redTunic
+                    ? latestTag == null
+                        ? $"Your game uses Red Tunic {game}. GitHub did not answer the update check."
+                        : $"Your game uses Red Tunic {game}. No newer release was found."
                     : latestTag == null
                     ? $"Your game is {game}, as this builder. git.notrexed.dev did not answer, so newer versions could not be checked."
                     : pinned != null ? $"{game} is the version chosen in the Version menu. Pick game files below only to build it again from scratch."
@@ -264,16 +272,21 @@ public partial class MainWindow : Window
         ShowPage(LaunchPage);
         latestTag = await NewestTag();
         var tools = Tools.Find();
-        updateTarget = tools?.RedTunicRelease == true ? tools.Version : pinned ?? Updater.Target(latestTag, tools?.Version, Track);
-        if (updateTarget == null) LaunchStatus.Text = "Could not check for updates (git.notrexed.dev did not answer)";
-        else if (game != null && game != updateTarget && GameVersion(folder) != null)
+        var redTunic = tools?.RedTunicRelease == true;
+        updateTarget = redTunic ? (Updater.RedTunicNewer(latestTag, tools?.Version) ? latestTag : tools?.Version)
+            : pinned ?? Updater.Target(latestTag, tools?.Version, Track);
+        var newer = redTunic ? Updater.RedTunicNewer(updateTarget, game) : game != updateTarget;
+        LaunchUpdate.Visibility = Visibility.Collapsed;
+        if (updateTarget == null || (redTunic && latestTag == null))
+            LaunchStatus.Text = "Could not check for updates. You can still play.";
+        else if (game != null && newer && GameVersion(folder) != null)
         {
             LaunchStatus.Text = $"Update available: {updateTarget}";
             LaunchStatus.Foreground = new SolidColorBrush(Color.FromRgb(0xB9, 0xC8, 0xFF));
             LaunchStatus.FontWeight = FontWeights.SemiBold;
             LaunchUpdate.Visibility = Visibility.Visible;
         }
-        else if (game != null && game != updateTarget)
+        else if (game != null && newer)
             LaunchStatus.Text = $"{updateTarget} is out: build this folder again with the Red Tunic Builder to get it";
         else LaunchStatus.Text = tools?.RedTunicRelease == true ? "Matches this Red Tunic Builder"
             : latestTag == null ? "Up to date with this builder (git.notrexed.dev did not answer)" : "Up to date";
@@ -327,7 +340,7 @@ public partial class MainWindow : Window
     /// The version to update to as far as the server says: the one chosen in the Version menu, else the track's newest (null: the
     /// server did not answer)
     async Task<string?> NewestTag() =>
-        Tools.Find()?.RedTunicRelease == true ? null :
+        Tools.Find()?.RedTunicRelease == true ? await Updater.LatestRedTunicTag() :
         pinned ?? (Environment.GetEnvironmentVariable("HOOKSHOT_LATEST_TAG") is { Length: > 0 } fake ? (fake == "none" ? null : fake)
                    : await Updater.LatestTag(Track));
 
@@ -960,6 +973,11 @@ public partial class MainWindow : Window
                 return;
             case Mode.UpdateBuilder:
                 if (!OlderOk(Tools.Find()?.Version)) return;
+                if (Tools.Find()?.RedTunicRelease == true)
+                {
+                    if (updateTarget != null) Updater.OpenRedTunicDownload(updateTarget);
+                    return;
+                }
                 SaveSettings();
                 BuildButton.IsEnabled = false;
                 BuildButton.Content = "Getting the new builder…";

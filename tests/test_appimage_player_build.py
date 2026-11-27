@@ -83,7 +83,8 @@ class PlayerBuildFromTheAppImage(unittest.TestCase):
         self.assertTrue((self.tools / "gpu/vk/vk_main.cpp").is_file())
         self.assertTrue((self.tools / "assets/red-tunic.png").is_file())
         self.assertTrue((self.tools / ".red-tunic-source-only").is_file())
-        for local_data in ("assets/profiles", "assets/pipeline_states", "assets/saves", "work"):
+        self.assertEqual(sorted(p.name for p in (self.tools / "assets/profiles").iterdir()), ["hot_funcs.txt"])
+        for local_data in ("assets/pipeline_states", "assets/saves", "work"):
             self.assertFalse((self.tools / local_data).exists(), local_data)
 
     def test_a_file_the_image_lacks_fails(self):

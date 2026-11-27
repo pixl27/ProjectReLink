@@ -17,6 +17,80 @@ static class Updater
 {
     const string Latest = "https://git.notrexed.dev/api/v1/repos/Hookshot/Hookshot/releases/latest";
     const string Asset = "HookshotBuilder.zip";
+    const string RedTunicApi = "https://api.github.com/repos/spacefarergames/RedTunic/releases";
+
+    public static bool RedTunicNewer(string? candidate, string? current) =>
+        Version.TryParse(candidate?.TrimStart('v'), out var next) &&
+        Version.TryParse(current?.TrimStart('v'), out var installed) && next > installed;
+
+    static string RedTunicWindowsAsset(string tag) => $"RedTunic-{tag}-Windows-x64.zip";
+
+    static string RedTunicDownloadUrl(string tag) =>
+        $"{Tools.RedTunicReleases}/download/{tag}/{RedTunicWindowsAsset(tag)}";
+
+    public static void OpenRedTunicDownload(string tag) =>
+        Process.Start(new ProcessStartInfo(RedTunicDownloadUrl(tag)) { UseShellExecute = true });
+
+    public static async Task<string?> LatestRedTunicTag()
+    {
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("RedTunicBuilder");
+            using var doc = JsonDocument.Parse(await http.GetStringAsync(RedTunicApi + "/latest"));
+            var tag = doc.RootElement.GetProperty("tag_name").GetString();
+            if (tag == null || !Version.TryParse(tag.TrimStart('v'), out _)) return null;
+            return doc.RootElement.GetProperty("assets").EnumerateArray()
+                .Any(asset => asset.GetProperty("name").GetString() == RedTunicWindowsAsset(tag))
+                ? tag : null;
+        }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException or JsonException or KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    static async Task InstallRedTunicUpdate(MainWindow w, string folder, string tag)
+    {
+        var token = w.DownloadToken;
+        var cache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "RedTunic", "BuilderUpdates", tag, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(cache);
+        using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("RedTunicBuilder");
+        var name = RedTunicWindowsAsset(tag);
+        using var response = await GetWithRetries(w, http, RedTunicApi + "/tags/" + tag, token,
+            "application/vnd.github+json", TimeSpan.FromSeconds(25));
+        using var release = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
+        var asset = release.RootElement.GetProperty("assets").EnumerateArray()
+            .FirstOrDefault(a => a.GetProperty("name").GetString() == name);
+        if (asset.ValueKind == JsonValueKind.Undefined)
+            throw new IOException($"Red Tunic {tag} does not have a Windows package.");
+        var digest = asset.TryGetProperty("digest", out var value) ? value.GetString() : null;
+        if (digest == null || !digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+            throw new IOException("GitHub did not provide a SHA-256 checksum for the update.");
+        var download = RedTunicDownloadUrl(tag);
+        var zip = Path.Combine(cache, name);
+        w.Note($"Downloading and verifying Red Tunic {tag}");
+        await DownloadWithRetries(w, http, download, null, zip, asset.GetProperty("size").GetInt64(), digest,
+            token, w.DownloadProgress);
+        w.Note("Extracting the new Builder");
+        var target = Path.Combine(cache, "builder");
+        await Task.Run(() => ZipFile.ExtractToDirectory(zip, target), token);
+        File.Delete(zip);
+        if (Directory.Exists(Path.Combine(target, "RedTunicBuilder")))
+            target = Path.Combine(target, "RedTunicBuilder");
+        var exe = Path.Combine(target, "RedTunic.exe");
+        if (!File.Exists(exe) || !File.Exists(Path.Combine(target, "tools", "red-tunic-release.txt")))
+            throw new IOException("The Windows package is missing the portable Red Tunic Builder.");
+        var start = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = target };
+        start.Environment.Remove("HOOKSHOT_SETUP_BASE");
+        start.Environment.Remove("HOOKSHOT_BUILDER_PORTABLE");
+        foreach (var arg in new[] { "--update", folder, "--tag", tag, "--fetched" }) start.ArgumentList.Add(arg);
+        token.ThrowIfCancellationRequested();
+        Process.Start(start);
+        Application.Current.Shutdown();
+    }
     const string SetupAsset = "HookshotBuilder.exe";            // (the setup, builder/setup/setup.c: a release holds it and its list)
     const string SetupList = "hookshot-setup.txt";              // (scripts/make_setup_parts.py)
     static readonly TimeSpan[] RetryDelays = { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(20) };
@@ -222,6 +296,13 @@ static class Updater
             return;
         }
         // (already the new release, or just downloaded: no second download)
+        if (tools.RedTunicRelease && !fetched && RedTunicNewer(tag, tools.Version))
+        {
+            try { await InstallRedTunicUpdate(w, folder, tag!); }
+            catch (OperationCanceledException) { w.DownloadFailed("Update cancelled. Your game folder is unchanged."); }
+            catch (Exception e) { w.DownloadFailed(e.Message + " You can download the ZIP from Red Tunic Releases."); }
+            return;
+        }
         if (tools.RedTunicRelease || fetched || (tag != null && tools.Version == tag))
         {
             w.UpdateBuild(tools, folder);

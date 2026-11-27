@@ -7196,6 +7196,24 @@ void mic_test_tick(bool focused) {
 }
 void menu_tick() {
     std::lock_guard lk(menu_mu);   // (the control bridge's settings: menu_setting_set)
+    struct NavigationCue {
+        bool open = open_now.load();
+        int screen = page, tab = cur_tab, row = tab_selected[cur_tab];
+        int control = csel, column = ccol, mod = mods_sel, choice = ask_sel;
+        int destination = teleport_choice, travel = travel_choice;
+        ~NavigationCue() {
+            if (!host || host->version < 37 || !host->menu_audio_cue) return;
+            const bool now = open_now.load();
+            if (now != open)
+                host->menu_audio_cue(now ? "SE_Sys_ShortCut_Open00" : "SE_Sys_ShortCut_Close00");
+            else if (now && (screen != page || tab != cur_tab))
+                host->menu_audio_cue("SE_Sys_ShortCut_ItemSelect00");
+            else if (now && (row != tab_selected[cur_tab] || control != csel || column != ccol ||
+                             mod != mods_sel || choice != ask_sel ||
+                             destination != teleport_choice || travel != travel_choice))
+                host->menu_audio_cue("SE_Sys_ShortCut_CursolMove_00");
+        }
+    } navigation_cue;
     share_finish();   // (Save my pipeline list's worker, done)
     fullscreen_tick();
     game_lang_tick();
@@ -7887,12 +7905,39 @@ void menu_rumble_tick() {
     if (was >= 0 && opts.rumble != was && menu_is_open() && host && host->version >= 33 && host->rumble_test) host->rumble_test();
     was = opts.rumble;
 }
+float settings_opacity(bool open, int64_t now) {
+    static float progress = 0.0f;
+    static bool target = false;
+    static int64_t last = 0;
+    if (!last || target != open) {
+        last = now;
+        target = open;
+    }
+    const float step = static_cast<float>((now - last) / 180000000.0);
+    last = now;
+    progress = std::clamp(progress + (open ? step : -step), 0.0f, 1.0f);
+    return progress * progress * (3.0f - 2.0f * progress);
+}
+
+void draw_menu_at_opacity(ui::Ctx& c, float opacity) {
+    const int first = c.d->VtxBuffer.Size;
+    draw_menu(c);
+    if (opacity >= 1.0f) return;
+    for (int i = first; i < c.d->VtxBuffer.Size; ++i) {
+        ImU32& color = c.d->VtxBuffer[i].col;
+        const auto alpha = static_cast<ImU32>((color >> IM_COL32_A_SHIFT) * opacity);
+        color = (color & ~IM_COL32_A_MASK) | (alpha << IM_COL32_A_SHIFT);
+    }
+}
+
 void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
     const bool start = startup_on.load(std::memory_order_acquire);
     const bool fps = opts.show_fps && !start;   // (no game frames yet: not "0 FPS" over the start-up screen)
     const bool open = open_now.load(std::memory_order_relaxed);
+    const float opacity = settings_opacity(open, prof_now());
+    const bool menu_visible = open || opacity > 0.0f;
     const bool notice = !open && !start && prof_now() < notice_until.load(std::memory_order_relaxed);   // (hookshot: a Travel picture)
-    if (!start && !fps && !open && !notice) {   // (nothing shows: no ImGui frame, no render pass)
+    if (!start && !fps && !menu_visible && !notice) {   // (nothing shows: no ImGui frame, no render pass)
         // (but a new window size or Menu size since the last bake: one frame with nothing drawn that bakes the menu's glyphs
         // and measures its page for the new size, so the next open has no hitch whatever was resized while nothing showed)
         if (prebake_needed(w, h) && ui::begin(w, h)) {
@@ -7923,8 +7968,8 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
             if (elapsed >= 1.42f) startup_screen(nullptr);
         }
     }   // (under the menu)
-    if (open) draw_menu(c);
-    if (fps) draw_fps(c, open);
+    if (menu_visible) draw_menu_at_opacity(c, opacity);
+    if (fps) draw_fps(c, menu_visible);
     if (notice) draw_travel_notice(c);
     ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (Dear ImGui records into cmd directly, its backend through its own pointers: what this thread recorded through vk_work.h reaches cmd first)
     ui::record(cmd, index, w, h);

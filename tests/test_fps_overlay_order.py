@@ -21,7 +21,9 @@ def main():
     p.add_argument("--cxx", default="g++")
     p.add_argument("--source", type=Path, default=ROOT / "gpu/vk/vk_menu.cpp")
     a = p.parse_args()
-    fn = block(a.source.read_text(encoding="utf-8"), "void menu_record(")
+    source = a.source.read_text(encoding="utf-8")
+    fn = block(source, "void menu_record(")
+    fade = block(source, "float settings_opacity(").replace("settings_opacity", "actual_settings_opacity", 1)
     fixture = r'''#include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -54,12 +56,20 @@ void prebake(const ui::Ctx&) { calls += "p"; }
 bool resized = false;
 bool prebake_needed(uint32_t, uint32_t) { return resized; }
 void draw_startup(ui::Ctx&) { calls += "s"; }
-void draw_menu(ui::Ctx&) { calls += "m"; }
+float settings_opacity(bool opened, int64_t) { return opened ? 1.0f : 0.0f; }
+void draw_menu_at_opacity(ui::Ctx&, float) { calls += "m"; }
 void draw_fps(ui::Ctx&, bool under_banner) { calls += under_banner ? "F" : "f"; }
 std::atomic<int64_t> notice_until{0};   // (the Travel page's "picture saved" line: none here)
 void draw_travel_notice(ui::Ctx&) { calls += "n"; }
-''' + fn + r'''
+''' + fade + "\n" + fn + r'''
 int main() {
+    CHECK(actual_settings_opacity(false, 1) == 0.0f);
+    CHECK(actual_settings_opacity(true, 1000000) == 0.0f);
+    CHECK(actual_settings_opacity(true, 91000000) == 0.5f);
+    CHECK(actual_settings_opacity(true, 181000000) == 1.0f);
+    CHECK(actual_settings_opacity(false, 190000000) == 1.0f);
+    CHECK(actual_settings_opacity(false, 280000000) == 0.5f);
+    CHECK(actual_settings_opacity(false, 370000000) == 0.0f);
     for (bool startup : {false, true}) for (bool fps : {false, true}) for (bool menu : {false, true}) for (bool can : {true, false}) {
         opts.show_fps = fps;
         open_now = menu;
