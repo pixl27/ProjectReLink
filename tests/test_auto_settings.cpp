@@ -71,8 +71,8 @@ int main() {
            "AMD APU: Minimum memory tier and fixed 67% render scale for a 720p scene at 1080p output");
     expect(red_tunic_apu(0x1002, true) && !red_tunic_apu(0x1002, false) && !red_tunic_apu(0x8086, true),
            "Red Tunic defaults target AMD integrated graphics");
-    expect(steam_deck_apu(AMD, 0x163f) && steam_deck_apu(AMD, 0x1435) &&
-           !steam_deck_apu(AMD, 0x15e7) && !steam_deck_apu(NVIDIA, 0x163f),
+    expect(steam_deck_apu(0x1002, 0x163f) && steam_deck_apu(0x1002, 0x1435) &&
+           !steam_deck_apu(0x1002, 0x15e7) && !steam_deck_apu(0x10de, 0x163f),
            "only Steam Deck LCD and OLED skip the Vega texture cap and pass barriers");
 
     Hardware deck;
