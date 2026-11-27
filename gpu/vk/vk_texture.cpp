@@ -911,6 +911,11 @@ namespace {
 // ---- the GPU ASTC decoder (Eden's) ----
 struct AstcPush {
     uint32_t block_dims[2], layer_stride, block_size, x_shift, block_height, block_height_mask, native_tiling;
+    // (Steam Deck fix) astc_decoder.comp's last two push constants (offsets 32 and 36): the level's size in blocks, past
+    // which an invocation returns. Left out here, the range pushed stopped at 32 bytes and the shader read whatever the
+    // driver's push constant storage held there: 0 on RADV after other pipelines, and every block returned undecoded, so
+    // ASTC textures (characters, wood, the HUD, the map) came out black, or kept another texture's texels in the BC scratch
+    uint32_t blocks_x, blocks_y;
 };
 VkDescriptorSetLayout astc_set = VK_NULL_HANDLE;
 VkPipelineLayout astc_layout = VK_NULL_HANDLE;
@@ -1874,6 +1879,7 @@ bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty, bool hyb
             pc.block_height = g.tile_h;
             pc.block_height_mask = (1u << g.tile_h) - 1;
             pc.native_tiling = 1;
+            pc.blocks_x = g.tw, pc.blocks_y = g.th;
             for (size_t k0 = 0; k0 < layers.size();) {
                 size_t k1 = k0 + 1;
                 // (one layer a run: with runs of up to kBcLayers, an array's layers past the run's first came out wrong in the
@@ -1918,6 +1924,7 @@ bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty, bool hyb
         pc.block_height = g.tile_h;
         pc.block_height_mask = (1u << g.tile_h) - 1;
         pc.native_tiling = 1;
+        pc.blocks_x = g.tw, pc.blocks_y = g.th;
         for (size_t k = 0; k < (all ? 1 : layers.size()); k++) {
             const VkImageView view = astc_level_view(&tex, level, all ? ~0u : layers[k]);
             if (!view) {
@@ -1964,6 +1971,7 @@ std::vector<AstcPiece> astc_pieces(const Texture& tex, uint64_t tail, uint64_t t
         pc.block_height = g.tile_h;
         pc.block_height_mask = (1u << g.tile_h) - 1;
         pc.native_tiling = 1;
+        pc.blocks_x = g.tw, pc.blocks_y = g.th;
         pc0.gx = (g.tw + 7) / 8, pc0.gy = (g.th + 7) / 8;
         pc0.from = off;
         pieces.push_back(pc0);
