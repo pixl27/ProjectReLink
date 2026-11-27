@@ -79,6 +79,13 @@ inline bool red_tunic_apu(uint32_t vendor_id, bool integrated) {
     return vendor_id == 0x1002 && integrated;
 }
 
+// The Steam Deck's APUs (Van Gogh 0x163f, the OLED's Sephiroth 0x1435). The Red Tunic APU tuning above was measured on a
+// Windows Vega laptop; on the Deck its 1024 MB texture ceiling (vs. the 2560 MB the shared rule gives 16 GB) evicted textures
+// the GPU drew, which came back black, and its fragment-only pass barriers are left out here as on every non-NVIDIA GPU upstream
+inline bool steam_deck_apu(uint32_t vendor_id, uint32_t device_id) {
+    return vendor_id == 0x1002 && (device_id == 0x163f || device_id == 0x1435);
+}
+
 inline Choice choose(const Hardware& h) {
     Choice c;
     c.tier = tier_of(h);

@@ -4657,8 +4657,9 @@ void pass_start_barrier(VkCommandBuffer cmd) {
     static const bool game = [] {
         const char* e = getenv("RX_VK_PASS_BARRIER");
         const bool on = e ? !strcmp(e, "game") :
-            (::auto_settings::red_tunic_apu(dev.props.vendorID,
-                dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) || game_order());
+            ((::auto_settings::red_tunic_apu(dev.props.vendorID,
+                dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) &&
+              !::auto_settings::steam_deck_apu(dev.props.vendorID, dev.props.deviceID)) || game_order());
         if (on) logf("vk: RX_VK_PASS_BARRIER=game: a draw pass right after another, no barrier of the game's between, waits in its fragment stages only");
         return on;
     }();
@@ -7292,7 +7293,8 @@ void texture_frame(uint64_t completed) {
         own = getenv("RX_VK_VRAM_MB") ? (uint64_t)atoi(getenv("RX_VK_VRAM_MB")) << 20
               : igpu                 ? texture_rule::integrated_bytes(a, device_vram_bytes(), astc_on_cpu())
                                      : texture_rule::dedicated_bytes(a, device_vram_bytes(), system_ram_bytes());
-        if (!getenv("RX_VK_VRAM_MB") && ::auto_settings::red_tunic_apu(dev.props.vendorID, igpu)) {
+        if (!getenv("RX_VK_VRAM_MB") && ::auto_settings::red_tunic_apu(dev.props.vendorID, igpu) &&
+            !::auto_settings::steam_deck_apu(dev.props.vendorID, dev.props.deviceID)) {
             own = std::min<uint64_t>(own, 1024 * texture_rule::kMB);
             logf("vk: Red Tunic AMD APU: texture cache ceiling %llu MB", (unsigned long long)(own >> 20));
         }
