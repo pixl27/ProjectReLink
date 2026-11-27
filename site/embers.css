@@ -1,0 +1,64 @@
+:root {
+  color-scheme: dark;
+  --paper: #140f14;
+  --ink: #f9edd7;
+  --muted: #d3bfae;
+  --line: #614637;
+  --red: #ffc18a;
+  --red-dark: #3e1522;
+  --mint: #30262d;
+}
+body {
+  font-size: clamp(18px, 1.4vw, 21px);
+  background: radial-gradient(ellipse at 68% 5%, #472028 0, transparent 34rem), var(--paper);
+}
+.nav nav, .button, .text-link { font-size: 16px; }
+.lead { font-size: clamp(20px, 2vw, 27px); }
+.hero-copy .eyebrow, .eyebrow { color: #ffc18a; }
+.hero-copy h1 { font-size: clamp(64px, 8vw, 124px); }
+.hero { position: relative; isolation: isolate; }
+.hero-visual { background: #281b24; box-shadow: 13px 16px 0 #351c29; }
+.facts { background: #211620; }
+.hardware-panel, .download-panel { background: #241821; color: var(--ink); border-color: var(--line); }
+.hardware-panel p, .download-item small { color: var(--muted); }
+.hardware-panel h3 { color: var(--ink); }
+.button.primary { background: #eeb372; color: #29141b; border-color: #f7ce95; }
+.download-section { background: radial-gradient(ellipse at 18% 100%, #652032, transparent 60%), #24131e; }
+.download-item, .download-more { color: var(--ink); border-color: var(--line); }
+.chapter-emblems { display: flex; justify-content: center; align-items: center; gap: clamp(45px, 12vw, 175px); margin-bottom: 42px; }
+.chapter-emblems img { filter: drop-shadow(0 0 24px #e25f3f66); }
+.field-guide { max-width: 68ch; padding: 1.3rem 0; }
+
+.fire-bed { position: absolute; inset: 0; overflow: hidden; z-index: -1; pointer-events: none; }
+.fire-bed::before, .fire-bed::after {
+  content: ''; position: absolute; inset: auto 0 -15% 12%; height: 60%;
+  background: url('assets/flames.svg') center bottom / 100% 100% no-repeat;
+  transform-origin: center bottom;
+  animation: flame-breathe 5s ease-in-out infinite alternate;
+}
+.fire-bed::after { inset-inline: 2% 20%; opacity: .4; animation-delay: -3s; }
+.fire-bed span {
+  position: absolute; bottom: 0; left: var(--left); width: 5px; height: 8px;
+  border-radius: 50%; background: #ffcf87; box-shadow: 0 0 12px 3px #ee553e;
+  animation: ember-rise var(--duration) linear var(--delay) infinite;
+}
+.fire-bed span:nth-child(1) { --left: 12%; --duration: 8s; --delay: -2s; }
+.fire-bed span:nth-child(2) { --left: 28%; --duration: 10s; --delay: -7s; }
+.fire-bed span:nth-child(3) { --left: 43%; --duration: 9s; --delay: -4s; }
+.fire-bed span:nth-child(4) { --left: 59%; --duration: 8s; --delay: -6s; }
+.fire-bed span:nth-child(5) { --left: 77%; --duration: 11s; --delay: -1s; }
+.fire-bed span:nth-child(6) { --left: 92%; --duration: 9s; --delay: -5s; }
+@keyframes flame-breathe { from { opacity: .4; transform: scaleY(.72); } to { opacity: .86; transform: scaleY(1.24); } }
+@keyframes ember-rise { 0% { opacity: 0; transform: translate(0,0) scale(.7); } 20% { opacity: .9; } 100% { opacity: 0; transform: translate(45px,-330px) scale(.25); } }
+.motion-ready [data-reveal] { opacity: .4; transform: translateY(18px); transition: opacity .7s ease-out, transform .7s ease-out; }
+.motion-ready [data-reveal].in-view, .motion-ready [data-reveal]:focus-within { opacity: 1; transform: none; }
+.motion-ready [data-drift] { translate: 0 var(--drift, 0px); }
+@media (max-width: 700px) {
+  .hero-copy h1 { font-size: clamp(55px, 13vw, 80px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fire-bed::before, .fire-bed::after, .fire-bed span { animation: none; }
+  .fire-bed span { display: none; }
+  .motion-ready [data-reveal] { opacity: 1; transform: none; }
+  .motion-ready [data-drift] { translate: none; }
+}

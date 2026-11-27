@@ -9,7 +9,7 @@
   <meta property="og:description" content="Bring your supported game copy, choose your setup, and build Red Tunic locally for Windows or Linux.">
   <meta property="og:image" content="https://spacefarergames.github.io/RedTunic/assets/red-tunic.png">
   <meta name="theme-color" content="#9e182b"><link rel="icon" href="assets/red-tunic.png">
-  <link rel="stylesheet" href="styles.css"><script src="app.js" defer></script>
+  <link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="embers.css"><script src="app.js" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -18,7 +18,8 @@
   <nav aria-label="Main navigation"><a href="#hardware">Hardware</a><a href="#play">How to play</a><a href="#media">In motion</a><a class="nav-download" href="#download">Get 5.0.1 <span aria-hidden="true">↗</span></a></nav>
 </header>
 <main id="main">
-<section class="hero wrap">
+<section class="hero wrap" data-parallax>
+  <div class="fire-bed" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div>
   <div class="hero-copy"><p class="eyebrow"><span class="dot"></span> RED TUNIC / VERSION 5.0.1</p>
     <h1>A new way<br>back to <em>Hyrule.</em></h1>
     <p class="lead">The 2026 <i>Ocarina of Time</i> remake, built natively for your PC. Tuned for AMD Radeon integrated graphics, with Linux handhelds in focus.</p>
@@ -27,8 +28,17 @@
   </div>
   <div class="hero-visual"><div class="visual-label"><span>AN ORIGINAL RED TUNIC ILLUSTRATION</span><span>VERSION 5.0.1</span></div><img class="game-hero" src="assets/hyrule-card.svg" width="1200" height="800" alt="Original fantasy illustration of a red-cloaked traveler on an ember-lit forest path; not a game screenshot."><div class="image-caption"><span>AMD RADEON iGPU TUNING</span><span>STEAM DECK / LINUX FOCUS</span></div><div class="seal" aria-hidden="true"><strong>5.0.1</strong><span>YOUR PC<br>YOUR BUILD</span></div></div>
   </section>
-<div class="facts"><div class="wrap facts-grid"><div><span>01 / THE PATH</span><strong>Native x64 + Vulkan</strong></div><div><span>02 / THE FOCUS</span><strong>Radeon iGPUs & handhelds</strong></div><div><span>03 / THE SETUP</span><strong>RecompLauncher ready</strong></div><div><span>04 / YOUR COPY</span><strong>Always built locally</strong></div></div></div>
-<section class="hardware wrap section" id="hardware">
+<div class="facts"><div class="wrap facts-grid"><div><strong>Native x64 + Vulkan</strong></div><div><strong>Radeon iGPUs & handhelds</strong></div><div><strong>RecompLauncher ready</strong></div><div><strong>Always built locally</strong></div></div></div>
+<section class="hardware wrap section" id="hardware" data-reveal>
+  <div class="chapter-emblems" data-parallax aria-hidden="true">
+    <img src="assets/red-tunic.png" width="90" height="90" alt="" data-drift>
+    <img src="assets/ember-triforce.svg" width="120" height="108" alt="" data-drift>
+  </div>
+  <aside class="field-guide">
+    <h2>A starting point for handhelds</h2>
+    <p>Start at 1280 × 720 with the Minimum preset on Radeon integrated graphics. Give shaders time to build as you enter new areas before raising resolution or distant model detail. Keep your existing build folder when updating to retain saves and settings.</p>
+    <a class="text-link" href="https://github.com/spacefarergames/RedTunic/blob/main/docs/red-tunic-vega.md">Read the Radeon tuning guide</a>
+  </aside>
   <div class="section-heading"><p class="eyebrow">01 / MADE FOR THE MACHINE YOU HAVE</p><h2>Less desktop.<br><em>More possibility.</em></h2><p>Shared memory and compact hardware deserve considered defaults. Red Tunic keeps the controls visible and the tradeoffs documented.</p></div>
   <div class="hardware-panels"><article class="hardware-panel radeon"><div class="panel-top"><span class="tag">AMD RADEON iGPU</span><span class="micro">MEASURED REFERENCE</span></div><svg class="chip" viewBox="0 0 280 180" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2"><rect x="80" y="30" width="120" height="120" rx="12"/><rect x="101" y="51" width="78" height="78" rx="4"/><path d="M96 10v20m24-20v20m24-20v20m24-20v20m24-20v20M96 150v20m24-20v20m24-20v20m24-20v20m24-20v20M60 46h20M60 70h20M60 94h20M60 118h20M60 142h20m120-96h20m-20 24h20m-20 24h20m-20 24h20m-20 24h20"/><path d="m119 109 21-38 21 38h-42m10-18h22"/></g></svg><h3>Small GPU.<br>Thoughtful tuning.</h3><p>A Vega profile, pressure-aware texture budgets and conservative compute defaults, tested on Ryzen 5 5625U with 16 GB of shared RAM.</p><a href="https://github.com/spacefarergames/RedTunic/blob/main/docs/red-tunic-vega.md">See the Radeon profile ↗</a></article>
   <article class="hardware-panel deck"><div class="panel-top"><span class="tag">STEAM DECK / LINUX</span><span class="micro">HANDHELD FOCUS</span></div><svg class="handheld" viewBox="0 0 380 180" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.5"><rect x="15" y="22" width="350" height="138" rx="46"/><rect x="94" y="38" width="192" height="105" rx="4"/><circle cx="58" cy="59" r="13"/><circle cx="321" cy="119" r="13"/><path d="M49 105h18m-9-9v18"/><circle cx="320" cy="51" r="3"/><circle cx="310" cy="62" r="3"/><circle cx="330" cy="62" r="3"/><circle cx="320" cy="73" r="3"/><path d="m153 112 36-45 40 45m-65-13h53"/></g></svg><h3>The adventure,<br>in your hands.</h3><p>Portable Linux builds, controller-friendly play and lower-resolution options make handhelds a development priority.</p><p class="status-note">Steam Deck performance tuning is a target. Deck-specific benchmark results are not yet available.</p><a href="https://github.com/spacefarergames/RedTunic/blob/main/docs/development.md">Read the Linux guide ↗</a></article></div>

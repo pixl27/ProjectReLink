@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 260" preserveAspectRatio="none">
+  <defs><linearGradient id="heat" x2="0" y2="1"><stop stop-color="#981d43" stop-opacity=".18"/><stop offset="1" stop-color="#fa6537" stop-opacity=".55"/></linearGradient></defs>
+  <path fill="url(#heat)" d="M0 260Q95 211 61 124q68 26 70 85 68-60 56-150 73 63 62 150 88-41 83-132 49 36 55 100Q482 124 469 0q97 83 75 193 72-32 75-106 60 44 59 112 91-33 82-142 77 79 72 163 48-11 68-55v95Z"/>
+</svg>
