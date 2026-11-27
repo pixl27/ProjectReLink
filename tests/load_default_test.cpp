@@ -84,6 +84,11 @@ int main(int argc, char** argv) {
     CHECK(!load_default::marker_write(std::string(argv[1]) + "/no-such-folder/x.txt", 1, 1));
     CHECK(std::remove(path.c_str()) == 0 && !load_default::marker_there(path));
     CHECK(load_default::marker_write_lacked(path, 4189) && load_default::marker_there(path));
+    const auto missing = load_default::marker_kind(path);
+    CHECK(missing == load_default::Marker::kLacked);
+    CHECK(!load_default::marker_counts(missing, 16384));
+    CHECK(load_default::marker_counts(missing, 20481));
+    CHECK(load_default::marker_counts(load_default::Marker::kWaits, 16384));
     CHECK(std::remove(path.c_str()) == 0);
     std::printf("load_default: ok\n");
     return 0;

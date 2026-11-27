@@ -5570,6 +5570,7 @@ void draw_ask(ui::Ctx& c) {
     ui::prompt_bar(c, prompt_list, 3);
 }
 
+void draw_startup_fire(ui::Ctx& c, float seconds);
 void draw_menu(ui::Ctx& c);
 /// The menu's text sizes at this window's unit, baked ahead by vk_imgui.cpp a few a frame: the first open then draws with no
 /// glyphs to make (it took 2.6 ms at 1080p)
@@ -5637,7 +5638,12 @@ void draw_menu(ui::Ctx& c) {
     else if (page == 4) draw_inventory(k);
     else if (quick_debug && cur_tab == TAB_DEBUG) draw_quick_debug(k);
     else if (tune_mode) draw_tune_bar(k);
-    else draw_options(k);
+    else {
+        static const int64_t fire_since = prof_now();
+        const float seconds = static_cast<float>((prof_now() - fire_since) / 1e9);
+        draw_startup_fire(k, seconds);
+        draw_options(k);
+    }
     if (menu_ox <= 0) return;
     for (int i = vtx0; i < c.d->VtxBuffer.Size; i++) c.d->VtxBuffer[i].pos.x += menu_ox;
     // (a clip rectangle of the column's: moved with it; the whole window's (the dim's, and the draw list's own) stays, as it
@@ -6559,7 +6565,7 @@ static const threaded::Choice& threaded_choice() {
                              getenv("RX_VK_BENCH") ? "RX_VK_BENCH" : nullptr;
         threaded::Choice c = threaded::choose(opts.threaded_rendering, cores, unsafe != nullptr);
         if (threaded::auto_picked(c) && !pools_mirrored()) {
-            c = threaded::Choice{false, false, threaded::Why::AutoUnsafe};
+            c = threaded::without_mirrors(c, cores);
             unsafe = "the buffer pools have no mirrors";
         }
         char line[256];

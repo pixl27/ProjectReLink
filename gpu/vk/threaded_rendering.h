@@ -62,6 +62,7 @@ enum class Why {
     AutoUnsafe,         // Auto, and the mode is not safe on this run
     AutoFewCores,       // Auto, fewer than kAutoRenderCores cores (or their count unknown: 0): off
     AutoRenderThread,   // Auto, kAutoRenderCores to kAutoRecorderCores - 1 cores: the render thread alone
+    AutoRecorderOnly,    // Auto on a CPU with at least six cores, without mirrored pools
     AutoBothThreads,    // Auto, kAutoRecorderCores or more: the render thread and the recorder thread
 };
 /// The row's answer in two halves, each read by its own reader. The recorder thread never comes without the render thread
@@ -93,6 +94,13 @@ constexpr Choice choose(int setting, unsigned cores, bool unsafe, bool auto_enab
 /// pools' mirrors), is asked only then
 constexpr bool auto_picked(const Choice& c) { return c.why == Why::AutoRenderThread || c.why == Why::AutoBothThreads; }
 
+/// With no mirrors, replay stays inline and the recorder can still run ahead on six cores.
+constexpr Choice without_mirrors(const Choice& choice, unsigned cores) {
+    if (!auto_picked(choice)) return choice;
+    if (cores >= kAutoRecorderCores) return {false, true, Why::AutoRecorderOnly};
+    return {false, false, Why::AutoUnsafe};
+}
+
 /// (hookshot) Auto's count: the physical cores among the logical processors the process may run on. `core_masks`: one mask
 /// a physical core, of its logical processors (GetLogicalProcessorInformation's RelationProcessorCore entries, an SMT core's
 /// two siblings in one mask; on Linux host/posix's, from sysfs core_id and physical_package_id), `n` of them; `usable`: the
@@ -123,6 +131,10 @@ inline void describe(char* out, size_t size, const Choice& c, unsigned cores, un
     case Why::AutoRenderThread:
         std::snprintf(out, size, "Auto: the render thread only (%u cores of %u logical processors; the recorder thread too "
                       "from %u cores)", cores, cpus, kAutoRecorderCores);
+        return;
+    case Why::AutoRecorderOnly:
+        std::snprintf(out, size, "Auto: the recorder thread only (%u cores of %u logical processors; %s)",
+                      cores, cpus, unsafe ? unsafe : "no mirrors");
         return;
     case Why::AutoBothThreads:
         std::snprintf(out, size, "Auto: on, the render thread and the recorder thread (%u cores of %u logical processors)",

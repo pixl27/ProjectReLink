@@ -167,7 +167,9 @@ Id WarpScope(EmitContext& ctx) {
 }
 
 void WarpOr(EmitContext& ctx, u32 word, Id bits) {
-    ctx.OpAtomicOr(ctx.U32[1], WarpWord(ctx, word), WarpScope(ctx), ctx.u32_zero_value, bits);
+    // Each arrival publishes this lane's data and carries earlier arrivals' data through the RMW chain.
+    const auto semantics{spv::MemorySemanticsMask::AcquireRelease | spv::MemorySemanticsMask::WorkgroupMemory};
+    ctx.OpAtomicOr(ctx.U32[1], WarpWord(ctx, word), WarpScope(ctx), ctx.Const(static_cast<u32>(semantics)), bits);
 }
 
 Id WarpRead(EmitContext& ctx, Id pointer) {

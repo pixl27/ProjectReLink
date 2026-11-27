@@ -40,31 +40,35 @@ def need(text, what, why):
 
 
 def switch(cxx):
-    """mesh_pages_wanted, which sets this switch too, cut from vk_coopmat.cpp and run for the GPUs and settings that matter"""
+    """shared_warp_wanted cut from vk_coopmat.cpp and run for the policy's default and the switch's settings that matter"""
     coopmat = (ROOT / "gpu/vk/vk_coopmat.cpp").read_text(encoding="utf-8")
-    fn = block(coopmat, "bool mesh_pages_wanted(")
+    fn = block(coopmat, "bool shared_warp_wanted(")
     init = block(coopmat, "void coopmat_init(")
-    call = re.search(r"mesh_fallback_shared_warp = mesh_pages_wanted\(([^;]+)\);", init)
+    call = re.search(r"mesh_fallback_shared_warp = shared_warp_wanted\(([^;]+)\);", init)
     if not call:
-        raise SystemExit("coopmat_init does not set mesh_fallback_shared_warp from mesh_pages_wanted")
+        raise SystemExit("coopmat_init does not set mesh_fallback_shared_warp from shared_warp_wanted")
     args = " ".join(call.group(1).split())
-    for needed in ("dev.driver_id", '"RX_VK_MESH_SHARED_WARP"'):
+    for needed in ("dev.policy.mesh_shared_warp", '"RX_VK_MESH_SHARED_WARP"'):
         if needed not in args:
-            raise SystemExit(f"mesh_pages_wanted is not given {needed} for mesh_fallback_shared_warp")
+            raise SystemExit(f"shared_warp_wanted is not given {needed} for mesh_fallback_shared_warp")
     check = re.search(r"mesh_fallback_shared_warp_check =\s*([^;]+);", init)
+    need(init, '"vk: mesh_shared_warp=%d (effective, RX_VK_MESH_SHARED_WARP over the policy default)"',
+         "the effective shared warp setting is not logged")
+    need(init, "Shader::Backend::SPIRV::mesh_fallback_shared_warp ? 1 : 0);",
+         "the log does not use the effective shared warp setting")
     if not check or "mesh_fallback_shared_warp &&" not in " ".join(check.group(1).split()) or \
             '"RX_VK_MESH_SHARED_WARP_CHECK"' not in check.group(1):
         raise SystemExit("the check is not RX_VK_MESH_SHARED_WARP_CHECK over the switch")
-    mesa, windows = "VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA", "VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS"
-    nvidia, radv = "VK_DRIVER_ID_NVIDIA_PROPRIETARY", "VK_DRIVER_ID_MESA_RADV"
-    cases = [(mesa, None, True, "Intel, Mesa"), (mesa, "0", False, "Intel, Mesa, =0"), (windows, None, False, "Intel, Windows"),
-             (nvidia, None, False, "NVIDIA"), (radv, None, False, "AMD, RADV"), (radv, "1", True, "AMD, RADV, =1")]
+    # (the policy's default, then the switch over it: unset or empty the default, the off words off, anything else on)
+    cases = [("true", None, True, "the policy's on, unset"), ("false", None, False, "the policy's off, unset"),
+             ("true", "", True, "the policy's on, empty"), ("false", "", False, "the policy's off, empty"),
+             ("true", "0", False, "the policy's on, =0"), ("true", "off", False, "the policy's on, =off"),
+             ("false", "1", True, "the policy's off, =1"), ("false", "on", True, "the policy's off, =on")]
     checks = "\n".join(
-        f'    if (mesh_pages_wanted({v}, {"nullptr" if e is None else chr(34) + e + chr(34)}) != {str(w).lower()}) '
+        f'    if (shared_warp_wanted({p}, {"nullptr" if e is None else chr(34) + e + chr(34)}) != {str(w).lower()}) '
         f'{{ std::puts("FAIL: {name}"); return 1; }}'
-        for v, e, w, name in cases)
-    driver_enum = "enum VkDriverId { " + ", ".join(f"{k} = {n}" for k, n in DRIVER_IDS.items()) + " };\n"
-    source = (ENV_H.read_text(encoding="utf-8") + "\n#include <cstdint>\n#include <cstdio>\n#include <cstdlib>\n" + driver_enum + fn +
+        for p, e, w, name in cases)
+    source = (ENV_H.read_text(encoding="utf-8") + "\n#include <cstdint>\n#include <cstdio>\n#include <cstdlib>\n" + fn +
               "\nint main() {\n" + checks + "\n    return 0;\n}\n")
     with tempfile.TemporaryDirectory(prefix="mesh-shared-warp-") as folder:
         folder = Path(folder)

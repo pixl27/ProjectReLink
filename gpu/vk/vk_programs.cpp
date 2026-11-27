@@ -361,7 +361,12 @@ std::atomic<int> load_mode{-1};
 std::atomic<bool> struck_last_session{false};   // (load_default.h: the session before this one left a strike)
 void programs_load_decide(bool native_mesh) {
     struck_last_session = load_default::strike_take(load_fallback_path());
-    const load_default::Choice c = load_default::choose(getenv("RX_VK_LOAD"), native_mesh, load_default::marker_there(load_fallback_path()),
+    const auto kind = load_default::marker_kind(load_fallback_path());
+    const auto ram_mb = static_cast<uint32_t>(dev.facts.ram >> 20);
+    const bool marker = load_default::marker_counts(kind, ram_mb);
+    if (kind == load_default::Marker::kLacked && !marker && !getenv("RX_VK_LOAD"))
+        logf("vk: skipping startup preload marker from missing pipelines on a %u MB PC", ram_mb);
+    const load_default::Choice c = load_default::choose(getenv("RX_VK_LOAD"), native_mesh, marker,
                                                         env_on("RX_VK_PROGRAM_CACHE_ZSTD"), precompile_wanted());   // (as vk_progcache.cpp disk_init reads it)
     load_mode.store(c.create ? 1 : 0, std::memory_order_release);
     logf("vk: programs are loaded %s: %s (RX_VK_LOAD=create or start says which)",
@@ -374,7 +379,9 @@ namespace {
 /// install loads before the title again (hookshot_load_start.txt; a preparation removes it). Over kStrikeMs for the first
 /// time only leaves a strike for the next session to find. Loads at create are for PCs where a first use hardly ever meets one
 std::atomic<int64_t> wait_worst_ns{0}, wait_long_ns{0};
-std::atomic<bool> wait_marked{false}, wait_struck{false};
+std::atomic<bool> wait_struck{false};
+std::mutex marker_mu;
+bool wait_marked = false, lacked_marked = false;
 void load_wait_note(int64_t ns) {
     if (!precompile_wanted()) return;
     int64_t worst = wait_worst_ns.load(std::memory_order_relaxed);
@@ -392,7 +399,9 @@ void load_wait_note(int64_t ns) {
              wrote ? "" : "; the strike did not write");
         return;
     }
-    if (wait_marked.exchange(true)) return;
+    std::lock_guard lock(marker_mu);
+    if (wait_marked) return;
+    wait_marked = true;
     const bool wrote = load_default::marker_write(load_fallback_path(), worst_ms, long_ms);
     logf("vk: first uses waited for loads for %.0f ms in this session (the longest %.0f ms; waits over %.0f ms counted): over "
          "%.0f ms%s, so the next start loads every listed program before the title again%s", long_ms, worst_ms,
@@ -460,7 +469,11 @@ void programs_frames_note() {
     if (!programs_load_at_create() || !precompile_wanted()) return;
     // (what the loads at create calls asked of the caches and no cache had: load_work counts them)
     const long long lacked = census.load_pipes_cold.load(std::memory_order_relaxed) + census.load_computes_cold.load(std::memory_order_relaxed);
-    if (!load_default::caches_lacked(lacked) || wait_marked.exchange(true)) return;
+    if (!load_default::caches_lacked(lacked) ||
+        !load_default::marker_counts(load_default::Marker::kLacked, static_cast<uint32_t>(dev.facts.ram >> 20))) return;
+    std::lock_guard lock(marker_mu);
+    if (wait_marked || lacked_marked) return;
+    lacked_marked = true;
     const bool wrote = load_default::marker_write_lacked(load_fallback_path(), lacked);
     logf("vk: %lld listed pipelines were in no cache when their programs were loaded in this session (over %lld): they are "
          "compiled in play, so the next start loads every listed program before the title again%s", lacked,

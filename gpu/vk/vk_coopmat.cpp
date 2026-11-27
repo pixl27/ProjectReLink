@@ -531,6 +531,9 @@ bool table_loop_wanted(VkDriverId driver, bool dynamic_indexing, const char* env
 /// (hookshot, mma_layout.h mesh_fallback_pages, mesh_fallback_global_attributes and mesh_fallback_shared_warp) Intel's Mesa driver
 /// only, where they were measured; env is RX_VK_MESH_PAGES, RX_VK_MESH_GLOBAL_ATTRS or RX_VK_MESH_SHARED_WARP, 0 or 1 over the
 /// default (tests/test_mesh_fallback_pages.py, tests/test_mesh_fallback_global_attrs.py, tests/test_mesh_fallback_shared_warp.py)
+bool shared_warp_wanted(bool by_policy, const char* env) {
+    return env && *env ? !env_value_off(env) : by_policy;
+}
 bool mesh_pages_wanted(VkDriverId driver, const char* env) {
     return env ? !env_value_off(env) : driver == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA;
 }
@@ -557,7 +560,8 @@ void coopmat_init() {
     Shader::Backend::SPIRV::mesh_fallback_global_attributes = mesh_pages_wanted(dev.driver_id, std::getenv("RX_VK_MESH_GLOBAL_ATTRS"));
     if (Shader::Backend::SPIRV::mesh_fallback_global_attributes)
         logf("vk: the mesh fallback's attribute regions in a pool of the records buffer (RX_VK_MESH_GLOBAL_ATTRS=0: in workgroup memory)");
-    Shader::Backend::SPIRV::mesh_fallback_shared_warp = mesh_pages_wanted(dev.driver_id, std::getenv("RX_VK_MESH_SHARED_WARP"));
+    Shader::Backend::SPIRV::mesh_fallback_shared_warp = shared_warp_wanted(dev.policy.mesh_shared_warp, std::getenv("RX_VK_MESH_SHARED_WARP"));
+    logf("vk: mesh_shared_warp=%d (effective, RX_VK_MESH_SHARED_WARP over the policy default)", Shader::Backend::SPIRV::mesh_fallback_shared_warp ? 1 : 0);
     Shader::Backend::SPIRV::mesh_fallback_shared_warp_check =
         Shader::Backend::SPIRV::mesh_fallback_shared_warp && env_on("RX_VK_MESH_SHARED_WARP_CHECK");
     if (Shader::Backend::SPIRV::mesh_fallback_shared_warp)

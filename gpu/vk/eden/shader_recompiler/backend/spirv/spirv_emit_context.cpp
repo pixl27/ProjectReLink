@@ -2723,7 +2723,10 @@ void EmitContext::DefineSharedWarp() {
     OpLoopMerge(done, next, spv::LoopControlMask::DontUnroll);
     OpBranch(body);
     AddLabel(body);
-    const Id seen{OpAtomicLoad(U32[1], pointer, Const(static_cast<u32>(spv::Scope::Workgroup)), u32_zero_value)};
+    // Observing the arrivals also acquires the data published by their RMW chain.
+    const auto semantics{spv::MemorySemanticsMask::Acquire | spv::MemorySemanticsMask::WorkgroupMemory};
+    const Id seen{OpAtomicLoad(U32[1], pointer, Const(static_cast<u32>(spv::Scope::Workgroup)),
+                               Const(static_cast<u32>(semantics)))};
     const Id count{OpLoad(U32[1], waited)};
     const Id go{OpLogicalOr(U1, OpIEqual(U1, OpBitwiseAnd(U32[1], seen, lanes), lanes),
                             OpUGreaterThanEqual(U1, count, Const(WARP_WAIT)))};

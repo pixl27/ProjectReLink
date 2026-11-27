@@ -1613,7 +1613,7 @@ uint64_t translator_stamp() {
                                // (and the software multiplies' form, vk_coopmat.cpp choose_software_form: 0 for the loop, as before)
                                (mma_software ? mma_software_form << 8 | (mma_software_form && mma_software_quad ? 1024u : 0u) : 0u) |
                                (mesh_fallback_pages ? 2048u : 0u) | (mesh_fallback_global_attributes ? 4096u : 0u) |
-                               (mesh_fallback_shared_warp ? 8192u : 0u) | (mesh_fallback_shared_warp_check ? 16384u : 0u) |
+                               (mesh_fallback_shared_warp ? 65536u : 0u) | (mesh_fallback_shared_warp_check ? 16384u : 0u) |
                                (mesh_fallback_strict_fmul ? 32768u : 0u);
         add(&flags, sizeof flags);
         add(mma_order_a.data(), sizeof(uint32_t) * mma_order_a.size());

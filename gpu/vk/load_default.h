@@ -2,6 +2,7 @@
 // (hookshot) When kept programs are loaded, where RX_VK_LOAD does not say: at their create calls (create) or all before the
 // title (start), and the safety net that takes an install back to start. Nothing of Vulkan here: tests/test_load_default.py.
 #pragma once
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -73,6 +74,36 @@ inline bool marker_there(const std::string& path) {
     std::fclose(f);
     return true;
 }
+/// Which session left the marker: one whose first uses waited too long for their loads (marker_write), or one whose loads
+/// found over kNotInCacheMost listed pipelines in no cache (marker_write_lacked). Told by the text's first words; a marker of
+/// any other text (written by hand, or by a build before both existed) is taken as the waits', as every marker was before
+enum class Marker { kNone, kWaits, kLacked };
+inline Marker marker_kind(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return Marker::kNone;
+    char head[32]{};
+    const size_t n = std::fread(head, 1, sizeof head - 1, f);
+    std::fclose(f);
+    static const char lacked[] = "In one session ";   // (marker_write_lacked's first words)
+    return n >= sizeof lacked - 1 && !std::memcmp(head, lacked, sizeof lacked - 1) ? Marker::kLacked : Marker::kWaits;
+}
+
+/// The RAM at or under which the lacked marker is not followed. Start keeps every listed program before the title: 19 GB of
+/// private memory at the title on a 16 GB PC (an RX 6600 on Windows, issues 869 and 933), and 25.8 GB on another (an Arc
+/// A750, 16 GB, Windows: its working set paged out to 3.3 GB, and the window stayed on "Starting the game" for minutes).
+/// What tripped the lacked marker there was a settings change (502 listed pipelines in no cache, and 544 in the session
+/// after it), and compiling those in play is far less than start costs that PC: there it takes the folder from playable to
+/// not, at every start, until the folder is prepared again. The waits' marker is followed on any RAM: it is for a PC
+/// where loads at create wait seconds (an RX 580 with 16 GB), and start is what makes that one playable.
+/// The same 20 GB line as pcache_load.h's kSmallRamMb
+constexpr uint32_t kStartRamMb = 20480;
+/// Whether the marker takes this start to start mode. ram_mb: the PC's RAM (0: not known, and the marker is followed as before)
+inline bool marker_counts(Marker m, uint32_t ram_mb) {
+    if (m == Marker::kNone) return false;
+    if (m == Marker::kLacked && ram_mb && ram_mb <= kStartRamMb) return false;
+    return true;
+}
+
 inline bool marker_write(const std::string& path, double worst_ms, double total_ms) {
     FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) return false;

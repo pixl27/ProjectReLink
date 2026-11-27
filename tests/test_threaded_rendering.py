@@ -120,6 +120,8 @@ int main() {
     CHECK(kAutoRenderCores == 4 && kAutoRecorderCores == 6);
     for (unsigned cores = 0; cores <= 256; cores++) {
         const Choice c = auto_picks(cores);
+        const Choice unmirrored = without_mirrors(c, cores);
+        CHECK(!unmirrored.render_thread && unmirrored.recorder_thread == (cores >= 6));
         if (cores < 4) CHECK(same(c, false, false, Why::AutoFewCores));
         else if (cores < 6) CHECK(same(c, true, false, Why::AutoRenderThread));
         else CHECK(same(c, true, true, Why::AutoBothThreads));
@@ -382,7 +384,7 @@ def check_sources(s):
     for need in ("static const threaded::Choice choice = [] {", "menu_init();", "const unsigned cpus = usable_cpus(), cores = usable_cores();",
                  "threaded::choose(opts.threaded_rendering, cores, unsafe != nullptr)", '"RX_VK_CAPTURE"', '"RX_VK_LOW_SPEC"',
                  '"RX_VK_DUMP"', '"RX_VK_BENCH"', "if (threaded::auto_picked(c) && !pools_mirrored()) {",
-                 "c = threaded::Choice{false, false, threaded::Why::AutoUnsafe};",
+                 "c = threaded::without_mirrors(c, cores);",
                  "threaded::describe(line, sizeof line, c, cores, cpus, unsafe);", 'logf("vk: Threaded rendering: %s", line);'):
         if resolved and need not in resolved:
             bad.append("vk_menu.cpp: threaded_choice() lost " + need + " (resolved once, from the cores the process may run on, "

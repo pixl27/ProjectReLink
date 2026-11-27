@@ -422,6 +422,17 @@ struct DevicePolicy {
     // A subgroup can have more than 32 lanes: the long warp path for the stages the GPU does not pin to 32 (the site's
     // stage profiles). RX_VK_WARP64, read at the site. Read (vk_shader.cpp make_profile; in the program cache's stamp)
     bool warp64 = false;
+    // The mesh fallback's ballots, votes and shuffles through workgroup memory (mma_layout.h mesh_fallback_shared_warp): a
+    // fallback stage the planner takes then has no subgroup instruction and runs alike at any lane count. Mesa's Intel
+    // driver, where 32 lanes spilled (fallback_lanes.h); and AMD's Windows driver on a GPU whose compute stages cannot be
+    // held to 32 lanes but run wider (GCN: RX 400/500 and Vega, 64 lanes only, sg32_stages without compute), where every
+    // such stage otherwise takes the 64-lane emulation of NVN's 32-lane warp: on driver 24.9.1 an RX 580 compiled each
+    // fallback stage in 53 to 310 s, its draws left out meanwhile, and foliage, hair and Link drew as specks (Longshot
+    // #1204, #1836). Not RADV on the same cards: an RX 580 there (Mesa 26.2.6) compiled them in seconds and drew them
+    // right on the subgroup, and the shared warp gave the same answers and the same fps, so it would only cost a GCN RADV
+    // player one translation of the fallback. RX_VK_MESH_SHARED_WARP, read at the site. Site (vk_coopmat.cpp
+    // coopmat_init; translator_stamp folds what it gives)
+    bool mesh_shared_warp = false;
 
     // ---- measured on one card ----
     // RADV but on GCN 1-4 and on a discrete RDNA 4 card: the replay's submits held and sent as one (a Radeon 8060S on Bazzite, the submit 70 -> 6 ms a
@@ -602,6 +613,9 @@ inline DevicePolicy device_policy(const DeviceFacts& f) {
     p.split_ub_flush = !f.intel() || p.mirrors;
     p.native_float_add = native_fadd_listed(f.driver_id, f.device_id, f.driver_version) && f.float32_atomic_add;
     p.warp64 = f.subgroup_max > 32;
+    p.mesh_shared_warp = f.driver_id == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA ||
+                         (f.windows && f.driver_id == VK_DRIVER_ID_AMD_PROPRIETARY && f.subgroup_max > 32 &&
+                          !(f.sg32_stages & VK_SHADER_STAGE_COMPUTE_BIT));
 
     // measured on one card
     // (corrected: GCN by the one definition, radv_gcn. To go back: f.radv() && !(f.sg32_stages == 0 && f.subgroup_size > 32))
@@ -827,6 +841,7 @@ template <class Line> void device_policy_log(const DevicePolicy& p, const Device
         l.flag("split_ub_flush", p.split_ub_flush, p.set(Sw::split_ub_flush));
         l.flag("native_float_add", p.native_float_add, false, f.nvidia() ? nullptr : "Intel 101.8991 to 101.9175 by family");
         l.flag("warp64", p.warp64);
+        l.flag("mesh_shared_warp_default", p.mesh_shared_warp);
         l.flag("batch_submits", p.batch_submits, p.set(Sw::batch_submits));
         l.flag("mma_unroll_try", p.mma_unroll_try);
         l.flag("global_table_loop", p.global_table_loop);
