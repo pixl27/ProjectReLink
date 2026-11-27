@@ -182,8 +182,7 @@ public partial class MainWindow : Window
         {
             if (!Directory.Exists(System.IO.Path.Combine(folder, ".hookshot_exefs")) || !Directory.Exists(System.IO.Path.Combine(folder, "romfs")))
                 return null;
-            foreach (var line in File.ReadAllLines(System.IO.Path.Combine(folder, "hookshot_version.txt")))
-                if (line.StartsWith("version=")) return line[8..].Trim() is { Length: > 0 } v ? v : null;
+            return ReadVersion(folder);
         }
         catch (Exception) { }
         return null;
@@ -297,8 +296,23 @@ public partial class MainWindow : Window
     {
         try
         {
+            var executable = GameExe(folder);
+            if (File.Exists(executable))
+            {
+                var info = FileVersionInfo.GetVersionInfo(executable);
+                if (info.ProductName == "Red Tunic" && Version.TryParse(info.ProductVersion, out var version) && version.Build >= 0)
+                    return "v" + version.ToString(3);
+            }
+        }
+        catch (Exception) { }
+        try
+        {
             foreach (var line in File.ReadAllLines(System.IO.Path.Combine(folder, "hookshot_version.txt")))
-                if (line.StartsWith("version=")) return line[8..].Trim() is { Length: > 0 } v ? v : null;
+            {
+                var version = line.StartsWith("version=") ? line[8..].Trim() : line.Trim();
+                if (version.Length > 0 && (line.StartsWith("version=") || Version.TryParse(version.TrimStart('v'), out _)))
+                    return version;
+            }
         }
         catch (Exception) { }
         return null;

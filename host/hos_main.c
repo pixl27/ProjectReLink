@@ -611,6 +611,8 @@ static void load_hookshot_env(void) {
             used += snprintf(hookshot_env_note + used, sizeof hookshot_env_note - (size_t)used, " %s", s);
         count++;
 #ifdef _WIN32
+        /* The renderer may use a different C runtime. Publish the setting to the process before loading it. */
+        SetEnvironmentVariableA(s, eq + 1);
         *eq = '=';
         _putenv(s);
 #else
