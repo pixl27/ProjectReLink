@@ -20,7 +20,7 @@ def main():
     main_cpp = (ROOT / "gpu/vk/vk_main.cpp").read_text(encoding="utf-8")
     menu = (ROOT / "gpu/vk/vk_menu.cpp").read_text(encoding="utf-8")
     started = main_cpp[main_cpp.index("bool started_up() {"):main_cpp.index("int start(void* hwnd) {")]
-    igpu = started[started.index("if (igpu_prepares_in_play() && precompile_wanted()) {"):]
+    igpu = started[started.index("if (!prepare_all && igpu_prepares_in_play() && precompile_wanted()) {"):]
     if 'view.title = "Starting game";' not in igpu or "startup_screen(&view);" not in igpu:
         raise SystemExit("the integrated-GPU in-play shader path does not show the startup screen")
     if "startup_transient_at.compare_exchange_strong" not in menu or "Loading game" not in menu:
