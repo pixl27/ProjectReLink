@@ -1,0 +1,3 @@
+| Date | Build | OS / desktop | GPU / driver | CPU / RAM | Settings | Where | Result |
+|---|---|---|---|---|---|---|---|
+| 2026-11-27 | Red Tunic 5.0.3, renderer fixes through 2d93ad1cf with production `AstcPush` in the decoder fixture | Windows 11 Pro for Workstations, build 26300 | AMD Radeon Vega integrated graphics, 31.0.21925.1001 | Ryzen 5 5625U, 15.4 GiB visible | Vulkan GPU ASTC, linear and Switch 2 native tiling | Standalone decoder fixture, no game files, decoder01 | All 28 GPU readbacks matched the CPU reference across 14 block sizes and 22,680 pixels. Maximum difference was one byte value on interpolated channels. This run measures decoder correctness only. |
