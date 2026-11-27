@@ -50,6 +50,9 @@ def main():
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32   /* (the test's own setenv/unsetenv: Windows has _putenv, which the game itself uses there) */
+static int SetEnvironmentVariableA(const char *name, const char *value) {
+    return name != NULL && value != NULL;
+}
 static int setenv(const char *name, const char *value, int overwrite) {
     char s[1024];
     (void)overwrite;

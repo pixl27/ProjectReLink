@@ -19,7 +19,7 @@ def main():
     draw=(ROOT/'gpu/vk/vk_draw.cpp').read_text()
     source=(ROOT/'gpu/vk/vk_main.cpp').read_text()
     startup=block(source,'bool started_up()')
-    skip=block(startup,'if (FILE* f = fopen(skipped_path().c_str(), "rb"))')
+    skip=block(startup,'if (FILE* f = prepare_all ? nullptr : fopen(skipped_path().c_str(), "rb"))')
     assert 'precompile_index_only();' in skip and skip.index('precompile_index_only();')<skip.index('return true;')
     prepare=block(startup,'if (precompile_wanted())')
     tail=startup[startup.index(prepare)+len(prepare):]

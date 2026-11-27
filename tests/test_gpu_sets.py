@@ -140,7 +140,7 @@ def check_source():
         if needle not in ig:
             raise SystemExit("vk_main.cpp: igpu_prepares_in_play() no longer has: " + needle)
     up = block(main, "bool started_up()")
-    at = up.index("if (igpu_prepares_in_play() && precompile_wanted()) {")
+    at = up.index("if (!prepare_all && igpu_prepares_in_play() && precompile_wanted()) {")
     if not (up.index("if (prepare_only() && igpu_prepares_in_play())") < up.index("if (prepare_only()) {") and
             "precompile_index_only();" in up[at:at + 400] and at < up.index("if (precompile_wanted()) {")):
         raise SystemExit("vk_main.cpp: started_up() prepares before the game on an integrated GPU")
