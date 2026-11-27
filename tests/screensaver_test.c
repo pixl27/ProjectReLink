@@ -157,6 +157,8 @@ static void game_menu_press(LPARAM lp, LONG bit) { (void)lp; (void)bit; unexpect
 static void menus_mouse(HWND w, int insert_open, int game_open) { (void)w; (void)insert_open; (void)game_open; unexpected(); }
 static void gm_cursor_off(HWND w) { CHECK("the cursor is turned off over the game's window", w == game); cursor_offs++; }
 
+static void game_window_title(HWND window) { (void)window; }
+
 /* ACTUAL_WNDPROC */
 
 static void reset(void) {
