@@ -2560,7 +2560,8 @@ def portable_game_home(out):
         # and the Builder rebuilds an existing output folder without the setup stub.
         builder_dir = os.path.dirname(os.path.abspath(ROOT))
         if (os.path.isfile(os.path.join(ROOT, "red-tunic-release.txt")) and
-                os.path.isfile(os.path.join(builder_dir, "HookshotBuilder.exe"))):
+                any(os.path.isfile(os.path.join(builder_dir, name))
+                    for name in ("RedTunic.exe", "HookshotBuilder.exe"))):
             return None
         raise ValueError("A portable game needs the packaged Builder setup launcher.")
     try:

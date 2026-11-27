@@ -72,12 +72,13 @@ class Association(unittest.TestCase):
                 # A marked ZIP must also carry its Builder before direct launch is allowed.
                 with self.assertRaises(ValueError):
                     resolve(str(game))
-                builder = tools.parent / "HookshotBuilder.exe"
-                builder.write_text("authored fixture; never executable")
-                self.assertIsNone(resolve(str(game)))
+                for name in ("RedTunic.exe", "HookshotBuilder.exe"):
+                    builder = tools.parent / name
+                    builder.write_text("authored fixture; never executable")
+                    self.assertIsNone(resolve(str(game)))
+                    builder.unlink()
                 write(str(game), None)
                 self.assertFalse(pointer.exists())
-                builder.unlink()
                 release_marker.unlink()
                 setup.write_text("authored")
                 moved = root / "moved tree"
