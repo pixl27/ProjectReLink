@@ -1,7 +1,7 @@
 #version 450
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
-// (hookshot) NVIDIA DLSS's actor motion (dlss_actor.vert): where the draw is what the scene shows (its depth within
-// pc.tolerance steps of the scene's), the motion from where it is now (the pixel, the jitter taken off) to where it was, in
+// Actor motion (dlss_actor.vert): where a draw is visible at or in front of the scene depth, write the motion from the
+// current pixel (with jitter removed) to where it was, in
 // render pixels as shaders/dlss_prep.comp makes them
 layout(std430, binding = 0) readonly buffer Data { uint w[]; } data;
 layout(binding = 1) uniform sampler2D scene_depth;
@@ -27,7 +27,10 @@ layout(location = 0) out vec2 motion;
 void main() {
     const uint scene = floatBitsToUint(texelFetch(scene_depth, ivec2(gl_FragCoord.xy), 0).r);
     const uint here = floatBitsToUint(gl_FragCoord.z);
-    if (max(scene, here) - min(scene, here) > pc.tolerance || before.w <= 1e-6) discard;
+    // Translucent fragments can be in front of the stored depth without having written it.
+    const uint reference = (pc.formats & 0x40000000u) != 0u ? scene :
+                           (pc.formats & 0x80000000u) != 0u ? here : min(scene, here);
+    if (max(scene, here) - reference > pc.tolerance || before.w <= 1e-6) discard;
     const vec2 size = vec2(uintBitsToFloat(data.w[34]), uintBitsToFloat(data.w[35]));
     const vec2 jitter = vec2(uintBitsToFloat(data.w[32]), uintBitsToFloat(data.w[33]));
     const vec2 now = vec2(gl_FragCoord.x / size.x * 2.0 - 1.0, 1.0 - gl_FragCoord.y / size.y * 2.0) - jitter;

@@ -19,7 +19,7 @@
 //    Link, the other characters, the animals, what the game animates with bones) are drawn again over that motion, each
 //    vertex skinned with this frame's bones and the frame before's, so their pixels get their own motion. Their poses are
 //    copied on the GPU from where the game has them into two buffers that take turns; a pixel is the draw's where its depth is
-//    the scene's (within RX_VK_DLSS_ACTOR_TOL steps, default 64). What moves without bones (particles, water, foliage moved in
+//    the scene's, including translucent draws in front of its depth. What moves without bones (particles, water, foliage moved in
 //    its vertex shader, mesh-shader draws) keeps the camera's motion.
 //  - hidden meshes (vk_draw.cpp hidden_depth_draw, hidden_mesh.h): the game goes on drawing a skinned mesh into the
 //    scene's depth after it stops showing it (Link, with the camera pushed into him), so those depth draws are left out:
@@ -681,6 +681,9 @@ int actor_motion(VkCommandBuffer cmd, const Camera& cam, const float* before, ui
     const State::PoseBuffer& here = s.pose_buffers[s.pose_at];
     const State::PoseBuffer& there = s.pose_buffers[s.pose_at ^ 1];
     static const uint32_t tolerance = env_switch("RX_VK_DLSS_ACTOR_TOL") >= 0 ? (uint32_t)env_switch("RX_VK_DLSS_ACTOR_TOL") : 64;
+    fsr3_math::Camera depth_camera;
+    const uint32_t depth_direction = fsr3_math::camera_from_projection(cam.projection, depth_camera)
+        ? (depth_camera.flip_depth ? dlss_actor::kDepthReversed : dlss_actor::kDepthForward) : 0;
     std::vector<ActorPush> draws;
     std::vector<uint32_t> counts;
     // (the poses read at the draws go through a host-visible stage, copied into the pose buffer in one go after the loop: the
@@ -816,7 +819,7 @@ int actor_motion(VkCommandBuffer cmd, const Camera& cam, const float* before, ui
         a.itype = (uint32_t)k.k.itype, a.base_vertex = k.k.base_vertex;
         a.stride = k.k.stride / 4, a.pos = k.k.pos, a.sets = (uint32_t)k.k.sets;
         for (int n = 0; n < 2; n++) a.joints[n] = k.k.joints[n], a.weights[n] = k.k.weights[n];
-        a.formats = k.k.formats;
+        a.formats = k.k.formats | depth_direction;
         a.tolerance = tolerance;
         draws.push_back(a);
         counts.push_back((uint32_t)k.k.count);

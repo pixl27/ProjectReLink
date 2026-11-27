@@ -129,6 +129,8 @@ struct Options {
                            // the optimized one bound once made (vk_draw.cpp compute_optimize; RX_VK_COMPUTE_QUICK_FIRST over it)
     int preset = 0;       // quality preset: 0 Custom, 1 Minimum (4GB), 2 Low (6GB), 3 Balanced (8GB), 4 High (12GB), 5 Ultra (16GB+),
                           // 6 Auto (this PC), kAutoPreset (its tier: budget)
+    int deck_preset = 0;  // (Steam Deck) Steam Deck preset: 0 Custom, 1 Handheld - FPS, 2 Handheld - Quality, 3 Docked (TV) - FPS,
+                          // 4 Docked (TV) - Quality (vk_menu.cpp apply_deck_preset). Saved as steam_deck_preset
     int budget = 0;       // the preset the settings came from, kept when another row turns the preset to Custom: Minimum's (1)
                           // trims the textures' mips on a small card (vk_texture.cpp low_vram_texture_mips). Saved as memory_budget;
                           // 0: none, and Custom goes by Auto (this PC)'s tier (menu_memory_tier). No preset or row sets the

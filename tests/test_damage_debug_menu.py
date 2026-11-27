@@ -56,6 +56,7 @@ bool reflex_available() { return false; }
 bool antilag_available() { return false; }
 bool intel_compiler_row() { return false; }   // (not Intel graphics on Windows: the Developer section's rows as before)
 bool laptop_row() { return false; }   // (a dedicated card: no Set up for a weak laptop button)
+bool deck_preset_available() { return false; }
 int upscalers_available() { return 1; }
 constexpr int DLSS_OK = 0;
 int dlss_why() { return 1; }

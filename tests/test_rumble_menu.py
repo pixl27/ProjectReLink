@@ -70,6 +70,7 @@ void apply_pad_layout(int) {}
 int detect_pad_layout() { return opts.pad_layout; }
 void gfx_limits() {}   // (detail rows' caps: not what this checks)
 void apply_preset(int) { presets++; }
+void apply_deck_preset(int) {}
 void env_release(const int*) {}   // (the environment's hold on a row: none here)
 /* (stand-ins for the rest of set_row, which the Vibration strength row never reaches: the Upscaler's rows, the restart offer) */
 bool row_fixed(const int*) { return false; }

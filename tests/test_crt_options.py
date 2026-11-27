@@ -87,10 +87,16 @@ constexpr int kRows = sizeof rows / sizeof rows[0];
 // Output enumeration stands in for the monitor, not for any CRT operation.
 struct Out { uint32_t w, h; };
 const std::vector<Out>& outputs() {
-    static const std::vector<Out> modes = {{2048, 1152}, {1920, 1080}};
+    static const std::vector<Out> modes = {{2048, 1152}, {1920, 1080}, {1280, 800}};
     return modes;
 }
 Out output_at(int v) { return outputs().at((size_t)v); }
+int output_choice_of(uint32_t w, uint32_t h) {
+    for (size_t i = 0; i < outputs().size(); ++i)
+        if (outputs()[i].w == w && outputs()[i].h == h) return (int)i;
+    CHECK(false);
+    return 0;
+}
 int custom_index() { return (int)outputs().size(); }
 int parse_output(const char*) { CHECK(false); return 0; }
 int step_output_choice(int, int) { CHECK(false); return 0; }
@@ -118,6 +124,7 @@ bool pre_bloom_env() { return false; }   // (RX_VK_DLSS_PRE_BLOOM unset: the DLA
 /* ENV_HELPERS */
 void apply_auto();
 /* APPLY_PRESET */
+/* APPLY_DECK_PRESET */
 /* APPLY_AUTO */
 
 std::vector<gpu_choice::Card> gpu_device_cards;   // (the GPU row's cards, save: gpu_device_id=)
@@ -360,6 +367,22 @@ int main(int argc, char** argv) {
     test_hdr_hints();
     test_persistence();
     test_presets_and_live_changes();
+    for (int p = 1; p <= 4; ++p) {
+        const bool handheld = p <= 2, fps = p % 2 == 1;
+        opts = {};
+        opts.limit_720p = 1;
+        opts.budget = 1;
+        opts.framegen = 2;
+        opts.framegen_by = 1;
+        apply_deck_preset(p);
+        CHECK(opts.handheld == handheld && opts.output_res == (handheld ? 2 : 1));
+        CHECK(opts.limit_720p == 0 && opts.budget == 0 && opts.dlss == ur::GAME);
+        CHECK(opts.fps_cap == (fps ? 0 : 7) && opts.gfx_objects == (fps ? 50 : 100));
+        CHECK(opts.framegen == 2 && opts.framegen_by == 1);
+        opts.deck_preset = p;
+        apply_preset(1);
+        CHECK(opts.deck_preset == 0);
+    }
 }
 '''
 
@@ -396,6 +419,7 @@ def fixture(source):
         "/* AUTO_STATE */": menu[menu.index("::auto_settings::Choice auto_choice;"):menu.index("void apply_auto();")],
         "/* ENV_HELPERS */": menu[menu.index("struct EnvOverride {"):menu.index("std::string ini_path() {")],
         "/* APPLY_PRESET */": definition(menu, "void apply_preset"),
+        "/* APPLY_DECK_PRESET */": definition(menu, "void apply_deck_preset"),
         "/* APPLY_AUTO */": definition(menu, "void apply_auto"),
         "/* RUMBLE_STEP */": definition(menu, "int rumble_step"),
         "/* INI_KEY */": definition(menu, "const char* ini_key"),

@@ -143,6 +143,8 @@ inline void index_start(uint64_t address, int itype, uint64_t* aligned, uint32_t
 
 /// Push::formats: the position is RGBA16F (else RGB32F); a set's joints are RGBA8UI (else RGBA16UI)
 constexpr uint32_t kHalfPosition = 1, kByteJoints = 2;
+// Upper format bits are reserved for the fragment stage's depth direction.
+constexpr uint32_t kDepthForward = 1u << 30, kDepthReversed = 1u << 31;
 /// Push::formats: set n is a single influence (an R8 weight; its joint R8UI with kByteJoints << n, else R16UI)
 constexpr uint32_t kSingle = 8;
 /// Push::formats: set n has two influences (an RG8 weight pair and an RG8UI joint pair, any byte offset)

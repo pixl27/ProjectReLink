@@ -1151,6 +1151,19 @@ const char* tx_preset(int v) {
                               "Auto (this PC)"};
     return t[std::min(std::max(v, 0), 6)];
 }
+// (Steam Deck) the Steam Deck preset row's values (opts.deck_preset; apply_deck_preset below)
+const char* tx_deck_preset(int v) {
+    static const char* t[] = {"Custom", "Handheld - FPS", "Handheld - Quality", "Docked (TV) - FPS", "Docked (TV) - Quality"};
+    return t[std::min(std::max(v, 0), 4)];
+}
+MENU_HINTS(hn_deck_preset, 0, "Your own settings. Pick a Steam Deck preset to set the rows for handheld or docked play.",
+           "The Deck's screen (1280x800), 3D at 960x600, up to 60 fps: fewer distant objects, less grass and shadows, "
+           "for the Deck's CPU. Profile and output apply after a restart.",
+           "The Deck's screen (1280x800), 3D at 960x600, a 30 fps cap with higher detail. Profile and output apply "
+           "after a restart.",
+           "A TV at 1920x1080, 3D at 67%, up to 60 fps: fewer distant objects, less grass and shadows. Profile and "
+           "output apply after a restart.",
+           "A TV at 1920x1080, 3D at 67%, a 30 fps cap with higher detail. Profile and output apply after a restart.")
 // (Sharpness: tuned for the window pass's neighbours one picture pixel apart, each about the old setting's sharpening on a
 // 3840 x 2160 window at that preset's picture, 2048 x 1152 or the handheld profile's 1536 x 864: same frame, mean |Laplacian|
 // of the window and of the picture, on the slider's steps)
@@ -1165,6 +1178,7 @@ std::string gpu_saved_card;           // (the GPU device row's card as the optio
 bool gpu_card_missing = false;        // (that card is not among this run's GPUs: menu_set_gpu_count)
 void apply_auto();   // (below: the Auto preset's rows)
 void apply_preset(int p) {
+    opts.deck_preset = 0;
     if (p == kAutoPreset) {
         apply_auto();   // (chosen on the row: all of its rows, as any preset)
         return;
@@ -1202,6 +1216,44 @@ void apply_preset(int p) {
     // its resolution is DLSS's nearest mode)
     if (p > 0) opts.resolution = ur::snap_render(upscaler(), opts.resolution);   // (a slider stop kept)
     opts.budget = p;   // (Custom chosen on this row: none, as before)
+}
+/// (Steam Deck) the Steam Deck preset row's rows (opts.deck_preset): 1 Handheld - FPS, 2 Handheld - Quality, 3 Docked (TV) -
+/// FPS, 4 Docked (TV) - Quality; 0 (Custom) sets nothing. Measured on a Deck LCD (Kokiri Forest, outdoors): the game's own
+/// CPU work holds it at about 26-31 fps whatever the resolution, with the GPU at 2-5 ms a frame at a 960x600 3D. So:
+///  - the Output resolution is the screen's own (1280x800 handheld: as of 5.0 the handheld profile takes it too) or a TV's
+///    1920x1080, the 720p Output ceiling off, the 3D at 3/4 of it (100%: 960x600 handheld; 67% on the TV);
+///  - the game's own upscaler (FSR 3.1's upscale and frame generation together took ~30 ms of the Deck's GPU a frame);
+///  - FPS: the work the CPU does per frame cut (Object detail 50%, the 5.0 minimum, grass 50%, foliage 75%, shadow
+///    distance 50%, contact shadows off, base quality Low) and the console's 60 cap;
+///  - Quality: the game's own detail (grass 75%, foliage 100%, shadows 75% as Auto's integrated-GPU profile) and a steady
+///    30 fps cap, which the Deck holds outdoors.
+/// Frame generation and its maker stay the player's, as with the Quality presets. Profile and Output resolution apply after
+/// a restart (the menu says so: restart_values)
+void apply_deck_preset(int p) {
+    if (p < 1 || p > 4) return;
+    const bool handheld = p <= 2, fps = p == 1 || p == 3;
+    for (const int* v : {&opts.resolution, &opts.upscale, &opts.sharpness, &opts.pace, &opts.realtime, &opts.handheld,
+                         &opts.output_res, &opts.dlss, &opts.fps_cap, &opts.limit_720p})
+        env_release(v);
+    opts.handheld = handheld ? 1 : 0;
+    opts.limit_720p = 0;
+    opts.output_res = handheld ? output_choice_of(1280, 800) : output_choice_of(1920, 1080);
+    opts.dlss = 0;                 // (the game's own upscaler)
+    opts.resolution = handheld ? 1 : 3;   // (100% of the 960x600 handheld 3D; 67% of the TV's 1440x810)
+    opts.upscale = 0;              // (the picture is the screen's size: no window scaling)
+    opts.sharpness = 30;
+    opts.pace = 1, opts.realtime = 1;
+    opts.shadow_res = 0;           // (Auto: the size for this memory)
+    opts.texture_detail = 1;       // (Full: the Deck has the memory for it with BC3 textures)
+    opts.budget = 0;               // (use the Deck's automatic memory budget)
+    opts.fps_cap = fps ? 0 : 7;    // (60, the console's; or 30)
+    opts.gfx_base_quality = fps ? 1 : 0;
+    opts.gfx_objects = fps ? 50 : 100;
+    opts.gfx_grass = fps ? 50 : 75;
+    opts.gfx_foliage = fps ? 75 : 100;
+    opts.gfx_shadows = fps ? 50 : 75;
+    opts.gfx_contact_shadows = fps ? 0 : 1;
+    opts.resolution = ur::snap_render(upscaler(), opts.resolution);
 }
 /// The Output resolution Auto never sets (auto_settings.h Choice: the game's own or the player's, read at boot), nor
 /// Mesh shaders (RX_VK_MESH_SHADERS), and the fingerprint has the card's mesh shaders, not this run's mode
@@ -1689,6 +1741,13 @@ Row rows[] = {
      "Sets the scaling rows and Shadow resolution for a GPU with that much memory. The Upscaler and Frame "
      "generation stay yours.",
      hn_preset},
+    // (Steam Deck) presets measured on a Steam Deck LCD: its CPU sets the frame rate, so the FPS ones cut the game's work
+    // (distant objects, grass, shadows) rather than the resolution, and every one keeps the game's own upscaler (FSR 3.1
+    // took about 25 ms of the Deck's GPU a frame). Frame generation stays the player's
+    {TAB_GRAPHICS, "Steam Deck preset", &opts.deck_preset, 0, 4, 1, tx_deck_preset,
+     "Settings tuned for the Steam Deck, for its own screen (Handheld) or a TV (Docked), each for frame rate or picture. "
+     "Frame generation stays yours.",
+     hn_deck_preset, true},
     // (the picture's way, top to bottom: the output's size, what fills it from the 3D, the 3D's size, its sharpening; then
     // the frames, and the window it is shown in)
     {TAB_GRAPHICS, "Resolution and upscaling", nullptr, 0, 0, 0, nullptr, nullptr, nullptr, false, true, -1, true},
@@ -2439,9 +2498,11 @@ bool intel_compiler_row() {
 }
 bool laptop_row() { return dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU; }   // (Set up for a weak laptop)
 bool is_laptop_row(const Row& r) { return !r.value && r.tab == TAB_DEBUG && !strcmp(r.name, "Set up for a weak laptop"); }
+bool deck_preset_available() { return ::auto_settings::steam_deck_apu(dev.props.vendorID, dev.props.deviceID); }
 bool row_shown(int i) {
     const int* v = rows[i].value;
     return ((rows[i].cheat < 0 && v != &opts.damage_taken) || cheats_on()) && (v != &opts.reflex || reflex_available()) &&
+           (v != &opts.deck_preset || deck_preset_available()) &&
            (v != &opts.antilag || antilag_available()) && (v != &opts.intel_compiles || intel_compiler_row()) &&
            (v != &opts.intel_quick || intel_compiler_row()) &&
            (!is_laptop_row(rows[i]) || laptop_row()) &&
@@ -3647,6 +3708,10 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
     } else if (r.value == &opts.preset) {
         *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
         apply_preset(*r.value);
+    } else if (r.value == &opts.deck_preset) {
+        *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
+        apply_deck_preset(*r.value);
+        if (*r.value) opts.preset = 0;   // (the Quality preset's rows are this one's now: Custom)
     } else {
         *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;   // (Game language: written when the row is left, game_lang_tick)
         if (r.value == &opts.gfx_uncapped) gfx_limits();
@@ -3658,6 +3723,7 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
         if (!r.preset_exempt) {   // (rows no preset sets: the controls, the window, the counter...)
             // (Custom, still the preset it came from in opts.budget: Minimum's mip trimming on a small card stays with it)
             opts.preset = 0; // Custom
+            opts.deck_preset = 0;   // (Steam Deck: a row of the player's own)
         }
     }
     if (r.value == &opts.transition_autosave) sync_transition_autosave();
@@ -3665,9 +3731,11 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
     if (r.value == &output_pick) output_chosen();
     if (r.value == &monitor_pick) monitor_chosen();
     // (hookshot: the samplers made again, at once: their anisotropy, and the upscalers' LOD bias, vk_draw.cpp upscale_lod_bias)
-    if (r.value == &opts.anisotropy || r.value == &opts.dlss || r.value == &opts.resolution || r.value == &opts.preset)
+    const bool deck_applied = r.value == &opts.deck_preset && opts.deck_preset != 0;
+    if (r.value == &opts.anisotropy || r.value == &opts.dlss || r.value == &opts.resolution || r.value == &opts.preset ||
+        deck_applied)
         samplers_changed();
-    if (r.value == &opts.dlss || r.value == &opts.resolution || r.value == &opts.dlss_model)
+    if (r.value == &opts.dlss || r.value == &opts.resolution || r.value == &opts.dlss_model || deck_applied)
         temporal_reset_failure();
     if (r.value == &opts.descriptor_reuse || r.value == &opts.sampler_cache)   // (hookshot: in play, vk_draw.cpp)
         menu_debug_rows(opts.descriptor_reuse, opts.sampler_cache);

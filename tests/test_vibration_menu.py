@@ -68,6 +68,7 @@ void save() { saves++; }
 void apply_pad_layout(int) {}
 int detect_pad_layout() { return opts.pad_layout; }
 void apply_preset(int) { presets++; }
+void apply_deck_preset(int) {}
 void sync_preset_budgets(int) {}
 void env_release(const int*) {}
 void vram_budget_sync() {}

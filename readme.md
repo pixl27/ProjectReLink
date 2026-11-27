@@ -252,6 +252,7 @@ Camera, Mouse, Movement and Menu. The table lists those tabs' rows in that order
 | Tab | Option | Choices | Default |
 |---|---|---|---|
 | Graphics | Quality preset | Custom, Minimum (4GB), Low (6GB), Balanced (8GB), High (12GB), Ultra (16GB+), Auto (this PC) | Auto (this PC) on a first start; Custom in an options file from before it |
+| Graphics | Steam Deck preset | Custom, Handheld FPS, Handheld Quality, Docked FPS, Docked Quality | Custom. Shown on Steam Deck LCD and OLED. |
 | | Aspect ratio | The shapes your screen's resolutions have, narrowest first (5:4, 4:3, 16:10, 16:9, 21:9, 32:9, ...), your monitor's own marked "(monitor's)" (after a restart) | Your monitor's |
 | | Output resolution | The Aspect ratio's sizes: your screen's resolutions and common sizes, plus 2048x1152 (after a restart) | 1280x720 target; title frame uses 1920x1080 then scales to window |
 | | Output ceiling | 720p, Unlocked (after a restart; the title screen uses a 1080p source and scales to the window) | 720p |

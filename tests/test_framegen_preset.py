@@ -63,6 +63,7 @@ int detect_pad_layout() { return opts.pad_layout; }
 void gfx_limits() {}   // (detail rows' caps: not what this checks)
 constexpr int kAutoPreset = 6;   /* (the Quality preset Auto (this PC): apply_auto, not reached here) */
 void apply_auto() {}
+void apply_deck_preset(int) {}
 void env_release(const int*) {}   // (the environment's hold on a row: none here)
 bool row_fixed(const int*) { return false; }
 namespace ur = mkwvk::upscaler_rows;

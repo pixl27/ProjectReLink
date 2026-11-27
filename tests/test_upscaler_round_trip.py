@@ -76,6 +76,7 @@ bool debug_warning = false;
 int debug_warning_choice = 0;
 void sync_transition_autosave() {}
 void gfx_limits() {}   // (the view distance rows' caps: vk_menu.cpp)
+bool env_on(const char*) { return false; }
 
 /* TABS */
 /* ROW */
@@ -84,6 +85,7 @@ int upscaler() { return available & ur::bit(opts.dlss) ? opts.dlss : (int)ur::GA
 unsigned upscalers_available() { return available; }
 bool row_fixed(const int*) { return false; }
 struct Out { uint32_t w, h; };
+void hos_output_title_minimum(uint32_t*, uint32_t*) {}   // (the fixture's display sizes exceed the title minimum)
 Out shown_output() { return {1920, 1080}; }
 Out output_at(int) { return shown_output(); }
 const std::vector<Out>& outputs() {
@@ -174,6 +176,7 @@ void temporal_reset_failure() {}
 void prompts_at_once(const Row&) {}
 /* STOPS */
 void apply_auto();
+void apply_deck_preset(int) {}
 /* PRESET */
 /* APPLY_AUTO */
 bool menu_refresh = false;
