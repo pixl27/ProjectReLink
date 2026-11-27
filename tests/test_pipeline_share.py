@@ -350,7 +350,7 @@ def check_sources():
     assert dl.count('"your home folder"') == 2, "the home folder is named on screen (the user's name)"
     assert 'L"WINDIR"' in menu, "explorer.exe is taken from the search path"
     assert "kShareSaidLongest" in menu[menu.find("float measure_help("):][:900], "the help box has no room kept for the line after a save"
-    assert "share_finish();" in menu[menu.find("void menu_tick() {"):][:400], "menu_tick never collects the worker's answer"
+    assert "share_finish();" in body_of(menu, "void menu_tick() {"), "menu_tick never collects the worker's answer"
     spawn = menu[menu.find("bool share_spawn("):]
     spawn = spawn[:spawn.index("\n}\n")]
     assert "pipe2(fds, O_CLOEXEC)" in spawn and "addclosefrom_np(&fa, 3)" in spawn, \
