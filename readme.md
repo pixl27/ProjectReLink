@@ -26,7 +26,7 @@ Keep your existing standalone output folder when rebuilding to retain your saves
 |---|---|
 | The reference PC is a Ryzen 5 5625U with Radeon Vega and 16 GB shared RAM. The default profile is tuned for shared-memory limits and lower output sizes. | Linux and handheld play are active development targets. Steam Deck-specific performance has not been measured; Radeon PC results are not Deck benchmarks. |
 
-Version 5.0.1 speeds up one CPU texture-decoding path, adds a 720p output choice with an optional higher-resolution limit, and lets you lower distant object detail to 50%. These changes improve specific work and display options; they do not promise a fixed frame rate or stutter-free play. [Read the measurements](docs/recomp-performance-survey-2026-11-26.md).
+The 5.0 series speeds up a CPU texture-decoding path, adds a 720p output choice with an optional higher-resolution limit, and lets you lower distant object detail to 50%. These changes improve specific work and display options; they do not promise a fixed frame rate or stutter-free play. [Read the measurements](docs/recomp-performance-survey-2026-11-26.md).
 
 ![Tuned with evidence](assets/marketing/features.svg)
 
@@ -35,7 +35,7 @@ Version 5.0.1 speeds up one CPU texture-decoding path, adds a 720p output choice
 - **A fitted picture.** Choose 1280 × 720, use higher output modes when desired, and unlock the optional 720p ceiling in settings.
 - **Distance detail in your hands.** Lower object detail to 50% so distant models can use simpler versions sooner.
 - **A familiar setup.** RecompLauncher support includes named game inputs, build-ID checks, setup progress, settings and saves.
-- **Your shader cache stays yours.** Version 5.0.1 keeps the existing shader translation and cache format. Compatibility depends on GPU, driver, toolchain and settings.
+- **Your shader cache stays yours.** Keep your cache folder when updating. The 5.0.1 mesh fallback changes can require shader regeneration on first launch.
 
 ![See the adventure](assets/marketing/gallery.svg)
 
