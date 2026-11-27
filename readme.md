@@ -1,10 +1,10 @@
-![Red Tunic 5.0.1 — a native PC journey back to Hyrule](assets/marketing/hero.svg)
+![Red Tunic 5.0.3 — a native PC journey back to Hyrule](assets/marketing/hero.svg)
 
 # Return to Hyrule on PC
 
 Red Tunic is an independent native PC project for **The Legend of Zelda: Ocarina of Time**. It builds from your own supported game copy, then lets you play with Vulkan graphics, familiar controls and settings for your machine.
 
-**[Get Red Tunic 5.0.1](https://github.com/spacefarergames/RedTunic/releases/tag/v5.0.1)** · **[Visit the project site](https://spacefarergames.github.io/RedTunic/)** · [Start here](#your-copy-your-pc-your-build) · [See the official game gallery](https://www.nintendo.com/en-gb/Games/Nintendo-Switch-2-games/The-Legend-of-Zelda-Ocarina-of-Time-3115664.html) · [Release notes](RELEASE_NOTES_5.0.1.md)
+**[Get Red Tunic 5.0.3](https://github.com/spacefarergames/RedTunic/releases/tag/v5.0.3)** · **[Visit the project site](https://spacefarergames.github.io/RedTunic/)** · [Start here](#your-copy-your-pc-your-build) · [See the official game gallery](https://www.nintendo.com/en-gb/Games/Nintendo-Switch-2-games/The-Legend-of-Zelda-Ocarina-of-Time-3115664.html) · [Release notes](RELEASE_NOTES_5.0.3.md)
 
 <a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
@@ -16,7 +16,7 @@ Red Tunic is an independent native PC project for **The Legend of Zelda: Ocarina
 2. **Pick how you want to set it up.** Use the Windows Builder, the Linux AppImage, or RecompLauncher’s Easy Setup.
 3. **Build and play on your PC.** Your game files stay on your machine. The download contains the setup tools, not the game.
 
-Keep your existing standalone output folder when rebuilding to retain your saves, settings and compatible shader caches. RecompLauncher keeps its own build and saves in its separate `recompdata` folder.
+For the revised 5.0.3, download the current Builder and rebuild into your existing output folder to retain your saves, settings and compatible shader caches. RecompLauncher keeps its own build and saves in its separate `recompdata` folder.
 
 ![Hardware, with context](assets/marketing/hardware.svg)
 
@@ -31,11 +31,11 @@ The 5.0 series speeds up a CPU texture-decoding path, adds a 720p output choice 
 ![Tuned with evidence](assets/marketing/features.svg)
 
 - **A native PC build.** Red Tunic recompiles the game for x64 and replays graphics through Vulkan, with a compute fallback for GPUs without mesh shaders.
-- **Faster texture loading work.** The optimized CPU ASTC decoder is enabled by default. In one reversed camera-test pair, CPU decode and upload work fell from about **3.39 s to 0.91 s**; results varied between pairs, so this is not a general FPS claim.
+- **Faster texture loading work.** The revised 5.0.3 uses GPU ASTC decoding on supported Windows Vega systems. Spirit Temple was playtested at 720p with the GPU decoder active. The CPU decoder is still available.
 - **A fitted picture.** Choose 1280 × 720, use higher output modes when desired, and unlock the optional 720p ceiling in settings.
 - **Distance detail in your hands.** Lower object detail to 50% so distant models can use simpler versions sooner.
 - **A familiar setup.** RecompLauncher support includes named game inputs, build-ID checks, setup progress, settings and saves.
-- **Your shader cache stays yours.** Keep your cache folder when updating. The 5.0.1 mesh fallback changes can require shader regeneration on first launch.
+- **Your shader cache stays yours.** Keep your cache folder when updating. Compatible caches are reused. Choose All in the Builder to prepare outstanding shaders and predicted pipelines.
 
 ## Explore Hyrule
 
@@ -51,11 +51,11 @@ See the official **Ocarina of Time** screenshots and game details on [Nintendo�
 
 | Your system | Get started |
 |---|---|
-| **Windows x64** | [Portable download](https://github.com/spacefarergames/RedTunic/releases/download/v5.0.1/RedTunic-v5.0.1-Windows-x64.zip) — extract the folder and open `RedTunic.exe`. |
-| **Linux x86-64 / SteamOS** | [AppImage](https://github.com/spacefarergames/RedTunic/releases/download/v5.0.1/RedTunic-v5.0.1-x86_64.AppImage) or [portable tarball](https://github.com/spacefarergames/RedTunic/releases/download/v5.0.1/RedTunic-v5.0.1-Linux-x86_64.tar.gz); glibc 2.35+. |
+| **Windows x64** | [Portable download](https://github.com/spacefarergames/RedTunic/releases/download/v5.0.3/RedTunic-v5.0.3-Windows-x64.zip) — extract the folder and open `RedTunic.exe`. |
+| **Linux x86-64 / SteamOS** | [AppImage](https://github.com/spacefarergames/RedTunic/releases/download/v5.0.3/RedTunic-v5.0.3-x86_64.AppImage) or [portable tarball](https://github.com/spacefarergames/RedTunic/releases/download/v5.0.3/RedTunic-v5.0.3-Linux-x86_64.tar.gz); glibc 2.35+. |
 | **RecompLauncher** | Install the launcher, choose your supported game and run Easy Setup. [Setup guide](docs/recomplauncher.md) |
 
-[All downloads and checksums](https://github.com/spacefarergames/RedTunic/releases/tag/v5.0.1) · [Get help](https://github.com/spacefarergames/RedTunic/issues) · [Source and licenses](LICENSE)
+[All downloads and checksums](https://github.com/spacefarergames/RedTunic/releases/tag/v5.0.3) · [Get help](https://github.com/spacefarergames/RedTunic/issues) · [Source and licenses](LICENSE)
 
 Red Tunic is an unofficial, independent project based on Hookshot. Nintendo, AMD, Valve and IGN retain their respective trademarks and media rights. **No game files, keys, prebuilt game executables, saves or shader caches are distributed.**
 
