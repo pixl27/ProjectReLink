@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 162" role="img"><title>Ember Triforce</title><g transform="translate(90 80)">
+  <defs>
+    <linearGradient id="ember-metal" x2="0" y2="1"><stop stop-color="#f5cb75"/><stop offset=".4" stop-color="#a14325"/><stop offset="1" stop-color="#35141d"/></linearGradient>
+    <clipPath id="ember-triangles"><path d="M0-69 39-1H-39ZM-42 4-3 72H-81ZM42 4 81 72H3Z"/></clipPath>
+  </defs>
+  <path d="M0-69 39-1H-39ZM-42 4-3 72H-81ZM42 4 81 72H3Z" fill="url(#ember-metal)" stroke="#ffdb87" stroke-width="2"/>
+  <g clip-path="url(#ember-triangles)" fill="#ffce77">
+    <path d="M-85 79Q-71 55-73 33Q-53 47-57 69Q-42 55-42 37Q-20 59-24 77M-28 5Q-15-13-24-32Q-5-24-4-5Q7-18 5-42Q25-27 24 5M15 79Q26 64 25 43Q39 52 39 66Q51 53 49 33Q74 48 75 78" opacity=".67"/>
+    <circle cx="-58" cy="51" r="2"/><circle cx="-44" cy="26" r="2"/><circle cx="-14" cy="-23" r="2"/><circle cx="1" cy="-48" r="2"/><circle cx="16" cy="-17" r="3"/><circle cx="35" cy="50" r="2"/><circle cx="50" cy="26" r="2"/><circle cx="65" cy="58" r="3"/>
+  </g>
+</g>
+</svg>

@@ -37,7 +37,9 @@ The 5.0 series speeds up a CPU texture-decoding path, adds a 720p output choice 
 - **A familiar setup.** RecompLauncher support includes named game inputs, build-ID checks, setup progress, settings and saves.
 - **Your shader cache stays yours.** Keep your cache folder when updating. The 5.0.1 mesh fallback changes can require shader regeneration on first launch.
 
-![See the adventure](assets/marketing/gallery.svg)
+## Explore Hyrule
+
+<img src="assets/marketing/ember-triforce.svg" width="80" height="72" alt="Golden Triforce with flame embers">
 
 ## Explore the adventure
 
