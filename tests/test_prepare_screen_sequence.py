@@ -28,11 +28,13 @@ static int fails;
 #define CHECK(x) do { if (!(x)) { std::printf("FAIL line %d: %s\n", __LINE__, #x); fails++; } } while (0)
 static std::string calls;
 static bool is_update, stopped;
+static bool seed_prepared = true, prediction_complete;
 typedef void (*Progress)(size_t, size_t);
 static bool prepare_is_update() { return is_update; }
 static void prepare_guess(size_t* g) { g[0] = g[1] = g[2] = 0; }
-static bool prepare_run(Progress, bool) { calls += "prepare "; return true; }
+static bool prepare_run(Progress, bool) { calls += "prepare "; return seed_prepared; }
 static bool predict_pending() { return false; }
+static bool predicted_complete() { return prediction_complete; }
 static bool compile_all() { return true; }   // (Compile shaders All: vk_draw.cpp; the sequence is the same on Most)
 static bool prepare_stopped() { return stopped; }
 static void predict_run(Progress) { calls += "predict "; }
@@ -53,6 +55,7 @@ static void screen() {
 /* SCREEN */
 }
 static void console() {
+    const bool prepare_all = compile_all();
 /* CONSOLE */
 }
 
@@ -76,6 +79,13 @@ int main() {
     }
     const std::string s = run(screen, true, true);
     CHECK(s.find("state_list") == std::string::npos && s.find("precompile") == std::string::npos);
+    seed_prepared = false;
+    for (auto f : {screen, console}) {
+        prediction_complete = false;
+        CHECK(run(f, false, false) == "prepare predict precompile ");
+        prediction_complete = true;
+        CHECK(run(f, false, false) == "prepare precompile ");
+    }
     return fails ? 1 : 0;
 }
 '''
