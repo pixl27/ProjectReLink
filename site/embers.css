@@ -28,6 +28,31 @@ body {
 .chapter-emblems { display: flex; justify-content: center; align-items: center; gap: clamp(45px, 12vw, 175px); margin-bottom: 42px; }
 .chapter-emblems img { filter: drop-shadow(0 0 24px #e25f3f66); }
 .field-guide { max-width: 68ch; padding: 1.3rem 0; }
+.play-section, .media-section {
+  background: #20141e;
+  color: var(--ink);
+  border-block: 1px solid var(--line);
+}
+.skip { background: var(--paper); color: var(--ink); }
+.visual-label, .image-caption, .video-button { color: var(--ink); }
+.steps p, .steps code, .play-footnote, .media-credit { color: var(--muted); }
+.steps p, .steps code, .play-footnote, .media-credit, .download-item small,
+.video-button small, .status-note, .fine { font: 1rem/1.55 var(--sans); }
+.visual-label, .image-caption, .eyebrow, .micro { font: 700 .8rem/1.5 var(--sans); }
+.hero-copy, .steps li, .feature-list article { min-width: 0; }
+h3 { font-family: var(--serif); font-weight: 600; }
+.section h2::after {
+  content: ''; display: block; width: min(9rem, 45%); height: 1.3rem; margin-top: .55rem;
+  background: url('assets/flames.svg') center bottom / 100% 100% no-repeat;
+  border-bottom: 1px solid #c58258;
+}
+#play .section-top, #media .section-top, #download > .wrap > div:first-child {
+  background: linear-gradient(90deg, #20141e 30%, #20141e66), url('assets/forest-crest.svg') right center / auto 100% no-repeat;
+  padding: clamp(16px, 3vw, 40px);
+  border-inline-start: 2px solid #a45c42;
+}
+.button.primary:hover { background: #ffce93; color: #29141b; }
+.video-card a, .download-more { font-size: .95rem; }
 
 .fire-bed { position: absolute; inset: 0; overflow: hidden; z-index: -1; pointer-events: none; }
 .fire-bed::before, .fire-bed::after {
